@@ -1241,7 +1241,7 @@ impl Parser {
         }
 
         self.consume(TokenType::Semicolon, "Expecting ';' after import statement")?;
-        Some(Statement::Import { path, is_ang: import_type })
+        Some(Statement::Import { path, type_: import_type })
     }
 
     fn union_decl(&mut self) -> Option<Statement> {

@@ -55,7 +55,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
                 TokenType::Identifier,
                 Rc::from("core/core"),
                 0, 1, 0
-            ), is_ang: ImportType::Default }
+            ), type_: ImportType::Default }
     );
 
     statements.insert(
@@ -66,7 +66,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
                 TokenType::Identifier,
                 Rc::from(primitives.as_ref()),
                 0, 1, 0
-            ), is_ang: ImportType::Default }
+            ), type_: ImportType::Default }
     );
 
     statements.insert(
@@ -77,7 +77,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
                 TokenType::Identifier,
                 Rc::from("core/builtins"),
                 0, 1, 0
-            ), is_ang: ImportType::Default }
+            ), type_: ImportType::Default }
     );
 
     if !no_panic {
@@ -89,7 +89,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
                     TokenType::Identifier,
                     Rc::from("core/panic"),
                     0, 1, 0
-                ), is_ang: ImportType::Default }
+                ), type_: ImportType::Default }
         );
     }
 

@@ -6412,7 +6412,7 @@ impl CodeGen {
                     token_error!(self, kw, "Can only use continue inside loops");
                 }
             }
-            Statement::Import { path: path_tok, is_ang: import_type } => {
+            Statement::Import { path: path_tok, type_: import_type } => {
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
                 let skye_import = {
