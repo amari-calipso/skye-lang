@@ -49,59 +49,47 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
     let mut statements = parse(source, Rc::clone(&filename))?;
     statements.insert(
         0,
-        Statement::Import(
-            Token::new(
+        Statement::Import { path: Token::new(
                 Rc::from(source.as_ref()),
                 Rc::clone(&filename),
                 TokenType::Identifier,
                 Rc::from("core/core"),
                 0, 1, 0
-            ),
-            ImportType::Default
-        )
+            ), is_ang: ImportType::Default }
     );
 
     statements.insert(
         1,
-        Statement::Import(
-            Token::new(
+        Statement::Import { path: Token::new(
                 Rc::from(source.as_ref()),
                 Rc::clone(&filename),
                 TokenType::Identifier,
                 Rc::from(primitives.as_ref()),
                 0, 1, 0
-            ),
-            ImportType::Default
-        )
+            ), is_ang: ImportType::Default }
     );
 
     statements.insert(
         2,
-        Statement::Import(
-            Token::new(
+        Statement::Import { path: Token::new(
                 Rc::from(source.as_ref()),
                 Rc::clone(&filename),
                 TokenType::Identifier,
                 Rc::from("core/builtins"),
                 0, 1, 0
-            ),
-            ImportType::Default
-        )
+            ), is_ang: ImportType::Default }
     );
 
     if !no_panic {
         statements.insert(
             3,
-            Statement::Import(
-                Token::new(
+            Statement::Import { path: Token::new(
                     Rc::from(source.as_ref()),
                     filename,
                     TokenType::Identifier,
                     Rc::from("core/panic"),
                     0, 1, 0
-                ),
-                ImportType::Default
-            )
+                ), is_ang: ImportType::Default }
         );
     }
 

@@ -10,7 +10,11 @@ macro_rules! match_literal {
     ($parser: expr, $type_: tt) => {
         if $parser.match_(&[TokenType::$type_]) {
             let prev = $parser.previous();
-            return Some(Expression::Literal(prev.lexeme.clone(), prev.clone(), LiteralKind::$type_))
+            return Some(Expression::Literal {
+                value: prev.lexeme.clone(), 
+                tok: prev.clone(), 
+                kind: LiteralKind::$type_
+            });
         }
     };
 }
@@ -23,9 +27,11 @@ macro_rules! left_associativity_binary {
             while self.match_($types) {
                 let op = self.previous().clone();
                 let right = self.$next()?;
-                expr = Expression::Binary(
-                    Box::new(expr), op, Box::new(right)
-                );
+                expr = Expression::Binary {
+                    left: Box::new(expr),
+                    op,
+                    right: Box::new(right)
+                };
             }
 
             Some(expr)
@@ -39,7 +45,11 @@ macro_rules! prefix_unary {
             if self.match_($types) {
                 let op = self.previous().clone();
                 let right = self.$name()?;
-                return Some(Expression::Unary(op, Box::new(right), true));
+                return Some(Expression::Unary {
+                    op, 
+                    expr: Box::new(right), 
+                    is_prefix: true
+                });
             }
 
             self.$next()
@@ -54,7 +64,11 @@ macro_rules! suffix_unary {
 
             if self.match_($types) {
                 let op = self.previous().clone();
-                return Some(Expression::Unary(op, Box::new(expr), false));
+                return Some(Expression::Unary {
+                    op, 
+                    expr: Box::new(expr), 
+                    is_prefix: false
+                });
             }
 
             Some(expr)
@@ -166,7 +180,7 @@ impl Parser {
         self.consume(TokenType::RightParen, "Expecting ')' after function parameters")?;
 
         let return_type = self.type_expression()?;
-        Some(Expression::FnPtr(kw, Box::new(return_type), params))
+        Some(Expression::FnPtr { kw, return_type: Box::new(return_type), params })
     }
 
     fn get_nonzero_expressions(&mut self) -> Option<Vec<Expression>> {
@@ -185,7 +199,7 @@ impl Parser {
 
     fn primary(&mut self) -> Option<Expression> {
         if self.match_(&[TokenType::Void]) {
-            return Some(Expression::Literal(Rc::from(""), self.previous().clone(), LiteralKind::Void));
+            return Some(Expression::Literal { value: Rc::from(""), tok: self.previous().clone(), kind: LiteralKind::Void });
         }
 
         if self.match_(&[TokenType::Fn]) {
@@ -206,7 +220,7 @@ impl Parser {
             let opening_brace = self.previous().clone();
             let items = self.get_nonzero_expressions()?;
             self.consume(TokenType::RightBrace, "Expecting '}' after slice")?;
-            return Some(Expression::Slice(opening_brace, items));
+            return Some(Expression::Slice { opening_brace, items });
         }
 
         if self.match_(&[TokenType::LeftSquare]) {
@@ -220,7 +234,7 @@ impl Parser {
             return Some(Expression::Call(
                 Box::new(Expression::Variable(method_tok)),
                 opening_brace.clone(),
-                vec![Expression::Slice(opening_brace, items)]
+                vec![Expression::Slice { opening_brace: opening_brace, items: items }]
             ));
         }
 
@@ -254,7 +268,7 @@ impl Parser {
         if self.match_(&[TokenType::At]) {
             let op = self.previous().clone();
             let name = self.consume(TokenType::Identifier, "Expecting macro name after '@'")?.clone();
-            return Some(Expression::Unary(op, Box::new(Expression::Variable(name)), true));
+            return Some(Expression::Unary { op, expr: Box::new(Expression::Variable(name)), is_prefix: true });
         }
 
         self.static_access()
@@ -285,7 +299,7 @@ impl Parser {
     fn finish_subscript(&mut self, subscripted: Expression) -> Option<Expression> {
         let arguments = self.get_expressions()?;
         let paren = self.consume(TokenType::RightSquare, "Expecting ']' after subscript operation")?.clone();
-        Some(Expression::Subscript(Box::new(subscripted), paren, arguments))
+        Some(Expression::Subscript { subscripted: Box::new(subscripted), paren, args: arguments })
     }
 
     fn finish_struct_literal(&mut self, expr: Expression) -> Option<Expression> {
@@ -307,7 +321,7 @@ impl Parser {
         }
 
         let paren = self.consume(TokenType::RightBrace, "Expecting '}' after struct literal fields")?.clone();
-        Some(Expression::CompoundLiteral(Box::new(expr), paren, fields))
+        Some(Expression::CompoundLiteral { type_: Box::new(expr), closing_brace: paren, fields })
     }
 
     fn call(&mut self) -> Option<Expression> {
@@ -355,7 +369,7 @@ impl Parser {
             }
 
             let right = self.prefix_unary()?;
-            return Some(Expression::Unary(op, Box::new(right), true));
+            return Some(Expression::Unary { op, expr: Box::new(right), is_prefix: true });
         }
 
         self.suffix_unary()
@@ -389,7 +403,7 @@ impl Parser {
         self.consume(TokenType::Colon, "Expecting ':' after 'then' branch of ternary expression")?;
         let else_ = self.expression()?;
 
-        Some(Expression::Ternary(question, Box::new(cond), Box::new(then), Box::new(else_)))
+        Some(Expression::Ternary { tok: question, condition: Box::new(cond), then_expr: Box::new(then), else_expr: Box::new(else_) })
     }
 
     fn assignment(&mut self) -> Option<Expression> {
@@ -409,7 +423,7 @@ impl Parser {
                 return None;
             }
 
-            return Some(Expression::Assign(Box::new(expr), op, Box::new(value)));
+            return Some(Expression::Assign { target: Box::new(expr), op, value: Box::new(value) });
         }
 
         Some(expr)
@@ -471,7 +485,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::If(kw, cond, Box::new(then_branch), else_branch))
+        Some(Statement::If { kw, condition: cond, then_branch: Box::new(then_branch), else_branch })
     }
 
     fn while_statement(&mut self) -> Option<Statement> {
@@ -492,7 +506,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::While(kw, cond, Box::new(body)))
+        Some(Statement::While { kw, condition: cond, body: Box::new(body) })
     }
 
     fn do_while_statement(&mut self) -> Option<Statement> {
@@ -504,7 +518,7 @@ impl Parser {
         let cond = self.expression()?;
         self.consume(TokenType::Semicolon, "Expecting ';' after condition")?;
 
-        Some(Statement::DoWhile(kw, cond, Box::new(body)))
+        Some(Statement::DoWhile { kw, condition: cond, body: Box::new(body) })
     }
 
     fn for_statement(&mut self) -> Option<Statement> {
@@ -524,7 +538,7 @@ impl Parser {
 
         let cond = {
             if self.check(TokenType::Semicolon) {
-                Expression::Literal(Rc::from("1"), self.previous().clone(), LiteralKind::U8)
+                Expression::Literal { value: Rc::from("1"), tok: self.previous().clone(), kind: LiteralKind::U8 }
             } else {
                 self.expression()?
             }
@@ -563,7 +577,7 @@ impl Parser {
                 }
             };
 
-            Some(Statement::For(kw, initializer, cond, increment, Box::new(body)))
+            Some(Statement::For { kw, initializer, condition: cond, increments: increment, body: Box::new(body) })
         } else { // foreach
             let body = {
                 if has_paren {
@@ -582,7 +596,7 @@ impl Parser {
 
             if let Some(init) = &initializer {
                 if let Statement::Expression(Expression::Variable(var_name)) = &**init {
-                    return Some(Statement::Foreach(kw, var_name.clone(), cond, Box::new(body)))
+                    return Some(Statement::Foreach { kw, variable_name: var_name.clone(), iterator: cond, body: Box::new(body) })
                 } else {
                     ast_error!(self, init, "Expecting variable name in foreach loop");
                 }
@@ -606,7 +620,7 @@ impl Parser {
         };
 
         self.consume(TokenType::Semicolon, "Expecting ';' after return value")?;
-        Some(Statement::Return(kw, value))
+        Some(Statement::Return { kw, value })
     }
 
     fn defer_statement(&mut self) -> Option<Statement> {
@@ -630,9 +644,9 @@ impl Parser {
             let expr = self.expression()?;
             self.consume(TokenType::Semicolon, "Expecting ';' after expression")?;
 
-            Some(Statement::Defer(kw, Box::new(Statement::VarDecl(tok, Some(expr), None, false, Vec::new()))))
+            Some(Statement::Defer { kw, statement: Box::new(Statement::VarDecl { name: tok, initializer: Some(expr), type_: None, is_const: false, qualifiers: Vec::new() }) })
         } else {
-            Some(Statement::Defer(kw, Box::new(self.statement()?)))
+            Some(Statement::Defer { kw, statement: Box::new(self.statement()?) })
         }
     }
 
@@ -675,7 +689,7 @@ impl Parser {
         }
 
         self.consume(TokenType::RightBrace, "Expecting '}' after switch body")?;
-        Some(Statement::Switch(kw, expr, cases))
+        Some(Statement::Switch { kw, expr, cases })
     }
 
     fn break_statement(&mut self) -> Option<Statement> {
@@ -777,7 +791,7 @@ impl Parser {
         };
 
         self.consume(TokenType::Semicolon, "Expecting ';' after variable declaration")?;
-        Some(Statement::VarDecl(name, initializer, type_, kw.type_ == TokenType::Const, qualifiers))
+        Some(Statement::VarDecl { name, initializer, type_, is_const: kw.type_ == TokenType::Const, qualifiers })
     }
 
     fn parse_generics(&mut self, incoming_generics: &Vec<Generic>) -> Option<Vec<Generic>> {
@@ -867,7 +881,7 @@ impl Parser {
                     let mut type_ = Expression::Variable(custom_tok.clone());
 
                     if self_generics.len() != 0 {
-                        type_ = Expression::Subscript(Box::new(type_), custom_tok, self_generics.clone());
+                        type_ = Expression::Subscript { subscripted: Box::new(type_), paren: custom_tok, args: self_generics.clone() };
                     }
 
                     let mut star_tok = p_name.clone();
@@ -877,7 +891,7 @@ impl Parser {
                         star_tok.set_type(TokenType::BitwiseAnd)
                     }
 
-                    type_ = Expression::Unary(star_tok, Box::new(type_), true);
+                    type_ = Expression::Unary { op: star_tok, expr: Box::new(type_), is_prefix: true };
                     params.push(FunctionParam::new(Some(p_name), type_, true));
                 } else {
                     self.consume(TokenType::Colon, "Expecting ':' after parameter name")?;
@@ -898,7 +912,7 @@ impl Parser {
             if !(self.check(TokenType::LeftBrace) || self.check(TokenType::Semicolon)) {
                 self.expression()?
             } else {
-                Expression::Literal(Rc::from(""), self.previous().clone(), LiteralKind::Void)
+                Expression::Literal { value: Rc::from(""), tok: self.previous().clone(), kind: LiteralKind::Void }
             }
         };
 
@@ -916,18 +930,14 @@ impl Parser {
         };
 
         if generics.len() == 0 {
-            Some(Statement::Function(name, params, return_type, body, qualifiers, Vec::new(), bind))
+            Some(Statement::Function { name, params, return_type, body, qualifiers, generics_names: Vec::new(), bind })
         } else {
             let mut generic_names = Vec::new();
             for generic in &generics {
                 generic_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template(
-                name.clone(),
-                Box::new(Statement::Function(name, params, return_type, body, qualifiers, generic_names.clone(), false)),
-                generics, generic_names
-            ))
+            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Function { name, params, return_type, body, qualifiers, generics_names: generic_names.clone(), bind: false }), generics, generics_names: generic_names })
         }
     }
 
@@ -995,18 +1005,14 @@ impl Parser {
         };
 
         if generics.len() == 0 {
-            Some(Statement::Struct(name, fields, has_body, binding, Vec::new(), typedefed))
+            Some(Statement::Struct { name, fields, has_body, binding, generics_names: Vec::new(), bind_typedefed: typedefed })
         } else {
             let mut generic_names = Vec::new();
             for generic in &generics {
                 generic_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template(
-                name.clone(),
-                Box::new(Statement::Struct(name, fields, has_body, binding, generic_names.clone(), typedefed)),
-                generics, generic_names
-            ))
+            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Struct { name, fields, has_body, binding, generics_names: generic_names.clone(), bind_typedefed: typedefed }), generics, generics_names: generic_names })
         }
     }
 
@@ -1027,7 +1033,7 @@ impl Parser {
         let mut struct_impl = self.type_expression()?;
 
         let self_generics = {
-            if let Expression::Subscript(subscripted, _, self_generics) = struct_impl {
+            if let Expression::Subscript { subscripted, paren: _, args: self_generics } = struct_impl {
                 struct_impl = *subscripted;
                 self_generics
             } else {
@@ -1043,7 +1049,7 @@ impl Parser {
         }
 
         self.consume(TokenType::RightBrace, "Expecting '}' after impl body")?;
-        Some(Statement::Impl(struct_impl, declarations))
+        Some(Statement::Impl { object: struct_impl, declarations })
     }
 
     fn namespace(&mut self) -> Option<Statement> {
@@ -1060,7 +1066,7 @@ impl Parser {
 
         let name = self.consume(TokenType::Identifier, "Expecting namespace name")?.clone();
         self.consume(TokenType::LeftBrace, "Expecting '{' before namespace body")?;
-        Some(Statement::Namespace(name, self.block()?))
+        Some(Statement::Namespace { name, body: self.block()? })
     }
 
     fn use_statement(&mut self) -> Option<Statement> {
@@ -1093,7 +1099,7 @@ impl Parser {
         };
 
         self.consume(TokenType::Semicolon, "Expecting ';' after use statement")?;
-        Some(Statement::Use(use_expr, as_, typedef, bind))
+        Some(Statement::Use { use_expr, as_name: as_, typedef, bind })
     }
 
     fn enum_decl(&mut self, incoming_generics: &Vec<Generic>) -> Option<Statement> {
@@ -1156,7 +1162,7 @@ impl Parser {
                                 let res = self.expression()?;
 
                                 if is_simple {
-                                    if let Expression::Literal(.., kind) = &res {
+                                    if let Expression::Literal { kind, .. } = &res {
                                         is_simple = *kind == LiteralKind::Void;
                                     } else {
                                         is_simple = false;
@@ -1166,7 +1172,7 @@ impl Parser {
                                 self.consume(TokenType::RightParen, "Expecting ')' after enum variant type")?;
                                 res
                             } else {
-                                Expression::Literal(Rc::from(""), variant_name.clone(), LiteralKind::Void)
+                                Expression::Literal { value: Rc::from(""), tok: variant_name.clone(), kind: LiteralKind::Void }
                             }
                         };
 
@@ -1193,18 +1199,14 @@ impl Parser {
         }
 
         if generics.len() == 0 {
-            Some(Statement::Enum(name, type_, variants, is_simple, has_body, binding, Vec::new(), typedefed))
+            Some(Statement::Enum { name, kind_type: type_, variants, is_simple, has_body, binding, generics_names: Vec::new(), bind_typedefed: typedefed })
         } else {
             let mut generic_names = Vec::new();
             for generic in &generics {
                 generic_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template(
-                name.clone(),
-                Box::new(Statement::Enum(name, type_, variants, is_simple, has_body, binding, generic_names.clone(), typedefed)),
-                generics, generic_names
-            ))
+            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Enum { name, kind_type: type_, variants, is_simple, has_body, binding, generics_names: generic_names.clone(), bind_typedefed: typedefed }), generics, generics_names: generic_names })
         }
     }
 
@@ -1239,7 +1241,7 @@ impl Parser {
         }
 
         self.consume(TokenType::Semicolon, "Expecting ';' after import statement")?;
-        Some(Statement::Import(path, import_type))
+        Some(Statement::Import { path, is_ang: import_type })
     }
 
     fn union_decl(&mut self) -> Option<Statement> {
@@ -1301,7 +1303,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::Union(name, fields, has_body, binding, typedefed))
+        Some(Statement::Union { name, fields, has_body, binding, bind_typedefed: typedefed })
     }
 
     fn bitfield_decl(&mut self) -> Option<Statement> {
@@ -1373,7 +1375,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::Bitfield(name, fields, has_body, binding, typedefed))
+        Some(Statement::Bitfield { name, fields, has_body, binding, bind_typedefed: typedefed })
     }
 
     fn macro_decl(&mut self) -> Option<Statement> {
@@ -1432,7 +1434,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::Macro(name, params, body))
+        Some(Statement::Macro { name, params, body })
     }
 
     fn interface(&mut self) -> Option<Statement> {
@@ -1489,7 +1491,7 @@ impl Parser {
             }
         }
 
-        Some(Statement::Interface(name, declarations, types))
+        Some(Statement::Interface { name, declarations, types })
     }
 
     fn declaration(&mut self, method: bool, incoming_generics: &Vec<Generic>, self_generics: &Vec<Expression>) -> Option<Statement> {

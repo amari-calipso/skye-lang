@@ -204,11 +204,7 @@ impl CodeGen {
                                 }
                             };
 
-                            Expression::Literal(
-                                Rc::from(lit),
-                                Token::dummy(Rc::from("")),
-                                LiteralKind::U8
-                            )
+                            Expression::Literal { value: Rc::from(lit), tok: Token::dummy(Rc::from("")), kind: LiteralKind::U8 }
                         })
                     ))
                 ), true, None
@@ -524,7 +520,7 @@ impl CodeGen {
                 let first = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
                 let (real_fmt_string, tok) = {
-                    if let Expression::Literal(value, string_tok, kind) = &arguments[1] {
+                    if let Expression::Literal { value, tok: string_tok, kind } = &arguments[1] {
                         if matches!(kind, LiteralKind::String) {
                             (value, string_tok)
                         } else {
@@ -563,7 +559,7 @@ impl CodeGen {
 
                             let mut parser = Parser::new(scanner.tokens);
                             if let Some(result) = parser.expression() {
-                                if let Expression::Literal(.., kind) = &result {
+                                if let Expression::Literal { kind, .. } = &result {
                                     if matches!(kind, LiteralKind::String) {
                                         interpolated = false;
                                     }
@@ -576,11 +572,7 @@ impl CodeGen {
                                 continue;
                             }
                         } else {
-                            Expression::Literal(
-                                Rc::from(portion.as_ref()),
-                                tok.clone(),
-                                LiteralKind::String
-                            )
+                            Expression::Literal { value: Rc::from(portion.as_ref()), tok: tok.clone(), kind: LiteralKind::String }
                         }
                     };
 
@@ -631,7 +623,7 @@ impl CodeGen {
                             }
 
                             if matches!(evaluated.type_, SkyeType::Char) {
-                                break 'interpolated_expr_blk Expression::Slice(tok.clone(), vec![portion_expr]);
+                                break 'interpolated_expr_blk Expression::Slice { opening_brace: tok.clone(), items: vec![portion_expr] };
                             }
 
                             let mut search_tok = Token::dummy(Rc::from("asString"));
@@ -670,7 +662,7 @@ impl CodeGen {
 
                                     ast_note!(portion_expr, "Implement a \"asString\" or \"toString\" method to be able to print this type");
                                     token_note!(tok, "This error occurred while evaluating this interpolated string");
-                                    Expression::Literal(Rc::from(""), tok.clone(), LiteralKind::Void)
+                                    Expression::Literal { value: Rc::from(""), tok: tok.clone(), kind: LiteralKind::Void }
                                 }
                             }
                         } else {
@@ -728,11 +720,7 @@ impl CodeGen {
                                             Token::dummy(Rc::from("expect"))
                                         )),
                                         tok.clone(),
-                                        vec![Expression::Literal(
-                                            Rc::from("String interpolation failed writing to file"),
-                                            tok.clone(),
-                                            LiteralKind::String
-                                        )]
+                                        vec![Expression::Literal { value: Rc::from("String interpolation failed writing to file"), tok: tok.clone(), kind: LiteralKind::String }]
                                     )
                                 ));
                             } else {
@@ -817,7 +805,7 @@ impl CodeGen {
                                         question.set_type(TokenType::Question);
                                         custom_tok.set_lexeme(&mangled);
 
-                                        let option_expr = Expression::Unary(question, Box::new(Expression::Variable(custom_tok)), true);
+                                        let option_expr = Expression::Unary { op: question, expr: Box::new(Expression::Variable(custom_tok)), is_prefix: true };
                                         let option_type = ctx.run(|ctx| self.evaluate(&option_expr, index, allow_unknown, ctx)).await;
 
                                         if let SkyeType::Type(inner_option_type) = option_type.type_ {
@@ -893,25 +881,25 @@ impl CodeGen {
             }
             "concat" => {
                 if arguments.len() == 1 {
-                    if let Expression::Literal(value, tok, _) = &arguments[0] {
+                    if let Expression::Literal { value, tok, kind: _ } = &arguments[0] {
                         ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
                         ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
                         ast_note!(callee_expr, "Remove this macro call");
 
-                        let output_expr = Expression::Literal(Rc::clone(value), tok.clone(), LiteralKind::String);
+                        let output_expr = Expression::Literal { value: Rc::clone(value), tok: tok.clone(), kind: LiteralKind::String };
                         Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                     } else {
                         ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
                         ast_note!(arguments[0], "The value must be known at compile time");
 
-                        let output_expr = Expression::Literal(Rc::from(""), Token::dummy(Rc::from("")), LiteralKind::String);
+                        let output_expr = Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String };
                         Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                     }
                 } else {
                     let mut result = String::new();
 
                     for argument in arguments {
-                        if let Expression::Literal(value, ..) = argument {
+                        if let Expression::Literal { value, .. } = argument {
                             result.push_str(value);
                         } else {
                             ast_error!(self, argument, "Argument for @concat macro must be a literal");
@@ -922,7 +910,7 @@ impl CodeGen {
                     let pos = callee_expr.get_pos();
                     let lexeme = Rc::from(result.as_ref());
                     let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
-                    let output_expr = Expression::Literal(Rc::clone(&lexeme), tok, LiteralKind::String);
+                    let output_expr = Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String };
                     Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                 }
             }
@@ -1014,13 +1002,9 @@ impl CodeGen {
                                     arg_pos.start, arg_pos.end, arg_pos.line
                                 );
 
-                                let ref_expr = Expression::Unary(
-                                    custom_tok,
-                                    Box::new(Expression::Grouping(
+                                let ref_expr = Expression::Unary { op: custom_tok, expr: Box::new(Expression::Grouping(
                                         Box::new(arguments[i - arguments_mod].clone())
-                                    )),
-                                    true
-                                );
+                                    )), is_prefix: true };
 
                                 ctx.run(|ctx| self.evaluate(&ref_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -1089,7 +1073,7 @@ impl CodeGen {
                 SkyeValue::new(Rc::from(call_output.as_ref()), *return_type.clone(), false)
             }
             SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
-                if let Statement::Function(_, params, return_type_expr, ..) = definition {
+                if let Statement::Function { name: _, params, return_type: return_type_expr, .. } = definition {
                     if params.len() != arguments_len {
                         ast_error!(
                             self, expr,
@@ -1168,13 +1152,9 @@ impl CodeGen {
                                             arg_pos.start, arg_pos.end, arg_pos.line
                                         );
 
-                                        let ref_expr = Expression::Unary(
-                                            custom_tok,
-                                            Box::new(Expression::Grouping(
+                                        let ref_expr = Expression::Unary { op: custom_tok, expr: Box::new(Expression::Grouping(
                                                 Box::new(arguments[i - arguments_mod].clone())
-                                            )),
-                                            true
-                                        );
+                                            )), is_prefix: true };
 
                                         ctx.run(|ctx| self.evaluate(&ref_expr, index, allow_unknown, ctx)).await
                                     } else {
@@ -1607,23 +1587,15 @@ impl CodeGen {
 
                                             curr_expr = curr_expr.replace_variable(
                                                 &Rc::from("PANIC_POS"),
-                                                &Expression::Literal(
-                                                    Rc::from(format!(
+                                                &Expression::Literal { value: Rc::from(format!(
                                                         "{}: line {}, pos {}",
                                                         escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                                    )),
-                                                    Token::dummy(Rc::from("")),
-                                                    LiteralKind::String
-                                                )
+                                                    )), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
                                             );
                                         } else {
                                             curr_expr = curr_expr.replace_variable(
                                                 &Rc::from("PANIC_POS"),
-                                                &Expression::Literal(
-                                                    Rc::from(""),
-                                                    Token::dummy(Rc::from("")),
-                                                    LiteralKind::String
-                                                )
+                                                &Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
                                             );
                                         }
                                     }
@@ -1631,7 +1603,7 @@ impl CodeGen {
                                 MacroParams::Variable(var_name) => {
                                     curr_expr = curr_expr.replace_variable(
                                         &var_name.lexeme,
-                                        &Expression::Slice(var_name.clone(), arguments.clone())
+                                        &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }
                                     );
                                 }
                                 MacroParams::None => unreachable!()
@@ -1660,7 +1632,7 @@ impl CodeGen {
                                     MacroParams::Variable(var_name) => {
                                         *statement = statement.replace_variable(
                                             &var_name.lexeme,
-                                            &Expression::Slice(var_name.clone(), arguments.clone())
+                                            &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }
                                         );
                                     }
                                     MacroParams::None => unreachable!()
@@ -1993,13 +1965,9 @@ impl CodeGen {
             panic_tok.set_lexeme("panic");
 
             let panic_stmt = Statement::Expression(Expression::Call(
-                Box::new(Expression::Unary(
-                    at_tok,
-                    Box::new(Expression::Variable(panic_tok)),
-                    true
-                )),
+                Box::new(Expression::Unary { op: at_tok, expr: Box::new(Expression::Variable(panic_tok)), is_prefix: true }),
                 tok.clone(),
-                vec![Expression::Literal(Rc::from(msg), tok.clone(), LiteralKind::String)]
+                vec![Expression::Literal { value: Rc::from(msg), tok: tok.clone(), kind: LiteralKind::String }]
             ));
 
             let _ = ctx.run(|ctx| self.execute(&panic_stmt, index, ctx)).await;
@@ -2116,7 +2084,7 @@ impl CodeGen {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
                 SkyeValue::new(Rc::from(format!("({})", inner.value)), inner.type_, inner.is_const)
             }
-            Expression::Slice(opening_brace, items) => {
+            Expression::Slice { opening_brace, items } => {
                 let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
                 let mut items_stringified = String::from("{");
                 items_stringified.push_str(&first_item.value);
@@ -2168,11 +2136,7 @@ impl CodeGen {
 
                 drop(env);
 
-                let subscript_expr = Expression::Subscript(
-                    Box::new(Expression::Variable(slice_tok)),
-                    opening_brace.clone(),
-                    vec![Expression::Variable(type_tok)]
-                );
+                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(slice_tok)), paren: opening_brace.clone(), args: vec![Expression::Variable(type_tok)] };
 
                 let return_type = ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await;
 
@@ -2195,7 +2159,7 @@ impl CodeGen {
                     panic!("struct template generation resulted in not a type");
                 }
             }
-            Expression::Literal(value, _, kind) => {
+            Expression::Literal { value, tok: _, kind } => {
                 match kind {
                     LiteralKind::Void => SkyeValue::special(SkyeType::Void),
 
@@ -2272,7 +2236,7 @@ impl CodeGen {
                     }
                 }
             }
-            Expression::Unary(op, inner_expr, is_prefix) => {
+            Expression::Unary { op, expr: inner_expr, is_prefix } => {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
 
                 if *is_prefix {
@@ -2335,18 +2299,10 @@ impl CodeGen {
                                 let mut custom_token = op.clone();
                                 custom_token.set_lexeme("core_DOT_Result");
 
-                                let subscript_expr = Expression::Subscript(
-                                    Box::new(Expression::Variable(custom_token)),
-                                    op.clone(),
-                                    vec![
-                                        Expression::Literal(
-                                            Rc::from(""),
-                                            op.clone(),
-                                            LiteralKind::Void
-                                        ),
+                                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(custom_token)), paren: op.clone(), args: vec![
+                                        Expression::Literal { value: Rc::from(""), tok: op.clone(), kind: LiteralKind::Void },
                                         *inner_expr.clone()
-                                    ]
-                                );
+                                    ] };
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -2371,11 +2327,7 @@ impl CodeGen {
                                 let mut custom_token = op.clone();
                                 custom_token.set_lexeme("core_DOT_Option");
 
-                                let subscript_expr = Expression::Subscript(
-                                    Box::new(Expression::Variable(custom_token)),
-                                    op.clone(),
-                                    vec![*inner_expr.clone()]
-                                );
+                                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(custom_token)), paren: op.clone(), args: vec![*inner_expr.clone()] };
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -2930,7 +2882,7 @@ impl CodeGen {
                     }
                 }
             }
-            Expression::Binary(left_expr, op, right_expr) => {
+            Expression::Binary { left: left_expr, op, right: right_expr } => {
                 let left = ctx.run(|ctx| self.evaluate(&left_expr, index, allow_unknown, ctx)).await;
 
                 match op.type_ {
@@ -3279,14 +3231,10 @@ impl CodeGen {
                                 let mut custom_token = op.clone();
                                 custom_token.set_lexeme("core_DOT_Result");
 
-                                let subscript_expr = Expression::Subscript(
-                                    Box::new(Expression::Variable(custom_token)),
-                                    op.clone(),
-                                    vec![
+                                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(custom_token)), paren: op.clone(), args: vec![
                                         *left_expr.clone(),
                                         *right_expr.clone(),
-                                    ]
-                                );
+                                    ] };
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -3332,7 +3280,7 @@ impl CodeGen {
                     SkyeValue::get_unknown()
                 }
             }
-            Expression::Assign(target_expr, op, value_expr) => {
+            Expression::Assign { target: target_expr, op, value: value_expr } => {
                 let target = ctx.run(|ctx| self.evaluate(&target_expr, index, allow_unknown, ctx)).await;
                 let target_type = target.type_.clone();
 
@@ -3453,7 +3401,7 @@ impl CodeGen {
                 let callee = ctx.run(|ctx| self.evaluate(&callee_expr, index, allow_unknown, ctx)).await;
                 ctx.run(|ctx| self.call(&callee, expr, callee_expr, arguments, index, allow_unknown, ctx)).await
             }
-            Expression::FnPtr(kw, return_type_expr, params) => {
+            Expression::FnPtr { kw, return_type: return_type_expr, params } => {
                 let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, index, allow_unknown, ctx)).await;
                 let (params_string, params_output) = ctx.run(|ctx| self.get_params(params, None, false, index, allow_unknown, ctx)).await;
 
@@ -3464,7 +3412,7 @@ impl CodeGen {
 
                 SkyeValue::new(mangled.into(), type_, true)
             }
-            Expression::Ternary(_, cond_expr, then_branch_expr, else_branch_expr) => {
+            Expression::Ternary { tok: _, condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr } => {
                 let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, allow_unknown, ctx)).await;
 
                 match cond.type_ {
@@ -3579,7 +3527,7 @@ impl CodeGen {
 
                 SkyeValue::new(Rc::from(tmp_var), then_branch.type_, true)
             }
-            Expression::CompoundLiteral(identifier_expr, _, fields) => {
+            Expression::CompoundLiteral { type_: identifier_expr, closing_brace: _, fields } => {
                 let identifier_type = ctx.run(|ctx| self.evaluate(&identifier_expr, index, allow_unknown, ctx)).await;
 
                 match &identifier_type.type_ {
@@ -3749,7 +3697,7 @@ impl CodeGen {
                         }
                     }
                     SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
-                        if let Statement::Struct(struct_name, defined_fields, ..) = &definition {
+                        if let Statement::Struct { name: struct_name, fields: defined_fields, .. } = &definition {
                             if fields.len() != defined_fields.len() {
                                 ast_error!(self, expr, format!(
                                     "Expecting {} fields but got {}",
@@ -4053,7 +4001,7 @@ impl CodeGen {
                     }
                 }
             }
-            Expression::Subscript(subscripted_expr, paren, arguments) => {
+            Expression::Subscript { subscripted: subscripted_expr, paren, args: arguments } => {
                 let subscripted = ctx.run(|ctx| self.evaluate(&subscripted_expr, index, allow_unknown, ctx)).await;
 
                 let new_subscripted = subscripted.follow_reference(self.external_zero_check(paren, index));
@@ -4404,7 +4352,7 @@ impl CodeGen {
                                 let mut operator_token = name.clone();
                                 operator_token.set_type(TokenType::At);
 
-                                let output_expr = Expression::Unary(operator_token, Box::new(Expression::Variable(search_tok)), true);
+                                let output_expr = Expression::Unary { op: operator_token, expr: Box::new(Expression::Variable(search_tok)), is_prefix: true };
                                 return ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await;
                             } else {
                                 return SkyeValue::new(value, var.type_, var.is_const);
@@ -4566,7 +4514,7 @@ impl CodeGen {
                     self.definitions[index].push(";\n");
                 }
             }
-            Statement::VarDecl(name, initializer, type_spec_expr, is_const, qualifiers) => {
+            Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, qualifiers } => {
                 let value = {
                     if let Some(init) = initializer {
                         Some(ctx.run(|ctx| self.evaluate(init, index, false, ctx)).await)
@@ -4780,7 +4728,7 @@ impl CodeGen {
                     self.definitions[index].push("}\n");
                 }
             }
-            Statement::Function(name, params, return_type_expr, body, qualifiers, generics, bind) => {
+            Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind } => {
                 let mut full_name = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
 
                 let env = self.globals.borrow();
@@ -4996,7 +4944,7 @@ impl CodeGen {
 
                 return Ok(Some(type_));
             }
-            Statement::If(kw, cond_expr, then_branch, else_branch) => {
+            Statement::If { kw, condition: cond_expr, then_branch, else_branch } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this if statement inside a function");
@@ -5090,7 +5038,7 @@ impl CodeGen {
                     }
                 }
             }
-            Statement::While(kw, cond_expr, body) => {
+            Statement::While { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this while loop inside a function");
@@ -5168,7 +5116,7 @@ impl CodeGen {
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
             }
-            Statement::For(kw, initializer, cond_expr, increments, body) => {
+            Statement::For { kw, initializer, condition: cond_expr, increments, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this for loop inside a function");
@@ -5255,7 +5203,7 @@ impl CodeGen {
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
             }
-            Statement::DoWhile(kw, cond_expr, body) => {
+            Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this do-while loop inside a function");
@@ -5333,7 +5281,7 @@ impl CodeGen {
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
             }
-            Statement::Return(kw, ret_expr) => {
+            Statement::Return { kw, value: ret_expr } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Cannot return from top-level code");
                     token_note!(kw, "Remove this return statement");
@@ -5421,7 +5369,7 @@ impl CodeGen {
 
                 return Err(ExecutionInterrupt::Return(Rc::from(buf.as_ref())))
             }
-            Statement::Struct(name, fields, has_body, binding, generics, bind_typedefed) => {
+            Statement::Struct { name, fields, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
                 let full_name = self.get_generics(&base_name, generics, &self.environment);
 
@@ -5586,7 +5534,7 @@ impl CodeGen {
 
                 return Ok(Some(output_type));
             }
-            Statement::Impl(struct_expr, statements) => {
+            Statement::Impl { object: struct_expr, declarations: statements } => {
                 let struct_name = ctx.run(|ctx| self.evaluate(&struct_expr, index, false, ctx)).await;
 
                 match &struct_name.type_ {
@@ -5629,8 +5577,8 @@ impl CodeGen {
                     }
                     SkyeType::Template(_, definition, ..) => {
                         match definition {
-                            Statement::Struct(..) |
-                            Statement::Enum(..) => {
+                            Statement::Struct { .. } |
+                            Statement::Enum { .. } => {
                                 let mut env = self.globals.borrow_mut();
                                 env.define(
                                     Rc::from("Self"),
@@ -5675,7 +5623,7 @@ impl CodeGen {
                     }
                 }
             }
-            Statement::Namespace(name, statements) => {
+            Statement::Namespace { name, body: statements } => {
                 if matches!(self.curr_function, CurrentFn::Some(..)) {
                     token_error!(self, name, "Namespaces are only allowed in the global scope");
                 }
@@ -5719,7 +5667,7 @@ impl CodeGen {
                     self.curr_name = previous_name;
                 }
             }
-            Statement::Use(use_expr, identifier, typedef, bind) => {
+            Statement::Use { use_expr, as_name: identifier, typedef, bind } => {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, index, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
@@ -5783,7 +5731,7 @@ impl CodeGen {
                 let mut env = self.environment.borrow_mut();
                 env.undef(Rc::clone(name));
             }
-            Statement::Enum(name, type_expr, variants, is_simple, has_body, binding, generics, bind_typedefed) => {
+            Statement::Enum { name, kind_type: type_expr, variants, is_simple, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
                 let full_name = self.get_generics(&base_name, generics, &self.environment);
 
@@ -6229,15 +6177,15 @@ impl CodeGen {
                     return Ok(Some(final_type));
                 }
             }
-            Statement::Defer(kw, statement) => {
+            Statement::Defer { kw, statement } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Remove this defer statement");
                 }
 
                 match &**statement {
-                    Statement::Return(kw, _) | Statement::Break(kw) |
-                    Statement::Continue(kw) | Statement::Defer(kw, _) => {
+                    Statement::Return { kw, value: _ } | Statement::Break(kw) |
+                    Statement::Continue(kw) | Statement::Defer { kw, statement: _ } => {
                         token_error!(self, kw, "Cannot use this statement inside a defer statement");
                     }
                     _ => ()
@@ -6245,7 +6193,7 @@ impl CodeGen {
 
                 self.deferred.borrow_mut().last_mut().unwrap().push(*statement.clone());
             }
-            Statement::Switch(kw, switch_expr, cases) => {
+            Statement::Switch { kw, expr: switch_expr, cases } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Remove this switch statement");
@@ -6433,7 +6381,7 @@ impl CodeGen {
                     self.definitions[index].push("}\n");
                 }
             }
-            Statement::Template(name, definition, generics, generics_names) => {
+            Statement::Template { name, declaration: definition, generics, generics_names } => {
                 let full_name = self.get_name(&name.lexeme);
                 let mut env = self.globals.borrow_mut();
                 let cloned_globals = Rc::new(RefCell::new(env.clone()));
@@ -6464,7 +6412,7 @@ impl CodeGen {
                     token_error!(self, kw, "Can only use continue inside loops");
                 }
             }
-            Statement::Import(path_tok, import_type) => {
+            Statement::Import { path: path_tok, is_ang: import_type } => {
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
                 let skye_import = {
@@ -6530,7 +6478,7 @@ impl CodeGen {
                     }
                 }
             }
-            Statement::Union(name, fields, has_body, binding, bind_typedefed) => {
+            Statement::Union { name, fields, has_body, binding, bind_typedefed } => {
                 let full_name = self.get_name(&name.lexeme);
 
                 let env = self.globals.borrow();
@@ -6686,7 +6634,7 @@ impl CodeGen {
                     )
                 );
             }
-            Statement::Bitfield(name, fields, has_body, binding, bind_typedefed) => {
+            Statement::Bitfield { name, fields, has_body, binding, bind_typedefed } => {
                 let full_name = self.get_name(&name.lexeme);
 
                 let env = self.globals.borrow();
@@ -6828,7 +6776,7 @@ impl CodeGen {
                     )
                 );
             }
-            Statement::Macro(name, params, body) => {
+            Statement::Macro { name, params, body } => {
                 let full_name = {
                     if matches!(body, MacroBody::Binding(_)) {
                         if self.curr_name != "" {
@@ -6857,7 +6805,7 @@ impl CodeGen {
                     )
                 );
             }
-            Statement::Foreach(kw, var_name, iterator_expr, body) => {
+            Statement::Foreach { kw, variable_name: var_name, iterator: iterator_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this for loop inside a function");
@@ -7060,7 +7008,7 @@ impl CodeGen {
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
             }
-            Statement::Interface(name, declarations, types) => {
+            Statement::Interface { name, declarations, types } => {
                 let full_name = self.get_name(&name.lexeme);
 
                 if let Some(body) = declarations {
@@ -7097,7 +7045,7 @@ impl CodeGen {
                             let mut kind_tok = name.clone();
                             kind_tok.set_lexeme("kind");
 
-                            if let Statement::Function(fn_name, params, return_type, fn_body, qualifiers, generics_names, bind) = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind } = statement {
                                 let mut args = Vec::new();
                                 for (i, param) in params.iter().enumerate() {
                                     let name = param.name.as_ref().expect("param name wasn't available in interface");
@@ -7131,20 +7079,7 @@ impl CodeGen {
                                                         false
                                                     )
                                                 ]),
-                                                vec![Statement::Return(
-                                                    name_tok.clone(),
-                                                    Some(Expression::Call(
-                                                        Box::new(Expression::Get(
-                                                            Box::new(Expression::Get(
-                                                                Box::new(Expression::Variable(self_tok.clone())),
-                                                                name_tok.clone()
-                                                            )),
-                                                            fn_name.clone()
-                                                        )),
-                                                        name_tok,
-                                                        args.clone()
-                                                    ))
-                                                )]
+                                                vec![Statement::Return { kw: name_tok.clone(), value: Some(Expression::Call(Box::new(Expression::Get(Box::new(Expression::Get(Box::new(Expression::Variable(self_tok.clone())),name_tok.clone())),fn_name.clone())),name_tok,args.clone())) }]
                                             ));
                                         }
                                     } else {
@@ -7157,22 +7092,7 @@ impl CodeGen {
                                     cases.push(SwitchCase::new(None, body.clone()));
                                 }
 
-                                functions.push(Statement::Function(
-                                    fn_name.clone(),
-                                    params.clone(),
-                                    return_type.clone(),
-                                    Some(vec![Statement::Switch(
-                                        name.clone(),
-                                        Expression::Get(
-                                            Box::new(Expression::Variable(self_tok)),
-                                            kind_tok
-                                        ),
-                                        cases
-                                    )]),
-                                    qualifiers.clone(),
-                                    generics_names.clone(),
-                                    *bind
-                                ));
+                                functions.push(Statement::Function { name: fn_name.clone(), params: params.clone(), return_type: return_type.clone(), body: Some(vec![Statement::Switch { kw: name.clone(), expr: Expression::Get(Box::new(Expression::Variable(self_tok)),kind_tok), cases: cases }]), qualifiers: qualifiers.clone(), generics_names: generics_names.clone(), bind: *bind });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
                             }
@@ -7181,17 +7101,14 @@ impl CodeGen {
                         let mut custom_tok = name.clone();
                         custom_tok.set_lexeme("i32");
 
-                        let enum_def = Statement::Enum(
-                            name.clone(), Expression::Variable(custom_tok.clone()), variants,
-                            false, true, None, Vec::new(), false
-                        );
+                        let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok.clone()), variants, is_simple: false, has_body: true, binding: None, generics_names: Vec::new(), bind_typedefed: false };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
 
                         let old_errors = self.errors;
 
                         custom_tok.set_lexeme(&full_name);
-                        let impl_def = Statement::Impl(Expression::Variable(custom_tok), functions);
+                        let impl_def = Statement::Impl { object: Expression::Variable(custom_tok), declarations: functions };
 
                         if old_errors != self.errors {
                             token_note!(
@@ -7208,16 +7125,13 @@ impl CodeGen {
                         let mut functions = Vec::new();
 
                         for statement in body {
-                            if let Statement::Function(fn_name, params, return_type, fn_body, qualifiers, generics_names, bind) = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind } = statement {
                                 // if the interface function has a body, use that as default implementation
                                 if fn_body.is_some() {
                                     token_error!(self, fn_name, "Cannot define function body in forward declaration of interface");
                                 }
 
-                                functions.push(Statement::Function(
-                                    fn_name.clone(), params.clone(), return_type.clone(),
-                                    None, qualifiers.clone(), generics_names.clone(), *bind
-                                ));
+                                functions.push(Statement::Function { name: fn_name.clone(), params: params.clone(), return_type: return_type.clone(), body: None, qualifiers: qualifiers.clone(), generics_names: generics_names.clone(), bind: *bind });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
                             }
@@ -7226,15 +7140,12 @@ impl CodeGen {
                         let mut custom_tok = name.clone();
                         custom_tok.set_lexeme("i32");
 
-                        let enum_def = Statement::Enum(
-                            name.clone(), Expression::Variable(custom_tok.clone()),
-                            Vec::new(), false, false, None, Vec::new(), false
-                        );
+                        let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok.clone()), variants: Vec::new(), is_simple: false, has_body: false, binding: None, generics_names: Vec::new(), bind_typedefed: false };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
 
                         custom_tok.set_lexeme(&full_name);
-                        let impl_def = Statement::Impl(Expression::Variable(custom_tok), functions);
+                        let impl_def = Statement::Impl { object: Expression::Variable(custom_tok), declarations: functions };
 
                         let _ = ctx.run(|ctx| self.execute(&impl_def, index, ctx)).await;
                     }
@@ -7244,10 +7155,7 @@ impl CodeGen {
                     let mut custom_tok = name.clone();
                     custom_tok.set_lexeme("i32");
 
-                    let enum_def = Statement::Enum(
-                        name.clone(), Expression::Variable(custom_tok),
-                        Vec::new(), false, false, None, Vec::new(), false
-                    );
+                    let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok), variants: Vec::new(), is_simple: false, has_body: false, binding: None, generics_names: Vec::new(), bind_typedefed: false };
 
                     let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
                 }
