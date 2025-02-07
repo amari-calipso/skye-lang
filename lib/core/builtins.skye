@@ -577,7 +577,7 @@ namespace core {
             }
 
             const intPart = @cast(i64, value);
-            const decPart = value - @cast(T, intPart);
+            let decPart = value - @cast(T, intPart);
 
             core::fmt::intToString(buf, intPart);
 
@@ -588,7 +588,7 @@ namespace core {
 
                 let tmpBuf = core::Array::new[char, U]();
                 defer tmpBuf.free();
-                core::fmt::__reversedIntToString(&tmpBuf, decPart);
+                core::fmt::__reversedIntToString(&tmpBuf, @cast(u64, decPart));
                 tmpBuf.reverse();
                 
                 while tmpBuf.length < decPrecision {
@@ -612,7 +612,7 @@ namespace core {
         }
 
         fn floatToBuf[T: AnyFloat, U](const buf: &U, const value: T) {
-            const string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value);
+            const string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value, 4);
             defer string.free();
             buf.pushString(string.asString());
         }
@@ -625,7 +625,7 @@ namespace core {
         }
 
         fn __floatToFile[T: AnyFloat, U](const file: &U, const value: T) {
-            let string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value);
+            let string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value, 4);
             const r = file.write(string.asString());
             string.free();
             r.expect("String interpolation failed writing to file");
