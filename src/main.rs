@@ -11,6 +11,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 // - automatically escape strings when concatenating
 // - panic when trying to access unset variant of sum type enum
 // - support % operator for floats (reimplement or bind fmod and call it implictly)
+// - implement macro expander step (currently done in codegen, this breaks consecutive macro expansions)
 // - implement downloading packages via http
 // - check that copy constructors and destructors are implemented properly
 // - improve error messages related to desugaring (especially interfaces)

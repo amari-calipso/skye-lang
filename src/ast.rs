@@ -243,7 +243,7 @@ impl Ast for Expression {
             Expression::Literal { .. } => self.clone(),
             Expression::Variable(tok) => {
                 if tok.lexeme.as_ref() == name.as_ref() {
-                    replace_expr.clone()
+                    Expression::Grouping(Box::new(replace_expr.clone()))
                 } else {
                     self.clone()
                 }
