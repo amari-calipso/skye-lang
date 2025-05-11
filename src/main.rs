@@ -6,21 +6,6 @@ use serde_json::Value;
 use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, CompileMode, MAX_PACKAGE_SIZE_BYTES};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-// TODO
-// - cd to project directory when calling build.skye
-// - automatically escape strings when concatenating
-// - panic when trying to access unset variant of sum type enum
-// - support % operator for floats (reimplement or bind fmod and call it implictly)
-// - implement macro expander step (currently done in codegen, this breaks consecutive macro expansions)
-// - implement downloading packages via http
-// - check that copy constructors and destructors are implemented properly
-// - improve error messages related to desugaring (especially interfaces)
-// - windows support!
-// - optional warnings and notes
-// - extend standard library (still needs A LOT of work)
-// - some compile time evaluation and more warnings: unused variables/parameters, better unreachable code detection, and so on
-// - unicode support!
-
 const BUILD_FILE_INIT: &[u8] = concat!(
     "import \"build\";\n\n",
     "fn main() !void {\n",
