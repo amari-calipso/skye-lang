@@ -11,8 +11,8 @@ macro_rules! match_literal {
         if $parser.match_(&[TokenType::$type_]) {
             let prev = $parser.previous();
             return Some(Expression::Literal {
-                value: prev.lexeme.clone(), 
-                tok: prev.clone(), 
+                value: prev.lexeme.clone(),
+                tok: prev.clone(),
                 kind: LiteralKind::$type_
             });
         }
@@ -46,8 +46,8 @@ macro_rules! prefix_unary {
                 let op = self.previous().clone();
                 let right = self.$name()?;
                 return Some(Expression::Unary {
-                    op, 
-                    expr: Box::new(right), 
+                    op,
+                    expr: Box::new(right),
                     is_prefix: true
                 });
             }
@@ -65,8 +65,8 @@ macro_rules! suffix_unary {
             if self.match_($types) {
                 let op = self.previous().clone();
                 return Some(Expression::Unary {
-                    op, 
-                    expr: Box::new(expr), 
+                    op,
+                    expr: Box::new(expr),
                     is_prefix: false
                 });
             }

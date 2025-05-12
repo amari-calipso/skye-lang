@@ -102,7 +102,7 @@ impl BitfieldField {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Expression {
     Binary { left: Box<Expression>, op: Token, right: Box<Expression> },
-    Literal { value: Rc<str>, tok: Token, kind: LiteralKind }, 
+    Literal { value: Rc<str>, tok: Token, kind: LiteralKind },
     Unary { op: Token, expr: Box<Expression>, is_prefix: bool },
     Grouping(Box<Expression>),
     Variable(Token), // name
@@ -114,7 +114,7 @@ pub enum Expression {
     Subscript { subscripted: Box<Expression>, paren: Token, args: Vec<Expression> },
     Get(Box<Expression>, Token), // object name
     StaticGet(Box<Expression>, Token, bool), // object name gets_macro
-    Slice { opening_brace: Token, items: Vec<Expression> }, 
+    Slice { opening_brace: Token, items: Vec<Expression> },
 }
 
 impl Ast for Expression {
@@ -177,7 +177,7 @@ impl Ast for Expression {
 
                 if kw.line != return_type_pos.line || kw.filename != return_type_pos.filename {
                     AstPos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, kw.end, kw.line)
-                } else { 
+                } else {
                     AstPos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, return_type_pos.end, kw.line)
                 }
             }
@@ -262,8 +262,8 @@ impl Ast for Expression {
             }
             Expression::Call(callee, paren, args) => {
                 Expression::Call(
-                    Box::new(callee.replace_variable(name, replace_expr)), 
-                    paren.clone(), 
+                    Box::new(callee.replace_variable(name, replace_expr)),
+                    paren.clone(),
                     args.iter().map(|x| x.replace_variable(name, replace_expr)).collect()
                 )
             }
@@ -298,6 +298,13 @@ impl Ast for Expression {
 }
 
 impl Expression {
+    pub fn get_inner(&self) -> Expression {
+        match self {
+            Expression::Grouping(inner) => *inner.clone(),
+            _ => self.clone()
+        }
+    }
+
     pub fn is_valid_assignment_target(&self) -> bool {
         match self {
             Expression::Variable(_) | Expression::Get(..) | Expression::StaticGet(..) | Expression::Subscript { .. } => true,
@@ -363,97 +370,97 @@ pub enum Statement {
     Continue(Token), // kw
     Block(Token, Vec<Statement>), // kw statements
     While { kw: Token, condition: Expression, body: Box<Statement> },
-    DoWhile { kw: Token, condition: Expression, body: Box<Statement> }, 
+    DoWhile { kw: Token, condition: Expression, body: Box<Statement> },
     Return { kw: Token, value: Option<Expression> },
     Impl { object: Expression, declarations: Vec<Statement> },
     Namespace { name: Token, body: Vec<Statement> },
     Defer { kw: Token, statement: Box<Statement> },
     Switch { kw: Token, expr: Expression, cases: Vec<SwitchCase> },
     Import { path: Token, type_: ImportType },
-    Macro { name: Token, params: MacroParams, body: MacroBody }, 
-    VarDecl { 
-        name: Token, 
-        initializer: Option<Expression>, 
-        type_: Option<Expression>, 
-        is_const: bool, 
-        qualifiers: Vec<Token> 
+    Macro { name: Token, params: MacroParams, body: MacroBody },
+    VarDecl {
+        name: Token,
+        initializer: Option<Expression>,
+        type_: Option<Expression>,
+        is_const: bool,
+        qualifiers: Vec<Token>
     },
-    If { 
-        kw: Token, 
-        condition: Expression, 
-        then_branch: Box<Statement>, 
-        else_branch: Option<Box<Statement>> 
+    If {
+        kw: Token,
+        condition: Expression,
+        then_branch: Box<Statement>,
+        else_branch: Option<Box<Statement>>
     },
-    For { 
-        kw: Token, 
-        initializer: Option<Box<Statement>>, 
-        condition: Expression, 
-        increments: Vec<Expression>, 
+    For {
+        kw: Token,
+        initializer: Option<Box<Statement>>,
+        condition: Expression,
+        increments: Vec<Expression>,
         body: Box<Statement>
     },
-    Function { 
-        name: Token, 
-        params: Vec<FunctionParam>, 
-        return_type: Expression, 
-        body: Option<Vec<Statement>>, 
-        qualifiers: Vec<Token>, 
-        generics_names: Vec<Token>, 
-        bind: bool 
+    Function {
+        name: Token,
+        params: Vec<FunctionParam>,
+        return_type: Expression,
+        body: Option<Vec<Statement>>,
+        qualifiers: Vec<Token>,
+        generics_names: Vec<Token>,
+        bind: bool
     },
-    Struct { 
-        name: Token, 
-        fields: Vec<StructField>, 
-        has_body: bool, 
-        binding: Option<Token>, 
-        generics_names: Vec<Token>, 
-        bind_typedefed: bool 
+    Struct {
+        name: Token,
+        fields: Vec<StructField>,
+        has_body: bool,
+        binding: Option<Token>,
+        generics_names: Vec<Token>,
+        bind_typedefed: bool
     },
-    Use { 
-        use_expr: Expression, 
-        as_name: Token, 
-        typedef: bool, 
-        bind: bool 
+    Use {
+        use_expr: Expression,
+        as_name: Token,
+        typedef: bool,
+        bind: bool
     },
-    Enum { 
-        name: Token, 
-        kind_type: Expression, 
-        variants: Vec<EnumVariant>, 
-        is_simple: bool, 
-        has_body: bool, 
-        binding: Option<Token>, 
-        generics_names: Vec<Token>, 
-        bind_typedefed: bool 
+    Enum {
+        name: Token,
+        kind_type: Expression,
+        variants: Vec<EnumVariant>,
+        is_simple: bool,
+        has_body: bool,
+        binding: Option<Token>,
+        generics_names: Vec<Token>,
+        bind_typedefed: bool
     },
-    Template { 
-        name: Token, 
-        declaration: Box<Statement>, 
-        generics: Vec<Generic>, 
-        generics_names: Vec<Token> 
+    Template {
+        name: Token,
+        declaration: Box<Statement>,
+        generics: Vec<Generic>,
+        generics_names: Vec<Token>
     },
-    Union { 
-        name: Token, 
-        fields: Vec<StructField>, 
-        has_body: bool, 
-        binding: Option<Token>, 
-        bind_typedefed: bool 
+    Union {
+        name: Token,
+        fields: Vec<StructField>,
+        has_body: bool,
+        binding: Option<Token>,
+        bind_typedefed: bool
     },
-    Bitfield { 
-        name: Token, 
-        fields: Vec<BitfieldField>, 
-        has_body: bool, 
-        binding: Option<Token>, 
-        bind_typedefed: bool 
+    Bitfield {
+        name: Token,
+        fields: Vec<BitfieldField>,
+        has_body: bool,
+        binding: Option<Token>,
+        bind_typedefed: bool
     },
-    Foreach { 
-        kw: Token, 
-        variable_name: Token, 
-        iterator: Expression, 
-        body: Box<Statement> 
+    Foreach {
+        kw: Token,
+        variable_name: Token,
+        iterator: Expression,
+        body: Box<Statement>
     },
-    Interface { 
-        name: Token, 
-        declarations: Option<Vec<Statement>>, 
-        types: Option<Vec<Expression>> 
+    Interface {
+        name: Token,
+        declarations: Option<Vec<Statement>>,
+        types: Option<Vec<Expression>>
     }
 }
 
@@ -463,11 +470,11 @@ impl Ast for Statement {
     fn get_pos(&self) -> AstPos {
         match self {
             Statement::Empty | Statement::Undef(_) => AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0),
-            Statement::Expression(expr) | 
-            Statement::Impl { object: expr, declarations: _ } | 
+            Statement::Expression(expr) |
+            Statement::Impl { object: expr, declarations: _ } |
             Statement::Use { use_expr: expr, .. } => expr.get_pos(),
-        
-            Statement::VarDecl { name: tok, .. } | 
+
+            Statement::VarDecl { name: tok, .. } |
             Statement::Block(tok, _) |
             Statement::If { kw: tok, .. } |
             Statement::While { kw: tok, .. } |
@@ -490,13 +497,13 @@ impl Ast for Statement {
             Statement::Foreach { kw: tok, .. } |
             Statement::Interface { name: tok, .. } => {
                 AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
-            } 
+            }
         }
     }
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Statement {
         match self {
-            Statement::Empty | Statement::Undef(_) |  Statement::Break(_) | Statement::Continue(_) | 
+            Statement::Empty | Statement::Undef(_) |  Statement::Break(_) | Statement::Continue(_) |
             Statement::Import { .. } | Statement::Bitfield { .. } => self.clone(),
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),
@@ -557,7 +564,7 @@ impl Ast for Statement {
             Statement::Template { name: template_name, declaration, generics, generics_names } => {
                 Statement::Template { name: template_name.clone(), declaration: Box::new(declaration.replace_variable(name, replace_expr)), generics: generics.iter().map(
                         |x| Generic::new(
-                            x.name.clone(), 
+                            x.name.clone(),
                             x.bounds.as_ref().map(|bounds| bounds.replace_variable(name, replace_expr)),
                             x.default.as_ref().map(|default| default.replace_variable(name, replace_expr))
                         )

@@ -520,7 +520,7 @@ impl CodeGen {
                 let first = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
                 let (real_fmt_string, tok) = {
-                    if let Expression::Literal { value, tok: string_tok, kind } = &arguments[1] {
+                    if let Expression::Literal { value, tok: string_tok, kind } = arguments[1].get_inner() {
                         if matches!(kind, LiteralKind::String) {
                             (value, string_tok)
                         } else {
@@ -534,7 +534,7 @@ impl CodeGen {
                     }
                 };
 
-                let mut splitted = self.split_interpolated_string(real_fmt_string, tok);
+                let mut splitted = self.split_interpolated_string(&real_fmt_string, &tok);
 
                 if is_fprintln {
                     splitted.push((String::from("\\n"), false));
@@ -559,7 +559,7 @@ impl CodeGen {
 
                             let mut parser = Parser::new(scanner.tokens);
                             if let Some(result) = parser.expression() {
-                                if let Expression::Literal { kind, .. } = &result {
+                                if let Expression::Literal { kind, .. } = result.get_inner() {
                                     if matches!(kind, LiteralKind::String) {
                                         interpolated = false;
                                     }
@@ -881,12 +881,12 @@ impl CodeGen {
             }
             "concat" => {
                 if arguments.len() == 1 {
-                    if let Expression::Literal { value, tok, kind: _ } = &arguments[0] {
+                    if let Expression::Literal { value, tok, .. } = arguments[0].get_inner() {
                         ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
                         ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
                         ast_note!(callee_expr, "Remove this macro call");
 
-                        let output_expr = Expression::Literal { value: Rc::clone(value), tok: tok.clone(), kind: LiteralKind::String };
+                        let output_expr = Expression::Literal { value, tok, kind: LiteralKind::String };
                         Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                     } else {
                         ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
@@ -899,8 +899,8 @@ impl CodeGen {
                     let mut result = String::new();
 
                     for argument in arguments {
-                        if let Expression::Literal { value, .. } = argument {
-                            result.push_str(value);
+                        if let Expression::Literal { value, .. } = argument.get_inner() {
+                            result.push_str(&value);
                         } else {
                             ast_error!(self, argument, "Argument for @concat macro must be a literal");
                             ast_note!(argument, "The value must be known at compile time");
