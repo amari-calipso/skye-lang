@@ -81,7 +81,7 @@ namespace core {
 
         fn __asptr__(self) *T {
             return self.ptr;
-        } 
+        }
     }
 }
 
@@ -129,7 +129,7 @@ namespace core {
             return Self.{ data: self.data, count: self.count + 1 };
         }
 
-        fn __destruct__(self) {        
+        fn __destruct__(self) {
             if --self.count == 0 {
                 self.allocator.freeRaw(@cast(voidptr, self.data));
             }
@@ -144,7 +144,7 @@ namespace core {
     impl[T] core::ArrayIterator[T] {
         fn new(const array: &const Array[T]) Self[T] {
             return core::ArrayIterator.{ array, idx: 0 };
-        } 
+        }
 
         fn next(self) ?T {
             return self.array.get(self.idx++);
@@ -183,7 +183,7 @@ namespace core {
             const mem = core::mem::heapAllocator.alloc[T](slice.length);
             core::mem::typedBlockCopy(slice.ptr, mem.ptr, slice.length);
 
-            return Self.{ 
+            return Self.{
                 array: mem,
                 length: slice.length,
                 capacity: slice.length,
@@ -195,7 +195,7 @@ namespace core {
             const mem = allocator.alloc[T](slice.length);
             core::mem::typedBlockCopy(slice.ptr, mem.ptr, slice.length);
 
-            return Self.{ 
+            return Self.{
                 array: mem,
                 length: slice.length,
                 capacity: slice.length,
@@ -530,7 +530,7 @@ namespace core {
                 return @cast(T, intPart) - decPart;
             } else {
                 return @cast(T, intPart) + decPart;
-            }   
+            }
         }
     }
 
@@ -542,7 +542,7 @@ namespace core {
                     self.append(other);
                 }
             }
-            
+
             return *self;
         }
     }
@@ -590,7 +590,7 @@ namespace core {
                 defer tmpBuf.free();
                 core::fmt::__reversedIntToString(&tmpBuf, @cast(u64, decPart));
                 tmpBuf.reverse();
-                
+
                 while tmpBuf.length < decPrecision {
                     tmpBuf.push('0');
                 }
@@ -685,7 +685,7 @@ impl core::io::File {
 }
 
 // compiler built-ins
-macro format(buf, string) void; 
+macro format(buf, string) void;
 macro fprint(file, string) void;
 macro fprintln(file, string) void;
 
@@ -705,9 +705,9 @@ fn _SKYE_CONVERT_ARGS(const argc: usz, const argv: **const char) core::Array[Str
     let output = core::Array::withCapacity[String](argc);
 
     for let i = 0usz; i < argc; i++ {
-        output.push(String.{ 
-            ptr: argv[i], 
-            length: core::utils::cStringLength(argv[i]) 
+        output.push(String.{
+            ptr: argv[i],
+            length: core::utils::cStringLength(argv[i])
         });
     }
 

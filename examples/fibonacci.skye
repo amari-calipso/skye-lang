@@ -10,8 +10,8 @@ fn getInt() u8 {
         @print("Insert amount of terms\n> ");
 
         io::stdIn.readLine(&buf);
-        defer buf.clear();        
-        
+        defer buf.clear();
+
         const parsed = buf.parseInt[i64]();
 
         if parsed.isSome() && parsed.Some > 0 && parsed.Some <= @MAX_TERMS {
@@ -30,7 +30,7 @@ fn main() {
 
     while n-- {
         @println("{a}");
-        
+
         const c = a + b;
         a = b;
         b = c;

@@ -165,15 +165,13 @@ impl Parser {
 
         let mut params = Vec::new();
 
-        if !self.check(TokenType::RightParen) {
-            loop {
-                let is_const = self.match_(&[TokenType::Const]);
-                let type_ = self.expression()?;
-                params.push(FunctionParam::new(None, type_, is_const));
+        while !self.check(TokenType::RightParen) {
+            let is_const = self.match_(&[TokenType::Const]);
+            let type_ = self.expression()?;
+            params.push(FunctionParam::new(None, type_, is_const));
 
-                if !self.match_(&[TokenType::Comma]) {
-                    break;
-                }
+            if !self.match_(&[TokenType::Comma]) {
+                break;
             }
         }
 
@@ -183,10 +181,10 @@ impl Parser {
         Some(Expression::FnPtr { kw, return_type: Box::new(return_type), params })
     }
 
-    fn get_nonzero_expressions(&mut self) -> Option<Vec<Expression>> {
+    fn get_nonzero_expressions(&mut self, type_: TokenType) -> Option<Vec<Expression>> {
         let mut expressions = Vec::new();
 
-        loop {
+        while !self.check(type_) {
             expressions.push(self.expression()?);
 
             if !self.match_(&[TokenType::Comma]) {
@@ -218,14 +216,14 @@ impl Parser {
 
         if self.match_(&[TokenType::LeftBrace]) {
             let opening_brace = self.previous().clone();
-            let items = self.get_nonzero_expressions()?;
+            let items = self.get_nonzero_expressions(TokenType::RightBrace)?;
             self.consume(TokenType::RightBrace, "Expecting '}' after slice")?;
             return Some(Expression::Slice { opening_brace, items });
         }
 
         if self.match_(&[TokenType::LeftSquare]) {
             let opening_brace = self.previous().clone();
-            let items = self.get_nonzero_expressions()?;
+            let items = self.get_nonzero_expressions(TokenType::RightSquare)?;
             self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
 
             let mut method_tok = opening_brace.clone();
@@ -277,13 +275,11 @@ impl Parser {
     fn get_expressions(&mut self) -> Option<Vec<Expression>> {
         let mut expressions = Vec::new();
 
-        if !self.check(TokenType::RightParen) {
-            loop {
-                expressions.push(self.expression()?);
+        while !self.check(TokenType::RightParen) {
+            expressions.push(self.expression()?);
 
-                if !self.match_(&[TokenType::Comma]) {
-                    break;
-                }
+            if !self.match_(&[TokenType::Comma]) {
+                break;
             }
         }
 
@@ -304,19 +300,17 @@ impl Parser {
 
     fn finish_struct_literal(&mut self, expr: Expression) -> Option<Expression> {
         let mut fields = Vec::new();
-        if !self.check(TokenType::RightBrace) {
-            loop {
-                let name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+        while !self.check(TokenType::RightBrace) {
+            let name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
 
-                if self.match_(&[TokenType::Colon]) {
-                    fields.push(StructField::new(name, self.expression()?, true));
-                } else {
-                    fields.push(StructField::new(name.clone(), Expression::Variable(name), true));
-                }
+            if self.match_(&[TokenType::Colon]) {
+                fields.push(StructField::new(name, self.expression()?, true));
+            } else {
+                fields.push(StructField::new(name.clone(), Expression::Variable(name), true));
+            }
 
-                if !self.match_(&[TokenType::Comma]) {
-                    break;
-                }
+            if !self.match_(&[TokenType::Comma]) {
+                break;
             }
         }
 
@@ -801,7 +795,7 @@ impl Parser {
         let mut had_default = false;
         let mut has_default = false;
         if self.match_(&[TokenType::LeftSquare]) {
-            loop {
+            while !self.check(TokenType::RightSquare) {
                 let name = self.consume(TokenType::Identifier, "Expecting generic type name")?.clone();
 
                 let bounds = {
@@ -864,45 +858,43 @@ impl Parser {
         self.consume(TokenType::LeftParen, "Expecting '(' after function name")?;
 
         let mut params = Vec::new();
-        if !self.check(TokenType::RightParen) {
-            loop {
-                let is_const = self.match_(&[TokenType::Const]);
-                let p_name = self.consume(TokenType::Identifier, "Expecting parameter name")?.clone();
+        while !self.check(TokenType::RightParen) {
+            let is_const = self.match_(&[TokenType::Const]);
+            let p_name = self.consume(TokenType::Identifier, "Expecting parameter name")?.clone();
 
-                if method && p_name.lexeme.as_ref() == "self" {
-                    if self.match_(&[TokenType::Colon]) {
-                        let type_expr = self.expression()?;
-                        ast_error!(self, type_expr, "Type is not required for \"self\" inside methods");
-                        ast_note!(type_expr, "Remove the type");
-                    }
+            if method && p_name.lexeme.as_ref() == "self" {
+                if self.match_(&[TokenType::Colon]) {
+                    let type_expr = self.expression()?;
+                    ast_error!(self, type_expr, "Type is not required for \"self\" inside methods");
+                    ast_note!(type_expr, "Remove the type");
+                }
 
-                    let mut custom_tok = p_name.clone();
-                    custom_tok.set_lexeme("Self");
-                    let mut type_ = Expression::Variable(custom_tok.clone());
+                let mut custom_tok = p_name.clone();
+                custom_tok.set_lexeme("Self");
+                let mut type_ = Expression::Variable(custom_tok.clone());
 
-                    if self_generics.len() != 0 {
-                        type_ = Expression::Subscript { subscripted: Box::new(type_), paren: custom_tok, args: self_generics.clone() };
-                    }
+                if self_generics.len() != 0 {
+                    type_ = Expression::Subscript { subscripted: Box::new(type_), paren: custom_tok, args: self_generics.clone() };
+                }
 
-                    let mut star_tok = p_name.clone();
-                    if is_const {
-                        star_tok.set_type(TokenType::RefConst);
-                    } else {
-                        star_tok.set_type(TokenType::BitwiseAnd)
-                    }
-
-                    type_ = Expression::Unary { op: star_tok, expr: Box::new(type_), is_prefix: true };
-                    params.push(FunctionParam::new(Some(p_name), type_, true));
+                let mut star_tok = p_name.clone();
+                if is_const {
+                    star_tok.set_type(TokenType::RefConst);
                 } else {
-                    self.consume(TokenType::Colon, "Expecting ':' after parameter name")?;
-                    let type_ = self.expression()?;
-
-                    params.push(FunctionParam::new(Some(p_name), type_, is_const));
+                    star_tok.set_type(TokenType::BitwiseAnd)
                 }
 
-                if !self.match_(&[TokenType::Comma]) {
-                    break;
-                }
+                type_ = Expression::Unary { op: star_tok, expr: Box::new(type_), is_prefix: true };
+                params.push(FunctionParam::new(Some(p_name), type_, true));
+            } else {
+                self.consume(TokenType::Colon, "Expecting ':' after parameter name")?;
+                let type_ = self.expression()?;
+
+                params.push(FunctionParam::new(Some(p_name), type_, is_const));
+            }
+
+            if !self.match_(&[TokenType::Comma]) {
+                break;
             }
         }
 
@@ -981,18 +973,16 @@ impl Parser {
 
         let has_body = {
             if self.match_(&[TokenType::LeftBrace]) {
-                if !self.check(TokenType::RightBrace) {
-                    loop {
-                        let is_const = self.match_(&[TokenType::Const]);
-                        let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
-                        self.consume(TokenType::Colon, "Expecting ':' after field name")?;
-                        let type_ = self.type_expression()?;
+                while !self.check(TokenType::RightBrace) {
+                    let is_const = self.match_(&[TokenType::Const]);
+                    let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+                    self.consume(TokenType::Colon, "Expecting ':' after field name")?;
+                    let type_ = self.type_expression()?;
 
-                        fields.push(StructField::new(field_name, type_, is_const));
+                    fields.push(StructField::new(field_name, type_, is_const));
 
-                        if !self.match_(&[TokenType::Comma]) {
-                            break;
-                        }
+                    if !self.match_(&[TokenType::Comma]) {
+                        break;
                     }
                 }
 
@@ -1153,34 +1143,32 @@ impl Parser {
 
         let has_body = {
             if self.match_(&[TokenType::LeftBrace]) {
-                if !self.check(TokenType::RightBrace) {
-                    loop {
-                        let variant_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+                while !self.check(TokenType::RightBrace) {
+                    let variant_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
 
-                        let type_ = {
-                            if self.match_(&[TokenType::LeftParen]) {
-                                let res = self.expression()?;
+                    let type_ = {
+                        if self.match_(&[TokenType::LeftParen]) {
+                            let res = self.expression()?;
 
-                                if is_simple {
-                                    if let Expression::Literal { kind, .. } = &res {
-                                        is_simple = *kind == LiteralKind::Void;
-                                    } else {
-                                        is_simple = false;
-                                    }
+                            if is_simple {
+                                if let Expression::Literal { kind, .. } = &res {
+                                    is_simple = *kind == LiteralKind::Void;
+                                } else {
+                                    is_simple = false;
                                 }
-
-                                self.consume(TokenType::RightParen, "Expecting ')' after enum variant type")?;
-                                res
-                            } else {
-                                Expression::Literal { value: Rc::from(""), tok: variant_name.clone(), kind: LiteralKind::Void }
                             }
-                        };
 
-                        variants.push(EnumVariant::new(variant_name, type_));
-
-                        if !self.match_(&[TokenType::Comma]) {
-                            break;
+                            self.consume(TokenType::RightParen, "Expecting ')' after enum variant type")?;
+                            res
+                        } else {
+                            Expression::Literal { value: Rc::from(""), tok: variant_name.clone(), kind: LiteralKind::Void }
                         }
+                    };
+
+                    variants.push(EnumVariant::new(variant_name, type_));
+
+                    if !self.match_(&[TokenType::Comma]) {
+                        break;
                     }
                 }
 
@@ -1281,17 +1269,15 @@ impl Parser {
 
         let has_body = {
             if self.match_(&[TokenType::LeftBrace]) {
-                if !self.check(TokenType::RightBrace) {
-                    loop {
-                        let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
-                        self.consume(TokenType::Colon, "Expecting ':' after field name")?;
-                        let type_ = self.type_expression()?;
+                while !self.check(TokenType::RightBrace) {
+                    let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+                    self.consume(TokenType::Colon, "Expecting ':' after field name")?;
+                    let type_ = self.type_expression()?;
 
-                        fields.push(StructField::new(field_name, type_, false));
+                    fields.push(StructField::new(field_name, type_, false));
 
-                        if !self.match_(&[TokenType::Comma]) {
-                            break;
-                        }
+                    if !self.match_(&[TokenType::Comma]) {
+                        break;
                     }
                 }
 
@@ -1343,27 +1329,25 @@ impl Parser {
 
         let has_body = {
             if self.match_(&[TokenType::LeftBrace]) {
-                if !self.check(TokenType::RightBrace) {
-                    loop {
-                        let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
-                        self.consume(TokenType::Colon, "Expecting ':' after field name")?;
-                        let bits_tok = self.consume(TokenType::AnyInt, "Expecting integer containing field size after field name")?.clone();
+                while !self.check(TokenType::RightBrace) {
+                    let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+                    self.consume(TokenType::Colon, "Expecting ':' after field name")?;
+                    let bits_tok = self.consume(TokenType::AnyInt, "Expecting integer containing field size after field name")?.clone();
 
-                        if let Ok(bits) = bits_tok.lexeme.parse::<u8>() {
-                            if bits > 64 {
-                                token_error!(self, bits_tok, "Invalid field size");
-                                token_note!(bits_tok, "Field size should be an integer [0, 64]");
-                            } else {
-                                fields.push(BitfieldField::new(field_name, bits));
-                            }
-                        } else {
+                    if let Ok(bits) = bits_tok.lexeme.parse::<u8>() {
+                        if bits > 64 {
                             token_error!(self, bits_tok, "Invalid field size");
                             token_note!(bits_tok, "Field size should be an integer [0, 64]");
+                        } else {
+                            fields.push(BitfieldField::new(field_name, bits));
                         }
+                    } else {
+                        token_error!(self, bits_tok, "Invalid field size");
+                        token_note!(bits_tok, "Field size should be an integer [0, 64]");
+                    }
 
-                        if !self.match_(&[TokenType::Comma]) {
-                            break;
-                        }
+                    if !self.match_(&[TokenType::Comma]) {
+                        break;
                     }
                 }
 
@@ -1395,13 +1379,11 @@ impl Parser {
         let params = {
             if self.match_(&[TokenType::LeftParen]) {
                 let mut params = Vec::new();
-                if !self.check(TokenType::RightParen) {
-                    loop {
-                        params.push(self.consume(TokenType::Identifier, "Expecting parameter name")?.clone());
+                while !self.check(TokenType::RightParen) {
+                    params.push(self.consume(TokenType::Identifier, "Expecting parameter name")?.clone());
 
-                        if !self.match_(&[TokenType::Comma]) {
-                            break;
-                        }
+                    if !self.match_(&[TokenType::Comma]) {
+                        break;
                     }
                 }
 
@@ -1469,11 +1451,16 @@ impl Parser {
         let types = {
             if self.match_(&[TokenType::For]) {
                 let has_paren = self.match_(&[TokenType::LeftParen]);
-                let exprs = self.get_nonzero_expressions()?;
 
-                if has_paren {
-                    self.consume(TokenType::RightParen, "Expecting ')' after list of types enclosed in parentheses")?;
-                }
+                let exprs = {
+                    if has_paren {
+                        let exprs = self.get_nonzero_expressions(TokenType::LeftParen)?;
+                        self.consume(TokenType::RightParen, "Expecting ')' after list of types enclosed in parentheses")?;
+                        exprs
+                    } else {
+                        self.get_nonzero_expressions(TokenType::Semicolon)?
+                    }
+                };
 
                 self.consume(TokenType::Semicolon, "Expecting ';' after interface types")?;
                 Some(exprs)
