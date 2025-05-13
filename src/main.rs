@@ -124,12 +124,12 @@ fn main() -> Result<(), Error> {
             Err(e) => {
                 println!("WARNING: Couldn't fetch SKYE_PATH environment variable. Error: {}", e.to_string());
                 println!("Attempting inference from executable.");
-            
+
                 match env::current_exe().map_err(|_| Error::other("Couldn't infer executable location"))?.parent() {
                     Some(path) => path.to_path_buf(),
                     None              => return Err(Error::other("Couldn't infer executable location"))
                 }
-            } 
+            }
         }
     };
 
@@ -145,7 +145,7 @@ fn main() -> Result<(), Error> {
                         output
                     }
                 });
-        
+
                 compile_file_to_c(&file, &output_file, compile_mode, &args.primitives, args.no_panic, skye_path)?;
             } else {
                 let output_file = OsString::from({
@@ -155,7 +155,7 @@ fn main() -> Result<(), Error> {
                         output
                     }
                 });
-        
+
                 compile_file_to_exec(&file, &output_file, compile_mode, &args.primitives, args.no_panic, skye_path)?;
             }
         }
@@ -174,7 +174,7 @@ fn main() -> Result<(), Error> {
                     let mut f = File::create(buf.join("build.skye"))?;
                     f.write_all(BUILD_FILE_INIT)?;
                     drop(f);
-                    
+
                     let orig_buf = buf.clone();
                     buf = buf.join("src");
                     create_dir(&buf)?;
@@ -209,7 +209,7 @@ fn main() -> Result<(), Error> {
             let (data_absolute, data_relative, project_name) = get_package_data(&path)?;
             if data_absolute.len() == 0 {
                 return Err(Error::other("Invalid project folder"));
-            } 
+            }
 
             let buf = PathBuf::from(path);
 
@@ -230,7 +230,7 @@ fn main() -> Result<(), Error> {
 
             if !buf.exists() {
                 todo!("Try to fetch URL");
-            } 
+            }
 
             if let Some(extension) = buf.extension() {
                 if extension != "zip" {
@@ -252,7 +252,7 @@ fn main() -> Result<(), Error> {
             }
 
             let tmp_folder = skye_path.join("tmp");
-            
+
             create_dir(&tmp_folder)?;
             archive.extract(&tmp_folder)?;
             drop(archive);
@@ -266,7 +266,7 @@ fn main() -> Result<(), Error> {
             let (data_absolute, data_relative, package_name) = get_package_data(tmp_folder.to_str().unwrap())?;
             if data_absolute.len() == 0 {
                 return Err(Error::other("Invalid package file"));
-            } 
+            }
 
             let lib_folder = skye_path.join("lib");
             let index_file = lib_folder.join("index.json");
@@ -277,7 +277,7 @@ fn main() -> Result<(), Error> {
                 if index_file.exists() {
                     let index_data = fs::read_to_string(&index_file)?;
                     let index_json: HashMap<String, Value> = serde_json::from_str(&index_data)?;
-                    
+
                     if index_json.contains_key(&pkg_name_string) {
                         println!("Package \"{}\" is already installed", pkg_name_str);
                         return Ok(());
@@ -303,7 +303,7 @@ fn main() -> Result<(), Error> {
             index_map.insert(pkg_name_string, Value::Array(files));
             let mut index = File::create(&index_file)?;
             let stringified = serde_json::to_string(&index_map)?;
-            index.write_all(stringified.as_bytes())?;            
+            index.write_all(stringified.as_bytes())?;
 
             println!("Package \"{}\" was installed successfully", pkg_name_str);
         }
@@ -323,7 +323,7 @@ fn main() -> Result<(), Error> {
                     for file_obj in files {
                         if let Value::String(file_path) = file_obj {
                             let file = PathBuf::from(file_path);
-                            
+
                             if file.is_file() {
                                 remove_file(file)?;
                             } else {
@@ -352,4 +352,32 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::OsStr, fs, path::PathBuf};
+
+    use skye::CompileMode;
+
+    #[test]
+    fn test_can_compile_examples() {
+        let output = OsStr::new("tmp");
+        let primitives = String::from("core/io_primitives");
+        let skye_path = PathBuf::from(".");
+
+        for file in fs::read_dir("examples").expect("Couldn't read examples dir") {
+            let path = file.expect("Couldn't read file").path();
+            let input = path.as_os_str();
+
+            for mode in [CompileMode::Debug, CompileMode::Release, CompileMode::ReleaseUnsafe] {
+                skye::compile_file_to_exec(
+                    &input, output, mode.clone(),
+                    &primitives, false, skye_path.clone()
+                ).expect(format!("Couldn't compile file with mode {:?}", mode).as_str());
+            }
+        }
+
+        let _ = fs::remove_file(output);
+    }
 }
