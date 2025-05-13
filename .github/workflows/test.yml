@@ -22,10 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust@v1
+      - name: setup toolchain
+        uses: hecrj/setup-rust-action@v1
         with:
-          rust-version: ${{ matrix.rust_toolchain }}
+          rust-version: stable
 
       - name: Run tests
         run: cargo test
