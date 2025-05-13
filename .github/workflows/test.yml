@@ -28,4 +28,4 @@ jobs:
           rust-version: stable
 
       - name: Run tests
-        run: cargo test
+        run: RUST_BACKTRACE=full cargo test

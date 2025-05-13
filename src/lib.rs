@@ -128,16 +128,19 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compile_mode: CompileMod
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     if cfg!(unix) {
-        if !(
-            Command::new("c99")
-                .arg(input)
-                .arg("-o")
-                .arg(output)
-                .arg("-w")
-                .arg("-lm")
-                .status()?
-                .success()
-        ) {
+        let mut command = Command::new("c99");
+        command
+            .arg(input)
+            .arg("-o")
+            .arg(output)
+            .arg("-lm");
+
+        // Xcode doesn't have a -w option, apparently
+        if cfg!(not(target_os = "macos")) {
+            command.arg("-w");
+        }
+
+        if !command.status()?.success() {
             return Err(Error::other("Build failed"));
         }
     } else if cfg!(windows) {
