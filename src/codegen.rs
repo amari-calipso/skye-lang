@@ -1073,7 +1073,7 @@ impl CodeGen {
                 SkyeValue::new(Rc::from(call_output.as_ref()), *return_type.clone(), false)
             }
             SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
-                if let Statement::Function { name: _, params, return_type: return_type_expr, .. } = definition {
+                if let Statement::Function { params, return_type: return_type_expr, .. } = definition {
                     if params.len() != arguments_len {
                         ast_error!(
                             self, expr,
@@ -2159,7 +2159,7 @@ impl CodeGen {
                     panic!("struct template generation resulted in not a type");
                 }
             }
-            Expression::Literal { value, tok: _, kind } => {
+            Expression::Literal { value, kind, .. } => {
                 match kind {
                     LiteralKind::Void => SkyeValue::special(SkyeType::Void),
 
@@ -3412,7 +3412,7 @@ impl CodeGen {
 
                 SkyeValue::new(mangled.into(), type_, true)
             }
-            Expression::Ternary { tok: _, condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr } => {
+            Expression::Ternary { condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr, .. } => {
                 let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, allow_unknown, ctx)).await;
 
                 match cond.type_ {
@@ -3527,7 +3527,7 @@ impl CodeGen {
 
                 SkyeValue::new(Rc::from(tmp_var), then_branch.type_, true)
             }
-            Expression::CompoundLiteral { type_: identifier_expr, closing_brace: _, fields } => {
+            Expression::CompoundLiteral { type_: identifier_expr, fields, .. } => {
                 let identifier_type = ctx.run(|ctx| self.evaluate(&identifier_expr, index, allow_unknown, ctx)).await;
 
                 match &identifier_type.type_ {
@@ -6184,8 +6184,8 @@ impl CodeGen {
                 }
 
                 match &**statement {
-                    Statement::Return { kw, value: _ } | Statement::Break(kw) |
-                    Statement::Continue(kw) | Statement::Defer { kw, statement: _ } => {
+                    Statement::Return { kw, .. } | Statement::Break(kw) |
+                    Statement::Continue(kw) | Statement::Defer { kw, .. } => {
                         token_error!(self, kw, "Cannot use this statement inside a defer statement");
                     }
                     _ => ()
