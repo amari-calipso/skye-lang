@@ -12,7 +12,7 @@ namespace build {
             @println("{source}: {result.Error}");
             return (!void)::Error;
         }
-    
+
         return (!void)::Ok;
     }
 
@@ -43,15 +43,16 @@ namespace build {
     }
 
     fn compileCDefault(const input: String, const output: String) !void {
-        let buf = core::Array::new[char](); 
+        let buf = core::Array::new[char]();
         defer buf.free();
 
         if @UNIX_LIKE {
-            buf.pushString("c99 -w -lm ");
+            buf.pushString("c99 -lm ");
+            if (!@MAC_OS) buf.pushString("-w");
         } else {
             @todo("This platform is not supported yet, sorry!");
         }
-        
+
         @format(&buf, "{input} -o {output}");
         try build::system(buf.asString());
     }
