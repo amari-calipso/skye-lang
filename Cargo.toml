@@ -1,11 +1,14 @@
 [package]
 name = "skye"
-version = "2025.5.13"
+version = "2025.5.15"
 edition = "2021"
 description = "Skye ~ The retrofuturistic programming language"
 
 [profile.dev]
 opt-level = 3
+
+[profile.release]
+lto = true
 
 [dependencies]
 colored = "2.1.0"
