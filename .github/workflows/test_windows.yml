@@ -23,10 +23,16 @@ jobs:
       - name: Verify CC Installation
         run: gcc --version
 
-      - name: setup toolchain
+      - name: Setup toolchain
         uses: hecrj/setup-rust-action@v1
         with:
           rust-version: stable
 
+      - name: Set CC env variable
+        run: setx CC gcc
+
+      - name: Enable Rust backtrace
+        run: setx RUST_BACKTRACE full
+
       - name: Run tests
-        run: setx CC gcc && setx RUST_BACKTRACE full && cargo test
+        run: cargo test
