@@ -29,10 +29,10 @@ jobs:
           rust-version: stable
 
       - name: Set CC env variable
-        run: setx CC gcc
+        run: set CC gcc
 
       - name: Enable Rust backtrace
-        run: setx RUST_BACKTRACE full
+        run: set RUST_BACKTRACE full
 
       - name: Run tests
         run: cargo test
