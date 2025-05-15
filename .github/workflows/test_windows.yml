@@ -29,4 +29,4 @@ jobs:
           rust-version: stable
 
       - name: Run tests
-        run: setx CC=gcc && setx RUST_BACKTRACE=full && cargo test
+        run: setx CC gcc && setx RUST_BACKTRACE full && cargo test
