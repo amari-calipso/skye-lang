@@ -127,35 +127,37 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compile_mode: CompileMod
 }
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
-    if cfg!(target_os = "macos") {
-        if !Command::new("cc")
-            .arg("-w")
-            .arg("--std=c99")
-            .arg(input)
-            .arg("-o")
-            .arg(output)
-            .arg("-lm")
-            .status()?
-            .success()
-        {
-            return Err(Error::other("Build failed"));
+    let mut command = {
+        if cfg!(target_os = "macos") {
+            Command::new("cc")
+        } else if cfg!(unix) {
+            Command::new("c99")
+        } else if cfg!(windows) {
+            Command::new(std::env::var("CC")
+                .map_err(|e| Error::other(format!(
+                    concat!(
+                        "Could not find C compiler: {}\n",
+                        "Is the CC environment variable set?"
+                    ), e
+                ).as_str()))?)
+        } else {
+            panic!("Unsupported platform!");
         }
-    } else if cfg!(unix) {
-        if !Command::new("c99")
-            .arg("-w")
-            .arg(input)
-            .arg("-o")
-            .arg(output)
-            .arg("-lm")
-            .status()?
-            .success()
-        {
-            return Err(Error::other("Build failed"));
-        }
-    } else if cfg!(windows) {
-        todo!("Windows is not yet supported, sorry!")
-    } else {
-        panic!("Unsupported platform!");
+    };
+
+    if cfg!(target_os = "macos") || cfg!(windows) {
+        command.arg("--std=c99");
+    }
+
+    command
+        .arg("-w")
+        .arg(input)
+        .arg("-o")
+        .arg(output)
+        .arg("-lm");
+
+    if !command.status()?.success() {
+        return Err(Error::other("Build failed"));
     }
 
     Ok(())
