@@ -148,16 +148,14 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     if cfg!(target_os = "macos") || cfg!(windows) {
         command.arg("--std=c99");
     }
+    
+    command.arg("-w").arg(input);
 
     if cfg!(not(windows)) {
         command.arg("-lm");
     }
 
-    command
-        .arg("-w")
-        .arg(input)
-        .arg("-o")
-        .arg(output);
+    command.arg("-o").arg(output);
 
     if !command.status()?.success() {
         return Err(Error::other("Build failed"));
