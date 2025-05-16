@@ -149,7 +149,7 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
         command.arg("--std=c99");
     }
 
-    if !cfg!(windows) {
+    if cfg!(not(windows)) {
         command.arg("-lm");
     }
 
