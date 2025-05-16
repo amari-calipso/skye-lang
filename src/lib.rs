@@ -149,12 +149,15 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
         command.arg("--std=c99");
     }
 
+    if !cfg!(windows) {
+        command.arg("-lm");
+    }
+
     command
         .arg("-w")
         .arg(input)
         .arg("-o")
-        .arg(output)
-        .arg("-lm");
+        .arg(output);
 
     if !command.status()?.success() {
         return Err(Error::other("Build failed"));
