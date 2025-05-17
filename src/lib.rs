@@ -134,11 +134,13 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
         } else if cfg!(unix) {
             // while c99 is in the posix standard, some platforms still don't support it,
             // using "cc" instead
-            if Command::new("cc").arg("--version").status()?.success() {
+            if Command::new("cc").arg("--version")
+                .output()?.status.success() 
+            {
                 Command::new("cc")
             } else {
                 needs_std = false;
-                Command::new("c99")    
+                Command::new("c99")
             }
         } else {
             Command::new(std::env::var("CC")
