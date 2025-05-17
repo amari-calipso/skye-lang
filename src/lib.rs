@@ -127,12 +127,20 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compile_mode: CompileMod
 }
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
+    let mut needs_std = true;    
     let mut command = {
         if cfg!(target_os = "macos") {
             Command::new("cc")
         } else if cfg!(unix) {
-            Command::new("c99")
-        } else if cfg!(windows) {
+            // while c99 is in the posix standard, some platforms still don't support it,
+            // using "cc" instead
+            if Command::new("cc").arg("--version").status()?.success() {
+                Command::new("cc")
+            } else {
+                needs_std = false;
+                Command::new("c99")    
+            }
+        } else {
             Command::new(std::env::var("CC")
                 .map_err(|e| Error::other(format!(
                     concat!(
@@ -140,12 +148,10 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
                         "Is the CC environment variable set?"
                     ), e
                 ).as_str()))?)
-        } else {
-            panic!("Unsupported platform!");
         }
     };
 
-    if cfg!(target_os = "macos") || cfg!(windows) {
+    if needs_std {
         command.arg("--std=c99");
     }
     
