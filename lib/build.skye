@@ -46,14 +46,32 @@ namespace build {
         let buf = core::Array::new[char]();
         defer buf.free();
 
-        if @UNIX_LIKE {
-            buf.pushString("c99 -lm ");
-            if (!@MAC_OS) buf.pushString("-w");
+        let needsStd = true;
+        if @MAC_OS {
+            buf.pushString("cc ");
+        } else if @UNIX_LIKE {
+            if build::system("cc --version").isOk() {
+                buf.pushString("cc ");
+            } else {
+                needsStd = false;
+                buf.pushString("c99 ");
+            }
         } else {
-            @todo("This platform is not supported yet, sorry!");
+            const cc = std::os::env::var("CC");
+            
+            if cc.isNone() {
+                @println("Could not find C compiler. Is the CC environment variable set?");
+                return (!void)::Error;
+            }
+
+            buf.pushString(cc.Some);
+            buf.push(' ');
         }
 
-        @format(&buf, "{input} -o {output}");
+        if (needsStd) buf.pushString("--std=c99 ");
+        @format(&buf, "-w {input} ");
+        if (!@WINDOWS) buf.pushString("-lm ");
+        @format(&buf, "-o {output}");
         try build::system(buf.asString());
     }
 }

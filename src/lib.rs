@@ -127,35 +127,46 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compile_mode: CompileMod
 }
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
-    if cfg!(target_os = "macos") {
-        if !Command::new("cc")
-            .arg("-w")
-            .arg("--std=c99")
-            .arg(input)
-            .arg("-o")
-            .arg(output)
-            .arg("-lm")
-            .status()?
-            .success()
-        {
-            return Err(Error::other("Build failed"));
+    let mut needs_std = true;    
+    let mut command = {
+        if cfg!(target_os = "macos") {
+            Command::new("cc")
+        } else if cfg!(unix) {
+            // while c99 is in the posix standard, some platforms still don't support it,
+            // using "cc" instead
+            if Command::new("cc").arg("--version")
+                .output()?.status.success() 
+            {
+                Command::new("cc")
+            } else {
+                needs_std = false;
+                Command::new("c99")
+            }
+        } else {
+            Command::new(std::env::var("CC")
+                .map_err(|e| Error::other(format!(
+                    concat!(
+                        "Could not find C compiler: {}\n",
+                        "Is the CC environment variable set?"
+                    ), e
+                ).as_str()))?)
         }
-    } else if cfg!(unix) {
-        if !Command::new("c99")
-            .arg("-w")
-            .arg(input)
-            .arg("-o")
-            .arg(output)
-            .arg("-lm")
-            .status()?
-            .success()
-        {
-            return Err(Error::other("Build failed"));
-        }
-    } else if cfg!(windows) {
-        todo!("Windows is not yet supported, sorry!")
-    } else {
-        panic!("Unsupported platform!");
+    };
+
+    if needs_std {
+        command.arg("--std=c99");
+    }
+    
+    command.arg("-w").arg(input);
+
+    if cfg!(not(windows)) {
+        command.arg("-lm");
+    }
+
+    command.arg("-o").arg(output);
+
+    if !command.status()?.success() {
+        return Err(Error::other("Build failed"));
     }
 
     Ok(())

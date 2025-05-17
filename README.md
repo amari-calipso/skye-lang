@@ -16,8 +16,6 @@ To install Skye, you can either jump to the releases and download the latest ver
 
 When using the Skye compiler, the `SKYE_PATH` environment variable should be set. It has to be set to the path of the compiler executable and the `lib` folder. If not set, Skye will try to infer it from the compiler executable location.
 
-NOTE: Windows is not supported yet, sorry! I will work on it<3
-
 # Hello, World!
 ```
 fn main() {
