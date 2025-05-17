@@ -20,7 +20,7 @@ namespace core {
             }
 
             fn put[T](self, object: T) core::Ptr[T, Self] {
-                const ptr = self.alloc[T](1);
+                let ptr = self.alloc[T](1);
                 *ptr = object;
                 return ptr;
             }

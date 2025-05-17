@@ -7,6 +7,9 @@ description = "Skye ~ The retrofuturistic programming language"
 [profile.dev]
 opt-level = 3
 
+[profile.release]
+lto = true
+
 [dependencies]
 colored = "2.1.0"
 clap = { version = "4.5.13", features = ["derive"] }
