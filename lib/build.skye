@@ -46,18 +46,21 @@ namespace build {
         let buf = core::Array::new[char]();
         defer buf.free();
 
+        let needsStd = true;
         if @MAC_OS {
             buf.pushString("cc ");
         } else if @UNIX_LIKE {
             if build::system("cc --version").isOk() {
                 buf.pushString("cc ");
             } else {
+                needsStd = false;
                 buf.pushString("c99 ");
             }
         } else {
             @todo("look for CC env var");
         }
 
+        if (needsStd) buf.pushString("--std=c99 ");
         @format(&buf, "-w {input} -o {output}");
         if (!@WINDOWS) buf.pushString(" -lm");
         try build::system(buf.asString());
