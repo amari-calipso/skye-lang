@@ -1,5 +1,6 @@
 #bind fn system(const command: *const char) i32;
 #bind fn remove(const file: *const char) i32;
+#bind fn getenv(const name: *const char) *const char;
 
 import <"dirent.h">;
 
@@ -76,6 +77,18 @@ namespace std {
 
             if (dir == @nullptr) return ListDirResult::Error(core::utils::cStringToString(strerror(errno)));
             return ListDirResult::Ok(std::os::DirectoryIterator.{ dir });
+        }
+
+        namespace env {
+            fn var(const name: String) ?String {
+                let buf = core::Array::new[char]();
+                defer buf.free();
+
+                @format(&buf, "{name}\0");
+                const value = getenv(buf.array.ptr);
+                if (value == @nullptr) return (?String)::None;
+                return (?String)::Some(core::utils::cStringToString(value));
+            }
         }
     }
 }

@@ -57,7 +57,15 @@ namespace build {
                 buf.pushString("c99 ");
             }
         } else {
-            @todo("look for CC env var");
+            const cc = std::os::env::var("CC");
+            
+            if cc.isNone() {
+                @println("Could not find C compiler. Is the CC environment variable set?");
+                return (!void)::Error;
+            }
+
+            buf.pushString(cc.Some);
+            buf.push(' ');
         }
 
         if (needsStd) buf.pushString("--std=c99 ");
