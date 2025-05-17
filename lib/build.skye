@@ -46,14 +46,20 @@ namespace build {
         let buf = core::Array::new[char]();
         defer buf.free();
 
-        if @UNIX_LIKE {
-            buf.pushString("c99 -lm ");
-            if (!@MAC_OS) buf.pushString("-w");
+        if @MAC_OS {
+            buf.pushString("cc ");
+        } else if @UNIX_LIKE {
+            if build::system("cc --version").isOk() {
+                buf.pushString("cc ");
+            } else {
+                buf.pushString("c99 ");
+            }
         } else {
-            @todo("This platform is not supported yet, sorry!");
+            @todo("look for CC env var");
         }
 
-        @format(&buf, "{input} -o {output}");
+        @format(&buf, "-w {input} -o {output}");
+        if (!@WINDOWS) buf.pushString(" -lm");
         try build::system(buf.asString());
     }
 }
