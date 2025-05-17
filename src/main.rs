@@ -163,6 +163,7 @@ fn main() -> Result<(), Error> {
             run_skye(file, &args.primitives, &program_args, args.no_panic, skye_path)?;
         }
         CompilerCommand::Build { path, program_args } => {
+            env::set_current_dir(&path)?;
             run_skye(OsString::from(PathBuf::from(path).join("build.skye")), &args.primitives, &program_args, args.no_panic, skye_path)?;
         }
         CompilerCommand::New { project_type } => {

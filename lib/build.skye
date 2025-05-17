@@ -69,8 +69,9 @@ namespace build {
         }
 
         if (needsStd) buf.pushString("--std=c99 ");
-        @format(&buf, "-w {input} -o {output}");
-        if (!@WINDOWS) buf.pushString(" -lm");
+        @format(&buf, "-w {input} ");
+        if (!@WINDOWS) buf.pushString("-lm ");
+        @format(&buf, "-o {output}");
         try build::system(buf.asString());
     }
 }
