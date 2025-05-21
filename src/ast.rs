@@ -369,6 +369,7 @@ pub enum Statement {
     Break(Token), // kw
     Continue(Token), // kw
     Block(Token, Vec<Statement>), // kw statements
+    TransparentBlock(Vec<Statement>),
     While { kw: Token, condition: Expression, body: Box<Statement> },
     DoWhile { kw: Token, condition: Expression, body: Box<Statement> },
     Return { kw: Token, value: Option<Expression> },
@@ -469,7 +470,9 @@ impl Ast for Statement {
 
     fn get_pos(&self) -> AstPos {
         match self {
-            Statement::Empty | Statement::Undef(_) => AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0),
+            Statement::Empty | Statement::Undef(_) | Statement::TransparentBlock(_) => {
+                AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0)
+            }
             Statement::Expression(expr) |
             Statement::Impl { object: expr, declarations: _ } |
             Statement::Use { use_expr: expr, .. } => expr.get_pos(),
@@ -512,6 +515,9 @@ impl Ast for Statement {
             }
             Statement::Block(kw, statements) => {
                 Statement::Block(kw.clone(), statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect())
+            }
+            Statement::TransparentBlock(statements) => {
+                Statement::TransparentBlock(statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect())
             }
             Statement::If { kw, condition: cond, then_branch, else_branch } => {
                 Statement::If { kw: kw.clone(), condition: cond.replace_variable(name, replace_expr), then_branch: Box::new(then_branch.replace_variable(name, replace_expr)), else_branch: else_branch.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr))) }

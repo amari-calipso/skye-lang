@@ -3,6 +3,7 @@ use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, 
 use ast::{ImportType, Statement};
 use clap::ValueEnum;
 use codegen::CodeGen;
+use import_processor::ImportProcessor;
 use parser::Parser;
 use scanner::Scanner;
 use tokens::{Token, TokenType};
@@ -16,6 +17,7 @@ mod parser;
 mod skye_type;
 mod environment;
 mod codegen;
+mod import_processor;
 
 pub const MAX_PACKAGE_SIZE_BYTES: u128 = 2u128.pow(32); // Max uncompressed package size is 4 GB (basic protection against malicious ZIPs)
 
@@ -50,47 +52,54 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
     statements.insert(
         0,
         Statement::Import { path: Token::new(
-                Rc::from(source.as_ref()),
-                Rc::clone(&filename),
-                TokenType::Identifier,
-                Rc::from("core/core"),
-                0, 1, 0
-            ), type_: ImportType::Default }
+            Rc::from(source.as_ref()),
+            Rc::clone(&filename),
+            TokenType::Identifier,
+            Rc::from("core/core"),
+            0, 1, 0
+        ), type_: ImportType::Default }
     );
 
     statements.insert(
         1,
         Statement::Import { path: Token::new(
-                Rc::from(source.as_ref()),
-                Rc::clone(&filename),
-                TokenType::Identifier,
-                Rc::from(primitives.as_ref()),
-                0, 1, 0
-            ), type_: ImportType::Default }
+            Rc::from(source.as_ref()),
+            Rc::clone(&filename),
+            TokenType::Identifier,
+            Rc::from(primitives.as_ref()),
+            0, 1, 0
+        ), type_: ImportType::Default }
     );
 
     statements.insert(
         2,
         Statement::Import { path: Token::new(
-                Rc::from(source.as_ref()),
-                Rc::clone(&filename),
-                TokenType::Identifier,
-                Rc::from("core/builtins"),
-                0, 1, 0
-            ), type_: ImportType::Default }
+            Rc::from(source.as_ref()),
+            Rc::clone(&filename),
+            TokenType::Identifier,
+            Rc::from("core/builtins"),
+            0, 1, 0
+        ), type_: ImportType::Default }
     );
 
     if !no_panic {
         statements.insert(
             3,
             Statement::Import { path: Token::new(
-                    Rc::from(source.as_ref()),
-                    filename,
-                    TokenType::Identifier,
-                    Rc::from("core/panic"),
-                    0, 1, 0
-                ), type_: ImportType::Default }
+                Rc::from(source.as_ref()),
+                filename,
+                TokenType::Identifier,
+                Rc::from("core/panic"),
+                0, 1, 0
+            ), type_: ImportType::Default }
         );
+    }
+
+    let mut import_processor = ImportProcessor::new(path, skye_path.clone());
+    import_processor.process(&mut statements);
+
+    if import_processor.errors != 0 {
+        return None;
     }
 
     let mut codegen = CodeGen::new(path, compile_mode, skye_path);
