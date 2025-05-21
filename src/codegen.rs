@@ -1490,23 +1490,27 @@ impl CodeGen {
             }
             SkyeType::Macro(macro_name, params_opt, body) => {
                 if !matches!(params_opt, MacroParams::None) {
-                    if let MacroParams::Some(params) = params_opt {
-                        if params.len() != arguments_len {
-                            ast_error!(
-                                self, expr,
-                                format!(
-                                    "Expecting {} arguments for macro call but got {}",
-                                    params.len(), arguments_len
-                                ).as_str()
-                            );
+                    match params_opt {
+                        MacroParams::Some(params) => {
+                            if params.len() != arguments_len {
+                                ast_error!(
+                                    self, expr,
+                                    format!(
+                                        "Expecting {} arguments for macro call but got {}",
+                                        params.len(), arguments_len
+                                    ).as_str()
+                                );
 
-                            return SkyeValue::get_unknown();
+                                return SkyeValue::get_unknown();
+                            }
                         }
-                    } else {
-                        if arguments_len == 0 {
-                            ast_error!(self, expr, "Expecting at least one argument for macro call but got none");
-                            return SkyeValue::get_unknown();
+                        MacroParams::OneN(_) => {
+                            if arguments_len == 0 {
+                                ast_error!(self, expr, "Expecting at least one argument for macro call but got none");
+                                return SkyeValue::get_unknown();
+                            }
                         }
+                        _ => ()
                     }
 
                     match body {
@@ -1595,7 +1599,7 @@ impl CodeGen {
                                         }
                                     }
                                 }
-                                MacroParams::Variable(var_name) => {
+                                MacroParams::OneN(var_name) | MacroParams::ZeroN(var_name) => {
                                     curr_expr = curr_expr.replace_variable(
                                         &var_name.lexeme,
                                         &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }
@@ -1624,7 +1628,7 @@ impl CodeGen {
                                             *statement = statement.replace_variable(&params[i].lexeme, &arguments[i]);
                                         }
                                     }
-                                    MacroParams::Variable(var_name) => {
+                                    MacroParams::OneN(var_name) | MacroParams::ZeroN(var_name) => {
                                         *statement = statement.replace_variable(
                                             &var_name.lexeme,
                                             &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }

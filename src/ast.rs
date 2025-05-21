@@ -339,7 +339,8 @@ impl Generic {
 pub enum MacroParams {
     None,
     Some(Vec<Token>),
-    Variable(Token)
+    OneN(Token),
+    ZeroN(Token)
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
