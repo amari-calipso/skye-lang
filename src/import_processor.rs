@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::{Path, PathBuf}};
 
-use crate::{ast::{ImportType, Statement}, parse_file, token_error, token_note};
+use crate::{ast::{ImportType, MacroBody, Statement}, parse_file, token_error, token_note};
 
 pub struct ImportProcessor {
     source_path: Option<Box<PathBuf>>,
@@ -70,7 +70,8 @@ impl ImportProcessor {
             Statement::Namespace { body, .. } => {
                 ctx.run(|ctx| self.process_many(body, ctx)).await;
             }
-            Statement::Function { body, .. } => {
+            Statement::Function { body, .. } |
+            Statement::Interface { declarations: body, .. } => {
                 if let Some(body) = body {
                     ctx.run(|ctx| self.process_many(body, ctx)).await;
                 }
@@ -93,6 +94,11 @@ impl ImportProcessor {
 
                 if let Some(else_branch) = else_branch {
                     ctx.run(|ctx| self.process_one(else_branch, ctx)).await;
+                }
+            }
+            Statement::Macro { body, .. } => {
+                if let MacroBody::Block(body) = body {
+                    ctx.run(|ctx| self.process_many(body, ctx)).await;
                 }
             }
             _ => ()
