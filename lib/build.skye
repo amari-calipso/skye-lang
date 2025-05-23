@@ -1,6 +1,8 @@
 import "std/os";
 
 namespace build {
+    let __cc: ?String;
+
     enum Mode as u8 {
         Debug,
         Release,
@@ -42,36 +44,48 @@ namespace build {
         try build::system(buf.asString());
     }
 
+    fn cc() String!void {
+        use String!void as CCResult;
+
+        if build::__cc.isSome() {
+            return CCResult::Ok(build::__cc.Some);
+        }
+
+        if @MAC_OS {
+            build::__cc = (?String)::Some("cc");
+        } else if @UNIX_LIKE {
+            if build::system("cc --version").isOk() {
+                build::__cc = (?String)::Some("cc");
+            } else {
+                build::__cc = (?String)::Some("c99");
+            }
+        } else {
+            const cc = std::os::env::var("CC");
+            if cc.isNone() {
+                @println("Could not find C compiler. Is the CC environment variable set?");
+                return CCResult::Error;
+            }
+
+            build::__cc = (?String)::Some(cc.Some);
+        }
+
+        return CCResult::Ok(build::__cc.Some);
+    }
+
     fn compileCDefault(const input: String, const output: String) !void {
         let buf = core::Array::new[char]();
         defer buf.free();
 
-        let needsStd = true;
-        if @MAC_OS {
-            buf.pushString("cc ");
-        } else if @UNIX_LIKE {
-            if build::system("cc --version").isOk() {
-                buf.pushString("cc ");
-            } else {
-                needsStd = false;
-                buf.pushString("c99 ");
-            }
-        } else {
-            const cc = std::os::env::var("CC");
-            
-            if cc.isNone() {
-                @println("Could not find C compiler. Is the CC environment variable set?");
-                return (!void)::Error;
-            }
-
-            buf.pushString(cc.Some);
-            buf.push(' ');
-        }
-
-        if (needsStd) buf.pushString("--std=c99 ");
+        const cc = try build::cc();
+        @format(&buf, "{cc} ");
+        if (cc != "c99") buf.pushString("--std=c99 ");
         @format(&buf, "-w {input} ");
         if (!@WINDOWS) buf.pushString("-lm ");
         @format(&buf, "-o {output}");
         try build::system(buf.asString());
     }
+}
+
+#init fn _SKYE_BUILD_INIT() {
+    build::__cc = (?String)::None;
 }

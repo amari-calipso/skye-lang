@@ -405,7 +405,8 @@ pub enum Statement {
         body: Option<Vec<Statement>>,
         qualifiers: Vec<Token>,
         generics_names: Vec<Token>,
-        bind: bool
+        bind: bool,
+        init: bool,
     },
     Struct {
         name: Token,
@@ -508,31 +509,72 @@ impl Ast for Statement {
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),
             Statement::VarDecl { name: var_name, initializer, type_, is_const, qualifiers } => {
-                Statement::VarDecl { name: var_name.clone(), initializer: initializer.as_ref().map(|x| x.replace_variable(name, replace_expr)), type_: type_.as_ref().map(|x| x.replace_variable(name, replace_expr)), is_const: *is_const, qualifiers: qualifiers.clone() }
+                Statement::VarDecl {
+                    name: var_name.clone(),
+                    initializer: initializer.as_ref().map(|x| x.replace_variable(name, replace_expr)),
+                    type_: type_.as_ref().map(|x| x.replace_variable(name, replace_expr)),
+                    is_const: *is_const,
+                    qualifiers: qualifiers.clone()
+                }
             }
             Statement::Block(kw, statements) => {
                 Statement::Block(kw.clone(), statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect())
             }
             Statement::If { kw, condition: cond, then_branch, else_branch } => {
-                Statement::If { kw: kw.clone(), condition: cond.replace_variable(name, replace_expr), then_branch: Box::new(then_branch.replace_variable(name, replace_expr)), else_branch: else_branch.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr))) }
+                Statement::If {
+                    kw: kw.clone(),
+                    condition: cond.replace_variable(name, replace_expr),
+                    then_branch: Box::new(then_branch.replace_variable(name, replace_expr)),
+                    else_branch: else_branch.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr)))
+                }
             }
             Statement::While { kw, condition: cond, body } => {
-                Statement::While { kw: kw.clone(), condition: cond.replace_variable(name, replace_expr), body: Box::new(body.replace_variable(name, replace_expr)) }
+                Statement::While {
+                    kw: kw.clone(),
+                    condition: cond.replace_variable(name, replace_expr),
+                    body: Box::new(body.replace_variable(name, replace_expr))
+                }
             }
             Statement::DoWhile { kw, condition: cond, body } => {
-                Statement::DoWhile { kw: kw.clone(), condition: cond.replace_variable(name, replace_expr), body: Box::new(body.replace_variable(name, replace_expr)) }
+                Statement::DoWhile {
+                    kw: kw.clone(),
+                    condition: cond.replace_variable(name, replace_expr),
+                    body: Box::new(body.replace_variable(name, replace_expr))
+                }
             }
             Statement::For { kw, initializer, condition: cond, increments: increment, body } => {
-                Statement::For { kw: kw.clone(), initializer: initializer.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr))), condition: cond.replace_variable(name, replace_expr), increments: increment.iter().map(|x| x.replace_variable(name, replace_expr)).collect(), body: Box::new(body.replace_variable(name, replace_expr)) }
+                Statement::For {
+                    kw: kw.clone(),
+                    initializer: initializer.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr))),
+                    condition: cond.replace_variable(name, replace_expr),
+                    increments: increment.iter().map(|x| x.replace_variable(name, replace_expr)).collect(),
+                    body: Box::new(body.replace_variable(name, replace_expr))
+                }
             }
-            Statement::Function { name: kw, params, return_type, body, qualifiers, generics_names, bind } => {
-                Statement::Function { name: kw.clone(), params: params.iter().map(|x| FunctionParam::new(x.name.clone(), x.type_.replace_variable(name, replace_expr), x.is_const)).collect(), return_type: return_type.replace_variable(name, replace_expr), body: body.as_ref().map(|x| x.iter().map(|statement| statement.replace_variable(name, replace_expr)).collect()), qualifiers: qualifiers.clone(), generics_names: generics_names.clone(), bind: *bind }
+            Statement::Function { name: kw, params, return_type, body, qualifiers, generics_names, bind, init, } => {
+                Statement::Function {
+                    name: kw.clone(),
+                    params: params.iter().map(|x| FunctionParam::new(x.name.clone(), x.type_.replace_variable(name, replace_expr), x.is_const)).collect(),
+                    return_type: return_type.replace_variable(name, replace_expr),
+                    body: body.as_ref().map(|x| x.iter().map(|statement| statement.replace_variable(name, replace_expr)).collect()),
+                    qualifiers: qualifiers.clone(),
+                    generics_names: generics_names.clone(),
+                    bind: *bind,
+                    init: *init
+                }
             }
             Statement::Return { kw, value: return_expr } => {
                 Statement::Return { kw: kw.clone(), value: return_expr.as_ref().map(|x| x.replace_variable(name, replace_expr)) }
             }
             Statement::Struct { name: struct_name, fields, has_body, binding, generics_names, bind_typedefed } => {
-                Statement::Struct { name: struct_name.clone(), fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(), has_body: *has_body, binding: binding.clone(), generics_names: generics_names.clone(), bind_typedefed: *bind_typedefed }
+                Statement::Struct {
+                    name: struct_name.clone(),
+                    fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(),
+                    has_body: *has_body,
+                    binding: binding.clone(),
+                    generics_names: generics_names.clone(),
+                    bind_typedefed: *bind_typedefed
+                }
             }
             Statement::Impl { object: struct_, declarations } => {
                 Statement::Impl { object: struct_.replace_variable(name, replace_expr), declarations: declarations.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }
@@ -544,7 +586,16 @@ impl Ast for Statement {
                 Statement::Use { use_expr: expression.replace_variable(name, replace_expr), as_name: alias.clone(), typedef: *typedef, bind: *bind }
             }
             Statement::Enum { name: enum_name, kind_type, variants, is_simple, has_body, binding, generics_names, bind_typedefed } => {
-                Statement::Enum { name: enum_name.clone(), kind_type: kind_type.replace_variable(name, replace_expr), variants: variants.iter().map(|x| EnumVariant::new(x.name.clone(), x.expr.replace_variable(name, replace_expr))).collect(), is_simple: *is_simple, has_body: *has_body, binding: binding.clone(), generics_names: generics_names.clone(), bind_typedefed: *bind_typedefed }
+                Statement::Enum {
+                    name: enum_name.clone(),
+                    kind_type: kind_type.replace_variable(name, replace_expr),
+                    variants: variants.iter().map(|x| EnumVariant::new(x.name.clone(), x.expr.replace_variable(name, replace_expr))).collect(),
+                    is_simple: *is_simple,
+                    has_body: *has_body,
+                    binding: binding.clone(),
+                    generics_names: generics_names.clone(),
+                    bind_typedefed: *bind_typedefed
+                }
             }
             Statement::Defer { kw, statement } => {
                 Statement::Defer { kw: kw.clone(), statement: Box::new(statement.replace_variable(name, replace_expr)) }
@@ -571,7 +622,13 @@ impl Ast for Statement {
                     ).collect(), generics_names: generics_names.clone() }
             }
             Statement::Union { name: union_name, fields, has_body, binding, bind_typedefed } => {
-                Statement::Union { name: union_name.clone(), fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(), has_body: *has_body, binding: binding.clone(), bind_typedefed: *bind_typedefed }
+                Statement::Union {
+                    name: union_name.clone(),
+                    fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(),
+                    has_body: *has_body,
+                    binding: binding.clone(),
+                    bind_typedefed: *bind_typedefed
+                }
             }
             Statement::Macro { name: macro_name, params: macro_params, body: macro_body } => {
                 Statement::Macro { name: macro_name.clone(), params: macro_params.clone(), body: macro_body.replace_variable(name, replace_expr) }
