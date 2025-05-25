@@ -108,6 +108,12 @@ const I32_MAIN_PLUS_ARGS: &str = concat!(
     "}\n\n"
 );
 
+const SKYE_INIT_DECL: &str = "void _SKYE_INIT();\n";
+const SKYE_INIT_DEF:  &str = "void _SKYE_INIT() {\n";
+
+const INIT_DEF_INDEX: usize = 0;
+const ANY_DEF_START_INDEX: usize = 1;
+
 #[derive(Clone, Debug)]
 enum CurrentFn {
     None,
@@ -196,11 +202,19 @@ impl CodeGen {
             )
         );
 
+        let mut declarations = Vec::new();
+        declarations.push(CodeOutput::new());
+        declarations.last_mut().unwrap().push(SKYE_INIT_DECL);
+
+        let mut definitions = Vec::new();
+        definitions.push(CodeOutput::new());
+        definitions.last_mut().unwrap().push(SKYE_INIT_DEF);
+        definitions.last_mut().unwrap().inc_indent();
+
         CodeGen {
-            definitions: Vec::new(),
             struct_definitions: HashMap::new(),
             struct_defs_order: Vec::new(),
-            declarations: Vec::new(),
+            declarations, definitions,
             strings_code: CodeOutput::new(),
             includes: CodeOutput::new(),
             strings: HashMap::new(),
@@ -556,7 +570,12 @@ impl CodeGen {
                         }
                     };
 
-                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, index, allow_unknown, ctx)).await;
+                    // this evaluation will be performed again later, so generate the code in a scratch buffer
+                    let tmp_index = self.definitions.len();
+                    self.definitions.push(CodeOutput::new());
+                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, tmp_index, allow_unknown, ctx)).await;
+                    self.definitions.swap_remove(tmp_index);
+
                     let mut do_write = true;
                     let interpolated_expr = 'interpolated_expr_blk: {
                         if interpolated {
@@ -4667,7 +4686,7 @@ impl CodeGen {
                     self.definitions[index].push("}\n");
                 }
             }
-            Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind } => {
+            Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind, init } => {
                 let mut full_name = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
 
                 let env = self.globals.borrow();
@@ -4726,6 +4745,24 @@ impl CodeGen {
                 self.generate_fn_signature(name, &type_, &return_stringified, &params_string);
 
                 let has_body = body.is_some();
+
+                if *init {
+                    if params.len() != 0 {
+                        token_error!(self, name, "#init function must take no parameters");
+                    }
+
+                    if !has_body {
+                        token_error!(self, name, "#init function must have a body");
+                    }
+
+                    if full_name.as_ref() == "main" {
+                        token_error!(self, name, "\"main\" function cannot be #init");
+                    }
+
+                    self.definitions[INIT_DEF_INDEX].push_indent();
+                    self.definitions[INIT_DEF_INDEX].push(&full_name);
+                    self.definitions[INIT_DEF_INDEX].push("();\n");
+                }
 
                 // main function handling
                 if has_body && full_name.as_ref() == "main" {
@@ -6958,7 +6995,7 @@ impl CodeGen {
                             let mut kind_tok = name.clone();
                             kind_tok.set_lexeme("kind");
 
-                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind } = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind, init } = statement {
                                 let mut args = Vec::new();
                                 for (i, param) in params.iter().enumerate() {
                                     let name = param.name.as_ref().expect("param name wasn't available in interface");
@@ -7005,7 +7042,16 @@ impl CodeGen {
                                     cases.push(SwitchCase::new(None, body.clone()));
                                 }
 
-                                functions.push(Statement::Function { name: fn_name.clone(), params: params.clone(), return_type: return_type.clone(), body: Some(vec![Statement::Switch { kw: name.clone(), expr: Expression::Get(Box::new(Expression::Variable(self_tok)),kind_tok), cases: cases }]), qualifiers: qualifiers.clone(), generics_names: generics_names.clone(), bind: *bind });
+                                functions.push(Statement::Function {
+                                    name: fn_name.clone(),
+                                    params: params.clone(),
+                                    return_type: return_type.clone(),
+                                    body: Some(vec![Statement::Switch { kw: name.clone(), expr: Expression::Get(Box::new(Expression::Variable(self_tok)),kind_tok), cases: cases }]),
+                                    qualifiers: qualifiers.clone(),
+                                    generics_names: generics_names.clone(),
+                                    bind: *bind,
+                                    init: *init
+                                });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
                             }
@@ -7038,13 +7084,22 @@ impl CodeGen {
                         let mut functions = Vec::new();
 
                         for statement in body {
-                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind } = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind, init } = statement {
                                 // if the interface function has a body, use that as default implementation
                                 if fn_body.is_some() {
                                     token_error!(self, fn_name, "Cannot define function body in forward declaration of interface");
                                 }
 
-                                functions.push(Statement::Function { name: fn_name.clone(), params: params.clone(), return_type: return_type.clone(), body: None, qualifiers: qualifiers.clone(), generics_names: generics_names.clone(), bind: *bind });
+                                functions.push(Statement::Function {
+                                    name: fn_name.clone(),
+                                    params: params.clone(),
+                                    return_type: return_type.clone(),
+                                    body: None,
+                                    qualifiers: qualifiers.clone(),
+                                    generics_names: generics_names.clone(),
+                                    bind: *bind,
+                                    init: *init
+                                });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
                             }
@@ -7053,7 +7108,16 @@ impl CodeGen {
                         let mut custom_tok = name.clone();
                         custom_tok.set_lexeme("i32");
 
-                        let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok.clone()), variants: Vec::new(), is_simple: false, has_body: false, binding: None, generics_names: Vec::new(), bind_typedefed: false };
+                        let enum_def = Statement::Enum {
+                            name: name.clone(),
+                            kind_type: Expression::Variable(custom_tok.clone()),
+                            variants: Vec::new(),
+                            is_simple: false,
+                            has_body: false,
+                            binding: None,
+                            generics_names: Vec::new(),
+                            bind_typedefed: false
+                        };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
 
@@ -7087,7 +7151,8 @@ impl CodeGen {
     }
 
     pub fn compile(&mut self, statements: Vec<Statement>) {
-        self.compile_internal(statements, 0);
+        self.compile_internal(statements, ANY_DEF_START_INDEX);
+        self.definitions[INIT_DEF_INDEX].push("}\n\n"); // closes _SKYE_INIT block
     }
 
     pub fn get_output(&self) -> Option<String> {

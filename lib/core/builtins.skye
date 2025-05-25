@@ -694,9 +694,8 @@ macro eprint(string)   @fprint(&core::io::stdErr, string);
 macro println(string)  @fprintln(&core::io::stdOut, string);
 macro eprintln(string) @fprintln(&core::io::stdErr, string);
 
-fn _SKYE_INIT() {
+#init fn _SKYE_BUILTINS_INIT() {
     core::mem::heapAllocator = core::mem::HeapAllocator::new();
-    _SKYE_PRIMITIVES_INIT();
 }
 
 fn _SKYE_CONVERT_ARGS(const argc: usz, const argv: **const char) core::Array[String] {

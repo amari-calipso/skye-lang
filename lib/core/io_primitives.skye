@@ -89,8 +89,8 @@ namespace core {
 
         fn fileOpenModeToCMode(const mode: core::io::FileOpenMode) *const char {
             return {
-                 `r\0`,   `w\0`,   `a\0`,  `r+\0`, 
-                `w+\0`,  `a+\0`,  `rb\0`,  `wb\0`, 
+                 `r\0`,   `w\0`,   `a\0`,  `r+\0`,
+                `w+\0`,  `a+\0`,  `rb\0`,  `wb\0`,
                 `ab\0`, `rb+\0`, `wb+\0`, `ab+\0`
             }.ptr[@cast(u8, mode)];
         }
@@ -112,12 +112,12 @@ namespace core {
                 buf[filename.length] = '\0';
 
                 const cFile = fopen(buf, core::io::fileOpenModeToCMode(mode));
-                
+
                 if cFile == @nullptr {
                     const ptr = strerror(errno);
                     return (Self!String)::Error(String.{ ptr, length: core::utils::cStringLength(ptr) });
                 }
-                
+
                 return (Self!String)::Ok(Self.{ cFile });
             }
 
@@ -160,7 +160,7 @@ namespace core {
     }
 }
 
-fn _SKYE_PRIMITIVES_INIT() {
+#init fn _SKYE_PRIMITIVES_INIT() {
     core::io::stdOut = core::io::File::fromCFile(@stdout);
     core::io::stdErr = core::io::File::fromCFile(@stderr);
     core::io::stdIn  = core::io::File::fromCFile(@stdin);

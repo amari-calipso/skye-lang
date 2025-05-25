@@ -838,10 +838,12 @@ impl Parser {
     fn function(&mut self, method: bool, incoming_generics: &Vec<Generic>, self_generics: &Vec<Expression>) -> Option<Statement> {
         let mut qualifiers = Vec::new();
         let mut bind = false;
+        let mut init = false;
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
             match name.as_ref() {
                 "static" | "extern" | "inline" => qualifiers.push(qualifier.clone()),
+                "init" => init = true,
                 "bind" => bind = true,
                 _ => token_error!(self, qualifier, "Unsupported qualifier for function definition")
             }
@@ -853,6 +855,10 @@ impl Parser {
         let generics = self.parse_generics(incoming_generics)?;
         if bind && generics.len() != 0 {
             token_error!(self, self.previous(), "Generics are not allowed in function bindings");
+        }
+
+        if init && generics.len() != 0 {
+            token_error!(self, self.previous(), "Generics are not allowed in #init functions");
         }
 
         self.consume(TokenType::LeftParen, "Expecting '(' after function name")?;
@@ -922,14 +928,22 @@ impl Parser {
         };
 
         if generics.len() == 0 {
-            Some(Statement::Function { name, params, return_type, body, qualifiers, generics_names: Vec::new(), bind })
+            Some(Statement::Function { name, params, return_type, body, qualifiers, generics_names: Vec::new(), bind, init })
         } else {
             let mut generic_names = Vec::new();
             for generic in &generics {
                 generic_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Function { name, params, return_type, body, qualifiers, generics_names: generic_names.clone(), bind: false }), generics, generics_names: generic_names })
+            Some(Statement::Template {
+                name: name.clone(),
+                declaration: Box::new(Statement::Function {
+                    name, params, return_type, body, qualifiers,
+                    generics_names: generic_names.clone(),
+                    bind: false, init: false
+                }),
+                generics, generics_names: generic_names
+            })
         }
     }
 
