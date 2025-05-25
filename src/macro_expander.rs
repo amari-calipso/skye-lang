@@ -130,6 +130,57 @@ impl MacroExpander {
                     Some(Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String })
                 }
             }
+            // TODO: this probably won't be needed when and if the constant folding step is implemented
+            //       because one can just use subscripting syntax
+            "sliceAt" => {
+                if let Expression::Slice { items, .. } = arguments[0].get_inner() {
+                    if let Expression::Literal { value, kind, .. } = arguments[1].get_inner() {
+                        if matches!(kind, LiteralKind::AnyInt | LiteralKind::I8 | LiteralKind::I16 | LiteralKind::I32 | LiteralKind::I64) {
+                            match value.parse::<usize>() {
+                                Ok(value) => {
+                                    if value < items.len() {
+                                        return Some(items[value].clone());
+                                    }
+
+                                    ast_error!(
+                                        self, arguments[1],
+                                        format!(
+                                            "Index {} is out of bounds for length {}",
+                                            value, items.len()
+                                        ).as_str()
+                                    );
+
+                                    ast_note!(
+                                        arguments[0],
+                                        format!(
+                                            "This slice has length {}",
+                                            items.len()
+                                        ).as_str()
+                                    );
+
+                                    None
+                                }
+                                Err(_) => {
+                                    // TODO: parse integers properly
+                                    ast_error!(self, arguments[1], "Invalid integer for @sliceAt macro");
+                                    None
+                                }
+                            }
+                        } else {
+                            ast_error!(self, arguments[1], "@sliceAt index must be an integer");
+                            None
+                        }
+                    } else {
+                        ast_error!(self, arguments[1], "Argument for @sliceAt macro must be a literal");
+                        ast_note!(arguments[1], "The value must be known at compile time");
+                        None
+                    }
+                } else {
+                    ast_error!(self, arguments[0], "Argument for @sliceAt macro must be a literal");
+                    ast_note!(arguments[0], "The value must be known at compile time");
+                    None
+                }
+            }
             _ => None
         }
     }
