@@ -311,7 +311,8 @@ impl Ast for Expression {
 impl Expression {
     pub fn get_inner(&self) -> Expression {
         match self {
-            Expression::Grouping(inner) => *inner.clone(),
+            Expression::Grouping(inner) |
+            Expression::InMacro { inner, .. } => *inner.clone(),
             _ => self.clone()
         }
     }

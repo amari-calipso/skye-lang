@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Expression, LiteralKind, MacroBody, MacroParams, Statement}, ast_error, codegen::CODEGEN_BUILTIN_MACROS, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::escape_string, CompileMode};
+use crate::{ast::{Ast, Expression, LiteralKind, MacroBody, MacroParams, Statement}, ast_error, ast_note, ast_warning, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::escape_string, CompileMode};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -98,6 +98,42 @@ impl MacroExpander {
         }
     }
 
+    fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, callee_expr: &Expression) -> Option<Expression> {
+        match macro_name.as_ref() {
+            "concat" => {
+                if arguments.len() == 1 {
+                    if let Expression::Literal { value, tok, .. } = arguments[0].get_inner() {
+                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
+                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
+                        ast_note!(callee_expr, "Remove this macro call");
+                        Some(Expression::Literal { value, tok, kind: LiteralKind::String })
+                    } else {
+                        ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
+                        ast_note!(arguments[0], "The value must be known at compile time");
+                        Some(Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String })
+                    }
+                } else {
+                    let mut result = String::new();
+
+                    for argument in arguments {
+                        if let Expression::Literal { value, .. } = argument.get_inner() {
+                            result.push_str(&value);
+                        } else {
+                            ast_error!(self, argument, "Argument for @concat macro must be a literal");
+                            ast_note!(argument, "The value must be known at compile time");
+                        }
+                    }
+
+                    let pos = callee_expr.get_pos();
+                    let lexeme = Rc::from(result.as_ref());
+                    let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
+                    Some(Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String })
+                }
+            }
+            _ => None
+        }
+    }
+
     async fn expand_expression(&mut self, expr: &mut Expression, ctx: &mut reblessive::Stk) -> Option<SkyeType> {
         let expr_pos = expr.get_pos();
 
@@ -119,7 +155,7 @@ impl MacroExpander {
                 if let Some(value) = &value {
                     if let SkyeType::Type(inner) = value {
                         if let SkyeType::Macro(name, ..) = &**inner {
-                            if CODEGEN_BUILTIN_MACROS.contains(name.as_ref()) {
+                            if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
                                 return None;
                             }
                         }
@@ -228,6 +264,16 @@ impl MacroExpander {
                             }
                         }
                         _ => ()
+                    }
+
+                    if let Some(expression) = self.handle_builtin_macros(&name, &args, &callee_expr) {
+                        *expr = Expression::InMacro {
+                            inner: Box::new(expression),
+                            source: expr_pos
+                        };
+
+                        // re-expand the expression to expand potential nested macros and return values where needed
+                        return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
                     }
 
                     match body {

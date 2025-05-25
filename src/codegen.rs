@@ -9,7 +9,7 @@ use crate::{
 const OUTPUT_INDENT_SPACES: usize = 4;
 
 lazy_static! {
-    pub static ref CODEGEN_BUILTIN_MACROS: HashSet<&'static str> = HashSet::from([
+    pub static ref BUILTIN_MACROS: HashSet<&'static str> = HashSet::from([
         "format", "fprint", "fprintln", "typeOf", "cast", "constCast"
     ]);
 }
@@ -491,7 +491,7 @@ impl CodeGen {
         result
     }
 
-    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
+    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, _callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
         match macro_name.as_ref() {
             "format" | "fprint" | "fprintln" => {
                 let is_format   = macro_name.as_ref() == "format";
@@ -857,41 +857,6 @@ impl CodeGen {
                     );
 
                     Some(to_cast)
-                }
-            }
-            "concat" => {
-                if arguments.len() == 1 {
-                    if let Expression::Literal { value, tok, .. } = arguments[0].get_inner() {
-                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
-                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
-                        ast_note!(callee_expr, "Remove this macro call");
-
-                        let output_expr = Expression::Literal { value, tok, kind: LiteralKind::String };
-                        Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
-                    } else {
-                        ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
-                        ast_note!(arguments[0], "The value must be known at compile time");
-
-                        let output_expr = Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String };
-                        Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
-                    }
-                } else {
-                    let mut result = String::new();
-
-                    for argument in arguments {
-                        if let Expression::Literal { value, .. } = argument.get_inner() {
-                            result.push_str(&value);
-                        } else {
-                            ast_error!(self, argument, "Argument for @concat macro must be a literal");
-                            ast_note!(argument, "The value must be known at compile time");
-                        }
-                    }
-
-                    let pos = callee_expr.get_pos();
-                    let lexeme = Rc::from(result.as_ref());
-                    let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
-                    let output_expr = Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String };
-                    Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                 }
             }
             _ => None
