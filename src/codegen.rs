@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
 
 use crate::{
-    ast::{Ast, EnumVariant, Expression, FunctionParam, ImportType, LiteralKind, MacroBody, MacroParams, Statement, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, environment::{Environment, SkyeVariable}, parse_file, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
+    ast::{Ast, EnumVariant, Expression, FunctionParam, ImportType, LiteralKind, MacroBody, MacroParams, Statement, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -239,13 +239,8 @@ impl CodeGen {
             curr_function: CurrentFn::None,
             string_type: None, tmp_var_cnt: 0,
             curr_loop: None, errors: 0,
-            compile_mode, globals, skye_path, source_path: {
-                if let Some(real_path) = path {
-                    Some(Box::new(PathBuf::from(real_path)))
-                } else {
-                    None
-                }
-            }
+            compile_mode, globals, skye_path, 
+            source_path: path.map(|x| Box::new(PathBuf::from(x))),
         }
     }
 
@@ -4512,6 +4507,11 @@ impl CodeGen {
     pub async fn execute(&mut self, stmt: &Statement, index: usize, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
         match stmt {
             Statement::Empty => (),
+            Statement::TransparentBlock(statements) => {
+                for statement in statements {
+                    ctx.run(|ctx| self.execute(&statement, index, ctx)).await?;
+                }
+            }
             Statement::Expression(expr) => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     ast_error!(self, expr, "Only declarations are allowed at top level");
@@ -6450,69 +6450,43 @@ impl CodeGen {
                 }
             }
             Statement::Import { path: path_tok, type_: import_type } => {
+                // handle C imports
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
-                let skye_import = {
-                    let fetched_extension = {
-                        if let Some(extension) = path.extension() {
-                            Some(OsString::from(extension))
-                        } else {
-                            None
-                        }
-                    };
+                let extension = OsString::from(path.extension().expect("missing import processor step: no extension"));
+                assert!(extension != "skye", "missing import processor step: extension is skye");
 
-                    if let Some(extension) = fetched_extension {
-                        if *import_type == ImportType::Lib {
-                            path = self.skye_path.join("lib").join(path)
-                        } else if path.is_relative() && self.source_path.is_some() && *import_type != ImportType::Ang {
-                            path = PathBuf::from((**self.source_path.as_ref().unwrap()).clone()).join(path);
-                        } else {
-                            path = path_tok.lexeme.split('/').collect();
-                        }
-
-                        extension == "skye"
-                    } else if path.is_relative() {
-                        path = self.skye_path.join("lib").join(path).with_extension("skye");
-                        true
-                    } else {
-                        token_error!(self, path_tok, "A file extension is required on absolute path imports for Skye to know what kind of import to perform");
-                        token_note!(path_tok, "Add the file extension (\".skye\", \".c\", \".h\", ...)");
-                        return Ok(None);
-                    }
-                };
-
-                if skye_import {
-                    match parse_file(path.as_os_str()) {
-                        Ok(statements) => self.compile_internal(statements, index),
-                        Err(e) => {
-                            token_error!(self, path_tok, format!("Could not import this file. Error: {}", e.to_string()).as_ref());
-                        }
-                    }
+                if *import_type == ImportType::Lib {
+                    path = self.skye_path.join("lib").join(path)
+                } else if path.is_relative() && self.source_path.is_some() && *import_type != ImportType::Ang {
+                    path = PathBuf::from((**self.source_path.as_ref().unwrap()).clone()).join(path);
                 } else {
-                    let mut buf = String::from("#include ");
+                    path = path_tok.lexeme.split('/').collect();
+                }
 
-                    let is_ang = *import_type == ImportType::Ang;
-                    if is_ang {
-                        buf.push('<');
-                    } else {
-                        buf.push('"');
-                    }
+                let mut buf = String::from("#include ");
 
-                    buf.push_str(&escape_string(&path.to_str().expect("Error converting to string")));
+                let is_ang = *import_type == ImportType::Ang;
+                if is_ang {
+                    buf.push('<');
+                } else {
+                    buf.push('"');
+                }
 
-                    if is_ang {
-                        buf.push('>');
-                    } else {
-                        buf.push('"');
-                    }
+                buf.push_str(&escape_string(&path.to_str().expect("Error converting to string")));
 
-                    buf.push('\n');
+                if is_ang {
+                    buf.push('>');
+                } else {
+                    buf.push('"');
+                }
 
-                    if matches!(self.curr_function, CurrentFn::None) {
-                        self.includes.push(&buf);
-                    } else {
-                        self.definitions[index].push(&buf);
-                    }
+                buf.push('\n');
+
+                if matches!(self.curr_function, CurrentFn::None) {
+                    self.includes.push(&buf);
+                } else {
+                    self.definitions[index].push(&buf);
                 }
             }
             Statement::Union { name, fields, has_body, binding, bind_typedefed } => {
