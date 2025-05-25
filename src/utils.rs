@@ -47,7 +47,7 @@ pub fn report(source: &Rc<str>, msg: &str, type_: &str, filename: &Rc<str>, pos:
 
         if l == line {
             println!("{} | {}{}", " ".repeat(linelen), " ".repeat(pos), color("^".repeat(len).as_str()));
-        } 
+        }
     }
 }
 
@@ -92,6 +92,16 @@ macro_rules! token_note {
 }
 
 #[macro_export]
+macro_rules! astpos_note {
+    ($pos: expr, $msg: expr) => {
+        {
+            crate::utils::note(&$pos.source, $msg, &$pos.filename, $pos.start, $pos.end - $pos.start, $pos.line);
+        }
+    };
+}
+
+
+#[macro_export]
 macro_rules! ast_error {
     ($slf: expr, $e: expr, $msg: expr) => {
         {
@@ -117,7 +127,7 @@ macro_rules! ast_note {
     ($e: expr, $msg: expr) => {
         {
             let pos: crate::ast::AstPos = $e.get_pos();
-            crate::utils::note(&pos.source, $msg, &pos.filename, pos.start, pos.end - pos.start, pos.line);
+            crate::astpos_note!(pos, $msg);
         }
     };
 }
@@ -162,7 +172,7 @@ pub fn is_alphanumeric(c: char) -> bool {
     is_alpha(c) || is_digit(c)
 }
 
-// TODO this actually doesn't work properly, 
+// TODO this actually doesn't work properly,
 // it would need to handle variable length escape codes but it doesn't
 pub fn get_real_string_length(str: &str) -> usize {
     let mut len: usize = 0;
@@ -217,7 +227,7 @@ pub fn get_real_string_length(str: &str) -> usize {
             } else {
                 backslash = false;
             }
-        }        
+        }
 
         len += 1
     }
@@ -247,7 +257,7 @@ pub fn fix_raw_string(str: &str) -> String {
             buf.push('"');
             continue;
         }
-        
+
         if c == '\\' {
             backslash = true;
             continue;

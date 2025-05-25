@@ -360,6 +360,10 @@ impl SkyeType {
     }
 
     pub fn equals(&self, other: &SkyeType, level: EqualsLevel) -> bool {
+        if matches!(other, SkyeType::Unknown(_)) {
+            return true;
+        }
+
         match self {
             SkyeType::U8  => matches!(other, SkyeType::U8  | SkyeType::AnyInt),
             SkyeType::I8  => matches!(other, SkyeType::I8  | SkyeType::AnyInt),
