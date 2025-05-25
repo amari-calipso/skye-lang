@@ -40,7 +40,7 @@ namespace std {
             return a < b ? a : b;
         }
 
-        macro max(items*) items.max();
-        macro min(items*) items.min();
+        macro max(items+) items.max();
+        macro min(items+) items.min();
     }
 }

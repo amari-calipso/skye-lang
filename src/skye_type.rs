@@ -231,7 +231,7 @@ impl SkyeType {
             SkyeType::Group(left, right) => format!("{} | {}", left.stringify_native(), right.stringify_native()),
             SkyeType::Template(name, ..) => format!("template \"{}\"", name.replace("_DOT_", "::")),
             SkyeType::Namespace(name) => format!("namespace \"{}\"", name.replace("_DOT_", "::")),
-            SkyeType::Macro(name, ..) => format!("macro {}", name),
+            SkyeType::Macro(name, ..) => format!("macro \"{}\"", name),
             SkyeType::Unknown(name) => {
                 if name.as_ref() == "" {
                     String::from("any")
@@ -360,6 +360,10 @@ impl SkyeType {
     }
 
     pub fn equals(&self, other: &SkyeType, level: EqualsLevel) -> bool {
+        if matches!(other, SkyeType::Unknown(_)) {
+            return true;
+        }
+
         match self {
             SkyeType::U8  => matches!(other, SkyeType::U8  | SkyeType::AnyInt),
             SkyeType::I8  => matches!(other, SkyeType::I8  | SkyeType::AnyInt),

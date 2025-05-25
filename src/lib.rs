@@ -4,6 +4,7 @@ use ast::{ImportType, Statement};
 use clap::ValueEnum;
 use codegen::CodeGen;
 use import_processor::ImportProcessor;
+use macro_expander::MacroExpander;
 use parser::Parser;
 use scanner::Scanner;
 use tokens::{Token, TokenType};
@@ -18,6 +19,7 @@ mod skye_type;
 mod environment;
 mod codegen;
 mod import_processor;
+mod macro_expander;
 
 pub const MAX_PACKAGE_SIZE_BYTES: u128 = 2u128.pow(32); // Max uncompressed package size is 4 GB (basic protection against malicious ZIPs)
 
@@ -39,7 +41,7 @@ pub fn parse(source: &String, filename: Rc<str>) -> Option<Vec<Statement>> {
     Some(statements)
 }
 
-#[derive(ValueEnum, Clone, Default, Debug)]
+#[derive(ValueEnum, Clone, Copy, Default, Debug)]
 pub enum CompileMode {
     #[default]
     Debug,
@@ -102,6 +104,13 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
         return None;
     }
 
+    let mut macro_expander = MacroExpander::new(compile_mode);
+    macro_expander.expand(&mut statements);
+
+    if macro_expander.errors != 0 {
+        return None;
+    }
+
     let mut codegen = CodeGen::new(path, compile_mode, skye_path);
     codegen.compile(statements);
     codegen.get_output()
@@ -136,7 +145,7 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compile_mode: CompileMod
 }
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
-    let mut needs_std = true;    
+    let mut needs_std = true;
     let mut command = {
         if cfg!(target_os = "macos") {
             Command::new("cc")
@@ -144,7 +153,7 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
             // while c99 is in the posix standard, some platforms still don't support it,
             // using "cc" instead
             if Command::new("cc").arg("--version")
-                .output()?.status.success() 
+                .output()?.status.success()
             {
                 Command::new("cc")
             } else {
@@ -165,7 +174,7 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     if needs_std {
         command.arg("--std=c99");
     }
-    
+
     command.arg("-w").arg(input);
 
     if cfg!(not(windows)) {

@@ -1403,7 +1403,9 @@ impl Parser {
 
                 let ret = {
                     if params.len() == 1 && self.match_(&[TokenType::Star]) {
-                        MacroParams::Variable(params[0].clone())
+                        MacroParams::ZeroN(params[0].clone())
+                    } else if params.len() == 1 && self.match_(&[TokenType::Plus]) {
+                        MacroParams::OneN(params[0].clone())
                     } else {
                         MacroParams::Some(params)
                     }

@@ -1,10 +1,18 @@
-use std::{cell::RefCell, collections::HashMap, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
+
+use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, EnumVariant, Expression, FunctionParam, ImportType, LiteralKind, MacroBody, MacroParams, Statement, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
+    ast::{Ast, EnumVariant, Expression, FunctionParam, ImportType, LiteralKind, MacroBody, MacroParams, Statement, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
+
+lazy_static! {
+    pub static ref BUILTIN_MACROS: HashSet<&'static str> = HashSet::from([
+        "format", "fprint", "fprintln", "typeOf", "cast", "constCast"
+    ]);
+}
 
 const VOID_MAIN: &str = concat!(
     "int main() {\n",
@@ -194,29 +202,6 @@ impl CodeGen {
             )
         );
 
-        globals.borrow_mut().define(
-            Rc::from("COMPILE_MODE"),
-            SkyeVariable::new(
-                SkyeType::Type(
-                    Box::new(SkyeType::Macro(
-                        Rc::from("COMPILE_MODE"),
-                        MacroParams::None,
-                        MacroBody::Expression({
-                            let lit = {
-                                match compile_mode {
-                                    CompileMode::Debug         => "0",
-                                    CompileMode::Release       => "1",
-                                    CompileMode::ReleaseUnsafe => "2"
-                                }
-                            };
-
-                            Expression::Literal { value: Rc::from(lit), tok: Token::dummy(Rc::from("")), kind: LiteralKind::U8 }
-                        })
-                    ))
-                ), true, None
-            )
-        );
-
         let mut declarations = Vec::new();
         declarations.push(CodeOutput::new());
         declarations.last_mut().unwrap().push(SKYE_INIT_DECL);
@@ -239,7 +224,7 @@ impl CodeGen {
             curr_function: CurrentFn::None,
             string_type: None, tmp_var_cnt: 0,
             curr_loop: None, errors: 0,
-            compile_mode, globals, skye_path, 
+            compile_mode, globals, skye_path,
             source_path: path.map(|x| Box::new(PathBuf::from(x))),
         }
     }
@@ -520,7 +505,7 @@ impl CodeGen {
         result
     }
 
-    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
+    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, _callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
         match macro_name.as_ref() {
             "format" | "fprint" | "fprintln" => {
                 let is_format   = macro_name.as_ref() == "format";
@@ -891,41 +876,6 @@ impl CodeGen {
                     );
 
                     Some(to_cast)
-                }
-            }
-            "concat" => {
-                if arguments.len() == 1 {
-                    if let Expression::Literal { value, tok, .. } = arguments[0].get_inner() {
-                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
-                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
-                        ast_note!(callee_expr, "Remove this macro call");
-
-                        let output_expr = Expression::Literal { value, tok, kind: LiteralKind::String };
-                        Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
-                    } else {
-                        ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
-                        ast_note!(arguments[0], "The value must be known at compile time");
-
-                        let output_expr = Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String };
-                        Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
-                    }
-                } else {
-                    let mut result = String::new();
-
-                    for argument in arguments {
-                        if let Expression::Literal { value, .. } = argument.get_inner() {
-                            result.push_str(&value);
-                        } else {
-                            ast_error!(self, argument, "Argument for @concat macro must be a literal");
-                            ast_note!(argument, "The value must be known at compile time");
-                        }
-                    }
-
-                    let pos = callee_expr.get_pos();
-                    let lexeme = Rc::from(result.as_ref());
-                    let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
-                    let output_expr = Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String };
-                    Some(ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await)
                 }
             }
             _ => None
@@ -1508,8 +1458,10 @@ impl CodeGen {
                 }
             }
             SkyeType::Macro(macro_name, params_opt, body) => {
-                if !matches!(params_opt, MacroParams::None) {
-                    if let MacroParams::Some(params) = params_opt {
+                assert!(!matches!(params_opt, MacroParams::None)); // covered by unary '@' evaluation
+
+                match params_opt {
+                    MacroParams::Some(params) => {
                         if params.len() != arguments_len {
                             ast_error!(
                                 self, expr,
@@ -1521,106 +1473,96 @@ impl CodeGen {
 
                             return SkyeValue::get_unknown();
                         }
-                    } else {
+                    }
+                    MacroParams::OneN(_) => {
                         if arguments_len == 0 {
                             ast_error!(self, expr, "Expecting at least one argument for macro call but got none");
                             return SkyeValue::get_unknown();
                         }
                     }
+                    _ => ()
+                }
 
-                    match body {
-                        MacroBody::Binding(return_type) => {
-                            let tmp_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
-                            let mut env = tmp_env.borrow_mut();
+                if let MacroBody::Binding(return_type) = body {
+                    let tmp_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
+                    let mut env = tmp_env.borrow_mut();
 
-                            let mut args = String::new();
-                            for i in 0 .. arguments_len {
-                                let arg = ctx.run(|ctx| self.evaluate(&arguments[i], index, allow_unknown, ctx)).await;
+                    let mut args = String::new();
+                    for i in 0 .. arguments_len {
+                        let arg = ctx.run(|ctx| self.evaluate(&arguments[i], index, allow_unknown, ctx)).await;
 
-                                if let SkyeType::Type(inner_type) = &arg.type_ {
-                                    args.push_str(&inner_type.stringify());
-                                } else {
-                                    args.push_str(&arg.value);
-                                }
-
-                                if let MacroParams::Some(params) = params_opt {
-                                    env.define(
-                                        Rc::clone(&params[i].lexeme),
-                                        SkyeVariable::new(
-                                            arg.type_, true,
-                                            Some(Box::new(params[i].clone()))
-                                        )
-                                    );
-                                }
-
-                                if i != arguments_len - 1 {
-                                    args.push_str(", ");
-                                }
-                            }
-
-                            drop(env);
-                            let previous = Rc::clone(&self.environment);
-                            self.environment = tmp_env;
-
-                            let call_return_type = ctx.run(|ctx| self.evaluate(&return_type, index, allow_unknown, ctx)).await;
-
-                            self.environment = previous;
-
-                            if let SkyeType::Type(inner_type) = call_return_type.type_ {
-                                SkyeValue::new(Rc::from(format!("{}({})", callee.value, args)), *inner_type, false)
-                            } else {
-                                ast_error!(
-                                    self, return_type,
-                                    format!(
-                                        "Expecting type as return type (got {})",
-                                        call_return_type.type_.stringify_native()
-                                    ).as_ref()
-                                );
-                                ast_note!(expr, "This error is a result of this macro expansion");
-                                SkyeValue::get_unknown()
-                            }
+                        if let SkyeType::Type(inner_type) = &arg.type_ {
+                            args.push_str(&inner_type.stringify());
+                        } else {
+                            args.push_str(&arg.value);
                         }
-                        MacroBody::Expression(return_expr) => {
-                            if let Some(result) = ctx.run(|ctx| self.handle_builtin_macros(macro_name, arguments, index, allow_unknown, callee_expr, ctx)).await {
-                                return result;
-                            }
 
+                        if let MacroParams::Some(params) = params_opt {
+                            env.define(
+                                Rc::clone(&params[i].lexeme),
+                                SkyeVariable::new(
+                                    arg.type_, true,
+                                    Some(Box::new(params[i].clone()))
+                                )
+                            );
+                        }
+
+                        if i != arguments_len - 1 {
+                            args.push_str(", ");
+                        }
+                    }
+
+                    drop(env);
+                    let previous = Rc::clone(&self.environment);
+                    self.environment = tmp_env;
+
+                    let call_return_type = ctx.run(|ctx| self.evaluate(&return_type, index, allow_unknown, ctx)).await;
+
+                    self.environment = previous;
+
+                    if let SkyeType::Type(inner_type) = call_return_type.type_ {
+                        SkyeValue::new(Rc::from(format!("{}({})", callee.value, args)), *inner_type, false)
+                    } else {
+                        ast_error!(
+                            self, return_type,
+                            format!(
+                                "Expecting type as return type (got {})",
+                                call_return_type.type_.stringify_native()
+                            ).as_ref()
+                        );
+                        ast_note!(expr, "This error is a result of this macro expansion");
+                        SkyeValue::get_unknown()
+                    }
+                } else if let Some(result) = ctx.run(|ctx| self.handle_builtin_macros(macro_name, arguments, index, allow_unknown, callee_expr, ctx)).await {
+                    return result;
+                } else if let MacroBody::Expression(return_expr) = body {
+                    if macro_name.as_ref() == "panic" {
+                        // macros should be handled at macro expansion time,
+                        // but the panic macro sometimes gets generated by the codegen step itself.
+                        // so handle it here too, to cover those cases
+
+                        if let MacroParams::Some(params) = params_opt {
                             let mut curr_expr = return_expr.clone();
 
-                            match params_opt {
-                                MacroParams::Some(params) => {
-                                    for i in 0 .. arguments_len {
-                                        curr_expr = curr_expr.replace_variable(&params[i].lexeme, &arguments[i]);
-                                    }
+                            for i in 0 .. arguments_len {
+                                curr_expr = curr_expr.replace_variable(&params[i].lexeme, &arguments[i]);
+                            }
 
-                                    if macro_name.as_ref() == "panic" {
-                                        // panic also includes position information
+                            if matches!(self.compile_mode, CompileMode::Debug) {
+                                let panic_pos = callee_expr.get_pos();
 
-                                        if matches!(self.compile_mode, CompileMode::Debug) {
-                                            let panic_pos = callee_expr.get_pos();
-
-                                            curr_expr = curr_expr.replace_variable(
-                                                &Rc::from("PANIC_POS"),
-                                                &Expression::Literal { value: Rc::from(format!(
-                                                        "{}: line {}, pos {}",
-                                                        escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                                    )), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
-                                            );
-                                        } else {
-                                            curr_expr = curr_expr.replace_variable(
-                                                &Rc::from("PANIC_POS"),
-                                                &Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
-                                            );
-                                        }
-                                    }
-                                }
-                                MacroParams::Variable(var_name) => {
-                                    curr_expr = curr_expr.replace_variable(
-                                        &var_name.lexeme,
-                                        &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }
-                                    );
-                                }
-                                MacroParams::None => unreachable!()
+                                curr_expr = curr_expr.replace_variable(
+                                    &Rc::from("PANIC_POS"),
+                                    &Expression::Literal { value: Rc::from(format!(
+                                        "{}: line {}, pos {}",
+                                        escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
+                                    )), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                );
+                            } else {
+                                curr_expr = curr_expr.replace_variable(
+                                    &Rc::from("PANIC_POS"),
+                                    &Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                );
                             }
 
                             let old_errors = self.errors;
@@ -1632,38 +1574,16 @@ impl CodeGen {
                             }
 
                             res
+                        } else {
+                            unreachable!("@panic call in codegen did not have MacroParams::Some");
                         }
-                        MacroBody::Block(body) => {
-                            let mut curr_body = body.clone();
-
-                            for statement in curr_body.iter_mut() {
-                                match params_opt {
-                                    MacroParams::Some(params) => {
-                                        for i in 0 .. arguments_len {
-                                            *statement = statement.replace_variable(&params[i].lexeme, &arguments[i]);
-                                        }
-                                    }
-                                    MacroParams::Variable(var_name) => {
-                                        *statement = statement.replace_variable(
-                                            &var_name.lexeme,
-                                            &Expression::Slice { opening_brace: var_name.clone(), items: arguments.clone() }
-                                        );
-                                    }
-                                    MacroParams::None => unreachable!()
-                                }
-                            }
-
-                            ctx.run(|ctx| self.execute_block(
-                                body,
-                                Rc::clone(&self.environment),
-                                index, false, ctx
-                            )).await;
-
-                            SkyeValue::special(SkyeType::Void)
-                        }
+                    } else {
+                        ast_error!(self, expr, "Macro call is not allowed here");
+                        SkyeValue::get_unknown()
                     }
                 } else {
-                    unreachable!() // covered by unary '@' evaluation
+                    ast_error!(self, expr, "Macro call is not allowed here");
+                    SkyeValue::get_unknown()
                 }
             }
             _ => {
@@ -2097,6 +2017,29 @@ impl CodeGen {
             Expression::Grouping(inner_expr) => {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
                 SkyeValue::new(Rc::from(format!("({})", inner.value)), inner.type_, inner.is_const)
+            }
+            Expression::InMacro { inner: inner_expr, source } => {
+                let old_errors = self.errors;
+                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "This error is a result of this macro expansion");
+                }
+
+                inner
+            }
+            Expression::MacroExpandedStatements { inner, source } => {
+                let old_errors = self.errors;
+
+                for statement in inner {
+                    let _ = ctx.run(|ctx| self.execute(statement, index, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "This error is a result of this macro expansion");
+                }
+
+                SkyeValue::special(SkyeType::Void)
             }
             Expression::Slice { opening_brace, items } => {
                 let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
@@ -2785,73 +2728,58 @@ impl CodeGen {
                             if let SkyeType::Type(inner_type) = inner.type_ {
                                 if let SkyeType::Macro(name, params, body) = &*inner_type {
                                     if matches!(params, MacroParams::None) {
-                                        match body {
-                                            MacroBody::Binding(return_type) => {
-                                                let ret_type = ctx.run(|ctx| self.evaluate(return_type, index, allow_unknown, ctx)).await;
+                                        if let MacroBody::Binding(return_type) = body {
+                                            let ret_type = ctx.run(|ctx| self.evaluate(return_type, index, allow_unknown, ctx)).await;
 
-                                                if let SkyeType::Type(inner_type) = ret_type.type_ {
-                                                    if !inner_type.check_completeness() {
-                                                        ast_error!(self, return_type, "Cannot use incomplete type directly");
-                                                        ast_note!(return_type, "Define this type or reference it through a pointer");
-                                                    }
-
-                                                    SkyeValue::new(Rc::clone(name), *inner_type, true)
-                                                } else {
-                                                    ast_error!(
-                                                        self, return_type,
-                                                        format!(
-                                                            "Expecting type as return type (got {})",
-                                                            ret_type.type_.stringify_native()
-                                                        ).as_ref()
-                                                    );
-
-                                                    ast_note!(expr, "This error is a result of this macro expansion");
-                                                    SkyeValue::get_unknown()
-                                                }
-                                            }
-                                            MacroBody::Expression(return_expr) => {
-                                                let old_errors = self.errors;
-
-                                                let res = ctx.run(|ctx| self.evaluate(&return_expr, index, allow_unknown, ctx)).await;
-
-                                                if self.errors != old_errors {
-                                                    ast_note!(expr, "This error is a result of this macro expansion");
+                                            if let SkyeType::Type(inner_type) = ret_type.type_ {
+                                                if !inner_type.check_completeness() {
+                                                    ast_error!(self, return_type, "Cannot use incomplete type directly");
+                                                    ast_note!(return_type, "Define this type or reference it through a pointer");
                                                 }
 
-                                                res
-                                            }
-                                            MacroBody::Block(body) => {
-                                                ctx.run(|ctx| self.execute_block(
-                                                    body,
-                                                    Rc::clone(&self.environment),
-                                                    index, false, ctx
-                                                )).await;
+                                                SkyeValue::new(Rc::clone(name), *inner_type, true)
+                                            } else {
+                                                ast_error!(
+                                                    self, return_type,
+                                                    format!(
+                                                        "Expecting type as return type (got {})",
+                                                        ret_type.type_.stringify_native()
+                                                    ).as_ref()
+                                                );
 
-                                                SkyeValue::special(SkyeType::Void)
+                                                ast_note!(expr, "This error is a result of this macro expansion");
+                                                SkyeValue::get_unknown()
                                             }
+                                        } else {
+                                            ast_error!(self, expr, "Macro is not allowed here");
+                                            SkyeValue::get_unknown()
                                         }
                                     } else {
                                         SkyeValue::new(Rc::clone(name), *inner_type, true)
                                     }
                                 } else {
-                                    token_error!(
-                                        self, op,
-                                        format!(
-                                            "'@' can only be used on macros (got {})",
-                                            inner_type.stringify_native()
-                                        ).as_ref()
-                                    );
+                                    if !matches!(&*inner_type, SkyeType::Unknown(_)) {
+                                        token_error!(
+                                            self, op,
+                                            format!(
+                                                "'@' can only be used on macros (got {})",
+                                                inner_type.stringify_native()
+                                            ).as_ref()
+                                        );
+                                    }
 
                                     SkyeValue::get_unknown()
                                 }
                             } else {
-                                token_error!(
-                                    self, op,
-                                    format!(
-                                        "'@' can only be used on macros (got {})",
-                                        inner.type_.stringify_native()
-                                    ).as_ref()
-                                );
+                                if !matches!(inner.type_, SkyeType::Unknown(_)) {
+                                    token_error!(
+                                        self, op,
+                                        format!(
+                                            "'@' can only be used on macros (got {})",
+                                            inner.type_.stringify_native()
+                                        ).as_ref()
+                                    );
+                                }
 
                                 SkyeValue::get_unknown()
                             }
@@ -3432,7 +3360,7 @@ impl CodeGen {
                 match cond.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt => (),
+                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -4214,7 +4142,7 @@ impl CodeGen {
                                     ast_error!(self, expr, "Could not process template generation for this expression");
                                     SkyeType::get_unknown()
                                 }),
-                                Err(_) =>unreachable!("execution interrupt happened out of context")
+                                Err(_) => unreachable!("execution interrupt happened out of context")
                             }
                         };
 
@@ -4519,6 +4447,17 @@ impl CodeGen {
                 }
 
                 let value = ctx.run(|ctx| self.evaluate(&expr, index, false, ctx)).await;
+
+                if !value.type_.can_be_instantiated(true) {
+                    ast_error!(self, expr, "Cannot use compile-time type as a standalone expression");
+                    ast_note!(
+                        expr,
+                        format!(
+                            "This expression has type {}",
+                            value.type_.stringify_native()
+                        ).as_str()
+                    );
+                }
 
                 if let SkyeType::Enum(.., base_name) = value.type_ {
                     if base_name.as_ref() == "core_DOT_Result" {
@@ -4992,7 +4931,7 @@ impl CodeGen {
                 match cond.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt => (),
+                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5093,7 +5032,7 @@ impl CodeGen {
                 match cond.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt => (),
+                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5175,7 +5114,7 @@ impl CodeGen {
                 match cond.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt => (),
+                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5279,7 +5218,7 @@ impl CodeGen {
                 match cond.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt => (),
+                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -6244,7 +6183,7 @@ impl CodeGen {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
-                    SkyeType::AnyFloat | SkyeType::Char => (),
+                    SkyeType::AnyFloat | SkyeType::Char | SkyeType::Unknown(_) => (),
                     SkyeType::Type(inner) => {
                         is_classic = false;
 
@@ -6311,7 +6250,7 @@ impl CodeGen {
                                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                                     SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
-                                    SkyeType::AnyFloat | SkyeType::Char => (),
+                                    SkyeType::AnyFloat | SkyeType::Char | SkyeType::Unknown(_) => (),
                                     SkyeType::Enum(_, variants, _) => {
                                         if variants.is_some() {
                                             ast_error!(

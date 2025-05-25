@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::tokens::{Token, TokenType};
 
+#[derive(Clone, PartialEq, PartialOrd)]
 pub struct AstPos {
     pub source: Rc<str>,
     pub filename: Rc<str>,
@@ -115,6 +116,8 @@ pub enum Expression {
     Get(Box<Expression>, Token), // object name
     StaticGet(Box<Expression>, Token, bool), // object name gets_macro
     Slice { opening_brace: Token, items: Vec<Expression> },
+    InMacro { inner: Box<Expression>, source: AstPos },
+    MacroExpandedStatements { inner: Vec<Statement>, source: AstPos }
 }
 
 impl Ast for Expression {
@@ -123,6 +126,7 @@ impl Ast for Expression {
     fn get_pos(&self) -> AstPos {
         match self {
             Expression::Grouping(expr) => expr.get_pos(),
+            Expression::InMacro { source, .. } | Expression::MacroExpandedStatements { source, .. } => source.clone(),
             Expression::Literal { value: _, tok, kind: _ } | Expression::Variable(tok) => {
                 AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
             }
@@ -239,7 +243,8 @@ impl Ast for Expression {
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Expression {
         match self {
-            Expression::Grouping(expr) => expr.replace_variable(name, replace_expr),
+            Expression::Grouping(expr) |
+            Expression::InMacro { inner: expr, .. } => expr.replace_variable(name, replace_expr),
             Expression::Literal { .. } => self.clone(),
             Expression::Variable(tok) => {
                 if tok.lexeme.as_ref() == name.as_ref() {
@@ -293,6 +298,12 @@ impl Ast for Expression {
             Expression::Slice { opening_brace, items } => {
                 Expression::Slice { opening_brace: opening_brace.clone(), items: items.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }
             }
+            Expression::MacroExpandedStatements { inner: statements, source } => {
+                Expression::MacroExpandedStatements {
+                    inner: statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect(),
+                    source: source.clone()
+                }
+            }
         }
     }
 }
@@ -300,7 +311,8 @@ impl Ast for Expression {
 impl Expression {
     pub fn get_inner(&self) -> Expression {
         match self {
-            Expression::Grouping(inner) => *inner.clone(),
+            Expression::Grouping(inner) |
+            Expression::InMacro { inner, .. } => *inner.clone(),
             _ => self.clone()
         }
     }
@@ -339,7 +351,8 @@ impl Generic {
 pub enum MacroParams {
     None,
     Some(Vec<Token>),
-    Variable(Token)
+    OneN(Token),
+    ZeroN(Token)
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
