@@ -4429,6 +4429,17 @@ impl CodeGen {
 
                 let value = ctx.run(|ctx| self.evaluate(&expr, index, false, ctx)).await;
 
+                if !value.type_.can_be_instantiated(true) {
+                    ast_error!(self, expr, "Cannot use compile-time type as a standalone expression");
+                    ast_note!(
+                        expr,
+                        format!(
+                            "This expression has type {}",
+                            value.type_.stringify_native()
+                        ).as_str()
+                    );
+                }
+
                 if let SkyeType::Enum(.., base_name) = value.type_ {
                     if base_name.as_ref() == "core_DOT_Result" {
                         ast_warning!(expr, "Error is being ignored implictly");
