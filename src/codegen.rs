@@ -3207,8 +3207,14 @@ impl CodeGen {
             }
             Expression::Variable(name) => {
                 if let Some(var_info) = self.environment.borrow().get(&name) {
-                    SkyeValue::new(name.lexeme.clone(), var_info.type_, var_info.is_const)
-                } else if allow_unknown {
+                    return SkyeValue::new(name.lexeme.clone(), var_info.type_, var_info.is_const);
+                } else if name.lexeme.as_ref() == "main" {
+                    if let Some(var_info) = self.globals.borrow().get(&Token::dummy(Rc::from("_SKYE_MAIN"))) {
+                        return SkyeValue::new(name.lexeme.clone(), var_info.type_, var_info.is_const);
+                    }
+                }
+
+                if allow_unknown {
                     SkyeValue::special(SkyeType::Unknown(Rc::clone(&name.lexeme)))
                 } else {
                     token_error!(
