@@ -191,7 +191,8 @@ impl MacroExpander {
         match expr {
             Expression::Literal { .. } => (),
             Expression::Binary { left, right, .. } |
-            Expression::Assign { target: left, value: right, .. } => {
+            Expression::Assign { target: left, value: right, .. } |
+            Expression::Array { item: left, size: right, .. }=> {
                 ctx.run(|ctx| self.expand_expression(left, ctx)).await;
                 ctx.run(|ctx| self.expand_expression(right, ctx)).await;
             }

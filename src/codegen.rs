@@ -2116,6 +2116,9 @@ impl CodeGen {
                     panic!("struct template generation resulted in not a type");
                 }
             }
+            Expression::Array { opening_brace, item, size } => {
+                todo!()
+            }
             Expression::Literal { value, kind, .. } => {
                 match kind {
                     LiteralKind::Void => SkyeValue::special(SkyeType::Void),

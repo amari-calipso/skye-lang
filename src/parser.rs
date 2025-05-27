@@ -223,17 +223,27 @@ impl Parser {
 
         if self.match_(&[TokenType::LeftSquare]) {
             let opening_brace = self.previous().clone();
-            let items = self.get_nonzero_expressions(TokenType::RightSquare)?;
-            self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
+            let first = self.expression()?;
 
-            let mut method_tok = opening_brace.clone();
-            method_tok.set_lexeme("core_DOT_Array_DOT_from");
+            if self.match_(&[TokenType::Semicolon]) {
+                let size = self.expression()?;
+                self.consume(TokenType::RightSquare, "Expecting ']' after array declaration")?;
+                return Some(Expression::Array { opening_brace, item: Box::new(first), size: Box::new(size) });
+            } else {
+                let mut items = self.get_expressions(TokenType::RightSquare)?;
+                self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
 
-            return Some(Expression::Call(
-                Box::new(Expression::Variable(method_tok)),
-                opening_brace.clone(),
-                vec![Expression::Slice { opening_brace: opening_brace, items: items }]
-            ));
+                items.insert(0, first);
+
+                let mut method_tok = opening_brace.clone();
+                method_tok.set_lexeme("core_DOT_Array_DOT_from");
+
+                return Some(Expression::Call(
+                    Box::new(Expression::Variable(method_tok)),
+                    opening_brace.clone(),
+                    vec![Expression::Slice { opening_brace: opening_brace, items: items }]
+                ));
+            }
         }
 
         match_literal!(self, U8);  match_literal!(self, I8);
@@ -272,10 +282,10 @@ impl Parser {
         self.static_access()
     }
 
-    fn get_expressions(&mut self) -> Option<Vec<Expression>> {
+    fn get_expressions(&mut self, type_: TokenType) -> Option<Vec<Expression>> {
         let mut expressions = Vec::new();
 
-        while !self.check(TokenType::RightParen) {
+        while !self.check(type_) {
             expressions.push(self.expression()?);
 
             if !self.match_(&[TokenType::Comma]) {
@@ -287,13 +297,13 @@ impl Parser {
     }
 
     fn finish_call(&mut self, callee: Expression) -> Option<Expression> {
-        let arguments = self.get_expressions()?;
+        let arguments = self.get_expressions(TokenType::RightParen)?;
         let paren = self.consume(TokenType::RightParen, "Expecting ')' after arguments.")?.clone();
         Some(Expression::Call(Box::new(callee), paren, arguments))
     }
 
     fn finish_subscript(&mut self, subscripted: Expression) -> Option<Expression> {
-        let arguments = self.get_expressions()?;
+        let arguments = self.get_expressions(TokenType::RightParen)?;
         let paren = self.consume(TokenType::RightSquare, "Expecting ']' after subscript operation")?.clone();
         Some(Expression::Subscript { subscripted: Box::new(subscripted), paren, args: arguments })
     }
@@ -545,7 +555,7 @@ impl Parser {
                         if self.check(TokenType::RightParen) {
                             Vec::new()
                         } else {
-                            self.get_expressions()?
+                            self.get_expressions(TokenType::RightParen)?
                         }
                     };
 
@@ -554,7 +564,7 @@ impl Parser {
                 } else if self.check(TokenType::LeftBrace) {
                     Vec::new()
                 } else {
-                    self.get_expressions()?
+                    self.get_expressions(TokenType::RightParen)?
                 }
             };
 

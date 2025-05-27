@@ -117,7 +117,8 @@ pub enum Expression {
     StaticGet(Box<Expression>, Token, bool), // object name gets_macro
     Slice { opening_brace: Token, items: Vec<Expression> },
     InMacro { inner: Box<Expression>, source: AstPos },
-    MacroExpandedStatements { inner: Vec<Statement>, source: AstPos }
+    MacroExpandedStatements { inner: Vec<Statement>, source: AstPos },
+    Array { opening_brace: Token, item: Box<Expression>, size: Box<Expression> }
 }
 
 impl Ast for Expression {
@@ -238,6 +239,9 @@ impl Ast for Expression {
                     }
                 }
             }
+            Expression::Array { opening_brace, .. } => {
+                AstPos::new(Rc::clone(&opening_brace.source), Rc::clone(&opening_brace.filename), opening_brace.pos, opening_brace.end, opening_brace.line)
+            }
         }
     }
 
@@ -302,6 +306,13 @@ impl Ast for Expression {
                 Expression::MacroExpandedStatements {
                     inner: statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect(),
                     source: source.clone()
+                }
+            }
+            Expression::Array { opening_brace, item, size } => {
+                Expression::Array {
+                    opening_brace: opening_brace.clone(),
+                    item: Box::new(item.replace_variable(name, replace_expr)),
+                    size: Box::new(size.replace_variable(name, replace_expr))
                 }
             }
         }
