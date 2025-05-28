@@ -230,6 +230,7 @@ impl Parser {
                 self.consume(TokenType::RightSquare, "Expecting ']' after array declaration")?;
                 return Some(Expression::Array { opening_brace, item: Box::new(first), size: Box::new(size) });
             } else {
+                self.match_(&[TokenType::Comma]); // consumes comma after first expression, if any
                 let mut items = self.get_expressions(TokenType::RightSquare)?;
                 self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
 
