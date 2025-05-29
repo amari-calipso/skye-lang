@@ -164,6 +164,7 @@ pub struct CodeGen {
     skye_path:   PathBuf,
 
     strings:            HashMap<Rc<str>, usize>,
+    arrays:             HashSet<Rc<str>>,
     strings_code:       CodeOutput,
     includes:           CodeOutput,
     declarations:       Vec<CodeOutput>,
@@ -218,6 +219,7 @@ impl CodeGen {
             strings_code: CodeOutput::new(),
             includes: CodeOutput::new(),
             strings: HashMap::new(),
+            arrays: HashSet::new(),
             curr_name: String::new(),
             environment: Rc::clone(&globals),
             deferred: Rc::new(RefCell::new(Vec::new())),
@@ -2116,8 +2118,50 @@ impl CodeGen {
                     panic!("struct template generation resulted in not a type");
                 }
             }
-            Expression::Array { opening_brace, item, size } => {
-                todo!()
+            Expression::Array { opening_brace, item: item_expr, size: size_expr } => {
+                let item = ctx.run(|ctx| self.evaluate(&item_expr, index, allow_unknown, ctx)).await;
+
+                let size = 0; // TODO: check that size is a literal and get inner value
+
+                if let SkyeType::Type(inner) = item.type_ {
+                    let array_specifier: Rc<str> = format!("{}_{}", inner.mangle(), size).into();
+                    let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
+
+                    if !self.arrays.contains(&array_specifier) {
+                        let mut buf = String::from("typedef struct SKYE_ARRAY_STRUCT_");
+                        buf.push_str(&array_specifier);
+
+                        self.arrays.insert(array_specifier);
+
+                        self.declarations.push(CodeOutput::new());
+                        self.declarations.last_mut().unwrap().push(&buf);
+                        self.declarations.last_mut().unwrap().push(";\n");
+
+                        let mut def_buf = CodeOutput::new();
+                        def_buf.push(&buf);
+                        def_buf.push(" {\n");
+                        def_buf.inc_indent();
+
+                        def_buf.push_indent();
+                        def_buf.push(&inner.stringify());
+                        def_buf.push(" ");
+                        def_buf.push("SKYE_ARRAY[");
+                        def_buf.push(&size.to_string());
+                        def_buf.push("];\n");
+                        def_buf.dec_indent();
+
+                        def_buf.push("} ");
+                        def_buf.push(&type_name);
+                        def_buf.push(";\n\n");
+
+                        self.struct_definitions.insert(Rc::clone(&type_name), def_buf);
+                        self.struct_defs_order.push(Rc::clone(&type_name));
+                    }
+
+                    SkyeValue::new(type_name, SkyeType::Type(Box::new(SkyeType::Array(inner, size))), true)
+                } else {
+                    todo!("implement initialization syntax")
+                }
             }
             Expression::Literal { value, kind, .. } => {
                 match kind {
@@ -3974,6 +4018,36 @@ impl CodeGen {
                             SkyeType::Usz | SkyeType::AnyInt => {
                                 let subscripted_value = ctx.run(|ctx| self.zero_check(&subscripted, paren, "Null pointer dereference", index, ctx)).await;
                                 return SkyeValue::new(Rc::from(format!("{}[{}]", subscripted_value, arg.value)), *inner_type.clone(), is_const);
+                            }
+                            _ => {
+                                ast_error!(
+                                    self, &arguments[0],
+                                    format!(
+                                        "Expecting integer for subscripting operation (got {})",
+                                        arg.type_.stringify_native()
+                                    ).as_ref()
+                                );
+
+                                return SkyeValue::special(*inner_type.clone());
+                           }
+                        }
+                    }
+                    SkyeType::Array(inner_type, _size) => {
+                        if arguments.len() != 1 {
+                            token_error!(self, paren, "Expecting one subscript argument for array access");
+                            return SkyeValue::special(*inner_type.clone());
+                        }
+
+                        let arg = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+
+                        match arg.type_ {
+                            SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
+                            SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
+                            SkyeType::Usz | SkyeType::AnyInt => {
+                                // TODO: here we could add a check to see if the inner value is accessing out of bounds,
+                                //       since we know the array size at comptime. the check could also be deferred 
+                                //       to runtime (in debug mode)
+                                return SkyeValue::new(Rc::from(format!("({}).SKYE_ARRAY[{}]", subscripted.value, arg.value)), *inner_type.clone(), false);
                             }
                             _ => {
                                 ast_error!(

@@ -124,6 +124,7 @@ pub enum SkyeType {
     Unknown(Rc<str>), // used for type inference
 
     Pointer(Box<SkyeType>, bool, bool), // type is_const is_reference
+    Array(Box<SkyeType>, usize), // type size
     Type(Box<SkyeType>),
     Group(Box<SkyeType>, Box<SkyeType>), // left right
     Function(Vec<SkyeFunctionParam>, Box<SkyeType>, bool), // params return_type has_body
@@ -156,6 +157,7 @@ impl std::fmt::Debug for SkyeType {
             Self::Void => write!(f, "Void"),
             Self::Unknown(arg0) => f.debug_tuple("Unknown").field(arg0).finish(),
             Self::Pointer(arg0, arg1, arg2) => f.debug_tuple("Pointer").field(arg0).field(arg1).field(arg2).finish(),
+            Self::Array(arg0, arg1) => f.debug_tuple("Array").field(arg0).field(arg1).finish(),
             Self::Type(arg0) => f.debug_tuple("Type").field(arg0).finish(),
             Self::Group(arg0, arg1) => f.debug_tuple("Group").field(arg0).field(arg1).finish(),
             Self::Function(arg0, arg1, arg2) => f.debug_tuple("Function").field(arg0).field(arg1).field(arg2).finish(),
@@ -198,7 +200,11 @@ impl SkyeType {
             SkyeType::Function(..) => self.mangle(),
 
             SkyeType::Pointer(inner, ..) => {
-                String::from(format!("{}*", inner.stringify()))
+                format!("{}*", inner.stringify())
+            }
+
+            SkyeType::Array(inner, size) => {
+                format!("SKYE_ARRAY_{}_{}", inner.mangle(), *size)
             }
 
             SkyeType::Struct(name, ..) |
@@ -276,6 +282,10 @@ impl SkyeType {
                 }
             }
 
+            SkyeType::Array(inner, size) => {
+                format!("[{}; {}]", inner.stringify_native(), *size)
+            }
+
             SkyeType::Struct(name, ..) |
             SkyeType::Enum(name, ..) => {
                 // not ideal, but it's just error reporting ¯\_(ツ)_/¯
@@ -332,7 +342,9 @@ impl SkyeType {
                 }
 
                 String::from(format!("_PTROF_{}_PTREND_", inner_mangled))
-            },
+            }
+
+            SkyeType::Array(..) => self.mangle(),
 
             SkyeType::Function(params, return_type, _) => {
                 let ret_type_mangled = return_type.mangle();
@@ -423,6 +435,13 @@ impl SkyeType {
                             false
                         }
                     }
+                }
+            }
+            SkyeType::Array(self_inner, self_size) => {
+                if let SkyeType::Array(other_inner, other_size) = other {
+                    *self_size == *other_size && self_inner.equals(&other_inner, level)
+                } else {
+                    false
                 }
             }
             SkyeType::Function(self_params, self_return_type, _) => {
@@ -691,9 +710,11 @@ impl SkyeType {
             }
 
             SkyeType::Pointer(self_inner_type, ..) |
+            SkyeType::Array(self_inner_type, ..) |
             SkyeType::Type(self_inner_type) => {
                 match other {
                     SkyeType::Pointer(other_inner_type, ..) |
+                    SkyeType::Array(other_inner_type, ..) |
                     SkyeType::Type(other_inner_type) => {
                         self_inner_type.infer_type_from_similar_internal(other_inner_type, data)?;
                     }
@@ -815,7 +836,7 @@ impl SkyeType {
             }
 
             SkyeType::Void | SkyeType::Type(_) | SkyeType::Group(..) |
-            SkyeType::Namespace(_) | SkyeType::Macro(..) => {
+            SkyeType::Namespace(_) | SkyeType::Macro(..) | SkyeType::Array(..) => {
                 ImplementsHow::No
             }
 
@@ -860,7 +881,8 @@ impl SkyeType {
             SkyeType::I8  | SkyeType::I16 | SkyeType::I32 | SkyeType::I64 | SkyeType::AnyInt |
             SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat |
             SkyeType::Char | SkyeType::Void | SkyeType::Unknown(_) |
-            SkyeType::Pointer(..) | SkyeType::Function(..) | SkyeType::Enum(..) => true,
+            SkyeType::Pointer(..) | SkyeType::Function(..) | SkyeType::Enum(..) | 
+            SkyeType::Array(..) => true,
 
             SkyeType::Group(..) | SkyeType::Namespace(_) | SkyeType::Template(..) |
             SkyeType::Macro(..) => false,
@@ -927,6 +949,15 @@ impl SkyeType {
                     CastableHow::No
                 }
             }
+
+            SkyeType::Array(..) => {
+                if matches!(cast_to, SkyeType::Pointer(..)) {
+                    CastableHow::Yes
+                } else {
+                    CastableHow::No
+                }
+            }
+
             SkyeType::Enum(_, variants, _) => {
                 if variants.is_none() && ALL_INTS.contains(cast_to) {
                     CastableHow::Yes
