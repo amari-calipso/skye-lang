@@ -30,12 +30,13 @@ pub trait Ast {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum LiteralKind {
-    U8, U16, U32, U64, Usz,
-    I8, I16, I32, I64, AnyInt,
-    F32, F64, AnyFloat,
-    RawString, String, Char,
-    Void
+pub enum Bits {
+    B8, B16, B32, B64, Bsz, Any
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum StringKind {
+    Slice, Raw, Char
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -103,7 +104,11 @@ impl BitfieldField {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Expression {
     Binary { left: Box<Expression>, op: Token, right: Box<Expression> },
-    Literal { value: Rc<str>, tok: Token, kind: LiteralKind },
+    SignedIntLiteral { value: i128, tok: Token, bits: Bits },
+    UnsignedIntLiteral { value: u64, tok: Token, bits: Bits },
+    FloatLiteral { value: f64, tok: Token, bits: Bits },
+    StringLiteral { value: Rc<str>, tok: Token, kind: StringKind },
+    VoidLiteral(Token),
     Unary { op: Token, expr: Box<Expression>, is_prefix: bool },
     Grouping(Box<Expression>),
     Variable(Token), // name
@@ -118,7 +123,8 @@ pub enum Expression {
     Slice { opening_brace: Token, items: Vec<Expression> },
     InMacro { inner: Box<Expression>, source: AstPos },
     MacroExpandedStatements { inner: Vec<Statement>, source: AstPos },
-    Array { opening_brace: Token, item: Box<Expression>, size: Box<Expression> }
+    Array { opening_brace: Token, item: Box<Expression>, size: Box<Expression> },
+    ArrayLiteral { opening_brace: Token, items: Vec<Expression> },
 }
 
 impl Ast for Expression {
@@ -128,7 +134,12 @@ impl Ast for Expression {
         match self {
             Expression::Grouping(expr) => expr.get_pos(),
             Expression::InMacro { source, .. } | Expression::MacroExpandedStatements { source, .. } => source.clone(),
-            Expression::Literal { value: _, tok, kind: _ } | Expression::Variable(tok) => {
+            Expression::SignedIntLiteral { tok, .. } | 
+            Expression::UnsignedIntLiteral { tok, .. } | 
+            Expression::FloatLiteral { tok, .. } |
+            Expression::StringLiteral { tok, .. } | 
+            Expression::VoidLiteral(tok) | 
+            Expression::Variable(tok) => {
                 AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
             }
             Expression::Binary { left, op, right } => {
@@ -223,7 +234,8 @@ impl Ast for Expression {
                     AstPos::new(Rc::clone(&object_pos.source), Rc::clone(&object_pos.filename), object_pos.start, name.end, object_pos.line)
                 }
             },
-            Expression::Slice { opening_brace: _, items: exprs } => {
+            Expression::Slice { items: exprs, .. } |
+            Expression::ArrayLiteral { items: exprs, .. } => {
                 match exprs.len() {
                     0 => unreachable!(), // guaranteed by parser
                     1 => exprs[0].get_pos(),
@@ -249,7 +261,11 @@ impl Ast for Expression {
         match self {
             Expression::Grouping(expr) |
             Expression::InMacro { inner: expr, .. } => expr.replace_variable(name, replace_expr),
-            Expression::Literal { .. } => self.clone(),
+            Expression::SignedIntLiteral { .. } |
+            Expression::UnsignedIntLiteral { .. } | 
+            Expression::FloatLiteral { .. } |
+            Expression::StringLiteral { .. } | 
+            Expression::VoidLiteral(_) => self.clone(),
             Expression::Variable(tok) => {
                 if tok.lexeme.as_ref() == name.as_ref() {
                     Expression::Grouping(Box::new(replace_expr.clone()))
@@ -301,6 +317,9 @@ impl Ast for Expression {
             }
             Expression::Slice { opening_brace, items } => {
                 Expression::Slice { opening_brace: opening_brace.clone(), items: items.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }
+            }
+            Expression::ArrayLiteral { opening_brace, items } => {
+                Expression::ArrayLiteral { opening_brace: opening_brace.clone(), items: items.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }
             }
             Expression::MacroExpandedStatements { inner: statements, source } => {
                 Expression::MacroExpandedStatements {

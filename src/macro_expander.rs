@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Expression, LiteralKind, MacroBody, MacroParams, Statement}, ast_error, ast_note, ast_warning, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::escape_string, CompileMode};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -66,15 +66,15 @@ impl MacroExpander {
                     Rc::from("COMPILE_MODE"),
                     MacroParams::None,
                     MacroBody::Expression({
-                        let lit = {
+                        let value = {
                             match compile_mode {
-                                CompileMode::Debug         => "0",
-                                CompileMode::Release       => "1",
-                                CompileMode::ReleaseUnsafe => "2"
+                                CompileMode::Debug         => 0,
+                                CompileMode::Release       => 1,
+                                CompileMode::ReleaseUnsafe => 2
                             }
                         };
 
-                        Expression::Literal { value: Rc::from(lit), tok: Token::dummy(Rc::from("")), kind: LiteralKind::U8 }
+                        Expression::SignedIntLiteral { value, tok: Token::dummy(Rc::from("")), bits: Bits::Any }
                     })
                 ))
             )
@@ -102,21 +102,21 @@ impl MacroExpander {
         match macro_name.as_ref() {
             "concat" => {
                 if arguments.len() == 1 {
-                    if let Expression::Literal { value, tok, .. } = arguments[0].get_inner() {
+                    if let Some((value, tok)) = literal_as_string(arguments[0].get_inner()) {
                         ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
                         ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
                         ast_note!(callee_expr, "Remove this macro call");
-                        Some(Expression::Literal { value, tok, kind: LiteralKind::String })
+                        Some(Expression::StringLiteral { value, tok, kind: StringKind::Slice })
                     } else {
                         ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
                         ast_note!(arguments[0], "The value must be known at compile time");
-                        Some(Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String })
+                        Some(Expression::StringLiteral { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: StringKind::Slice })
                     }
                 } else {
                     let mut result = String::new();
 
                     for argument in arguments {
-                        if let Expression::Literal { value, .. } = argument.get_inner() {
+                        if let Some((value, _)) = literal_as_string(argument.get_inner().clone()) {
                             result.push_str(&value);
                         } else {
                             ast_error!(self, argument, "Argument for @concat macro must be a literal");
@@ -127,59 +127,50 @@ impl MacroExpander {
                     let pos = callee_expr.get_pos();
                     let lexeme = Rc::from(result.as_ref());
                     let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
-                    Some(Expression::Literal { value: Rc::clone(&lexeme), tok, kind: LiteralKind::String })
+                    Some(Expression::StringLiteral { value: Rc::clone(&lexeme), tok, kind: StringKind::Slice })
                 }
             }
             // TODO: this probably won't be needed when and if the constant folding step is implemented
             //       because one can just use subscripting syntax
             "sliceAt" => {
                 if let Expression::Slice { items, .. } = arguments[0].get_inner() {
-                    if let Expression::Literal { value, kind, .. } = arguments[1].get_inner() {
-                        if matches!(kind, LiteralKind::AnyInt | LiteralKind::I8 | LiteralKind::I16 | LiteralKind::I32 | LiteralKind::I64) {
-                            match value.parse::<usize>() {
-                                Ok(value) => {
-                                    if value < items.len() {
-                                        return Some(items[value].clone());
-                                    }
-
-                                    ast_error!(
-                                        self, arguments[1],
-                                        format!(
-                                            "Index {} is out of bounds for length {}",
-                                            value, items.len()
-                                        ).as_str()
-                                    );
-
-                                    ast_note!(
-                                        arguments[0],
-                                        format!(
-                                            "This slice has length {}",
-                                            items.len()
-                                        ).as_str()
-                                    );
-
-                                    None
-                                }
-                                Err(_) => {
-                                    // TODO: parse integers properly
-                                    ast_error!(self, arguments[1], "Invalid integer for @sliceAt macro");
-                                    None
-                                }
+                    let index = {
+                        match arguments[1].get_inner() {
+                            Expression::SignedIntLiteral { value, .. } => value as usize,
+                            Expression::UnsignedIntLiteral { value, .. } => value as usize,
+                            _ => {
+                                ast_error!(self, arguments[1], "Index for @sliceAt macro must be an integer literal");
+                                ast_note!(arguments[1], "The value must be known at compile time");
+                                return None;
                             }
-                        } else {
-                            ast_error!(self, arguments[1], "@sliceAt index must be an integer");
-                            None
                         }
-                    } else {
-                        ast_error!(self, arguments[1], "Argument for @sliceAt macro must be a literal");
-                        ast_note!(arguments[1], "The value must be known at compile time");
-                        None
+                    };
+
+                    if index < items.len() {
+                        return Some(items[index].clone());
                     }
+
+                    ast_error!(
+                        self, arguments[1],
+                        format!(
+                            "Index {} is out of bounds for length {}",
+                            index, items.len()
+                        ).as_str()
+                    );
+
+                    ast_note!(
+                        arguments[0],
+                        format!(
+                            "This slice has length {}",
+                            items.len()
+                        ).as_str()
+                    );
                 } else {
                     ast_error!(self, arguments[0], "Argument for @sliceAt macro must be a literal");
                     ast_note!(arguments[0], "The value must be known at compile time");
-                    None
                 }
+
+                None
             }
             _ => None
         }
@@ -189,7 +180,11 @@ impl MacroExpander {
         let expr_pos = expr.get_pos();
 
         match expr {
-            Expression::Literal { .. } => (),
+            Expression::SignedIntLiteral { .. } |
+            Expression::UnsignedIntLiteral { .. } |
+            Expression::FloatLiteral { .. } |
+            Expression::StringLiteral { .. } | 
+            Expression::VoidLiteral(_) => (),
             Expression::Binary { left, right, .. } |
             Expression::Assign { target: left, value: right, .. } |
             Expression::Array { item: left, size: right, .. }=> {
@@ -247,7 +242,8 @@ impl MacroExpander {
                     ctx.run(|ctx| self.expand_expression(arg, ctx)).await;
                 }
             }
-            Expression::Slice { items, .. } => {
+            Expression::Slice { items, .. } | 
+            Expression::ArrayLiteral { items, .. } => {
                 for item in items {
                     ctx.run(|ctx| self.expand_expression(item, ctx)).await;
                 }
@@ -344,15 +340,23 @@ impl MacroExpander {
 
                                             return_expr = return_expr.replace_variable(
                                                 &Rc::from("PANIC_POS"),
-                                                &Expression::Literal { value: Rc::from(format!(
-                                                    "{}: line {}, pos {}",
-                                                    escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                                )), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                                &Expression::StringLiteral { 
+                                                    value: Rc::from(format!(
+                                                        "{}: line {}, pos {}",
+                                                        escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
+                                                    )), 
+                                                    tok: Token::dummy(Rc::from("")), 
+                                                    kind: StringKind::Slice 
+                                                }
                                             );
                                         } else {
                                             return_expr = return_expr.replace_variable(
                                                 &Rc::from("PANIC_POS"),
-                                                &Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                                &Expression::StringLiteral { 
+                                                    value: Rc::from(""), 
+                                                    tok: Token::dummy(Rc::from("")), 
+                                                    kind: StringKind::Slice
+                                                }
                                             );
                                         }
                                     }

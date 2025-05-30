@@ -86,16 +86,23 @@ let oct = 0o17356;
 let hex = 0x37f8A;
 ```
 # Arrays
-There are two main types of arrays in Skye: the slice, and the array.
+There are three main types of arrays in Skye: the slice, the stack array, and the heap array.
 
 A slice is a read-only view inside another collection. You can create a slice using this syntax:
 ```
 let mySlice: Slice[i32] = {1, 2, 3};
 ```
 
-An array is a dynamically sized list allocated on the heap. To create one, you can use this syntax:
+A stack array is a statically sized array allocated on the stack, or within a struct. To create one, you can use this syntax:
 ```
-let myArray: Array[f32] = [1.0, 2.0, 3.0];
+let myStackArray: [i32; 3];
+let myOtherStackArray = [2 + 2; 5]; // this will create an array of 5 items, all 4s
+let yetAnotherStackArray = [1, 2, 3];
+```
+
+A heap array is a dynamically sized list allocated on the heap. To create one, you can use this syntax:
+```
+let myArray: Array[f32] = @array(1.0, 2.0, 3.0);
 ```
 
 Creating empty slices and arrays with this syntax is not permitted. To create an empty array:

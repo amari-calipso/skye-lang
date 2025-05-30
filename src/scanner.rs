@@ -318,33 +318,12 @@ impl<'a> Scanner<'a> {
                     self.advance();
                 }
 
-                // fix for weird octal representation in C
-                let lexeme = format!("0{}", substring(&self.source, self.start + 2, self.curr));
-
-                let is_unsigned = self.match_('u');
-                let is_signed = (!is_unsigned) && self.match_('i');
-                
-                if is_unsigned | is_signed {
-                    if is_unsigned {
-                        self.unsigned_int_type();
-                    } else {
-                        self.signed_int_type();
-                    }
-
-                    if let Some(mut old) = self.tokens.pop() {
-                        old.set_lexeme(&lexeme);
-                        self.tokens.push(old);
-                    }
+                if self.match_('u') {
+                    self.unsigned_int_type();
+                } else if self.match_('i') {
+                    self.signed_int_type();
                 } else {
-                    self.tokens.push(Token::new(
-                        Rc::from(self.source.as_ref()),
-                        Rc::clone(&self.filename),
-                        TokenType::AnyInt, 
-                        Rc::from(lexeme), 
-                        self.start - self.start_positions[self.line], 
-                        self.curr - self.start_positions[self.line],
-                        self.line
-                    ));
+                    self.add_token(TokenType::AnyInt);
                 }
             }
             'x' => {

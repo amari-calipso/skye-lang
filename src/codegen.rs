@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, EnumVariant, Expression, FunctionParam, ImportType, LiteralKind, MacroBody, MacroParams, Statement, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -516,13 +516,8 @@ impl CodeGen {
                 let first = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
                 let (real_fmt_string, tok) = {
-                    if let Expression::Literal { value, tok: string_tok, kind } = arguments[1].get_inner() {
-                        if matches!(kind, LiteralKind::String) {
-                            (value, string_tok)
-                        } else {
-                            ast_error!(self, arguments[1], "Format string must be a string");
-                            return Some(SkyeValue::special(SkyeType::Void));
-                        }
+                    if let Expression::StringLiteral { value, tok, .. } = arguments[1].get_inner() {
+                        (value, tok)
                     } else {
                         ast_error!(self, arguments[1], "Format string must be a literal");
                         ast_note!(arguments[1], "The format string must be known at compile time for the compiler to generate the necessary code");
@@ -555,10 +550,8 @@ impl CodeGen {
 
                             let mut parser = Parser::new(scanner.tokens);
                             if let Some(result) = parser.expression() {
-                                if let Expression::Literal { kind, .. } = result.get_inner() {
-                                    if matches!(kind, LiteralKind::String) {
-                                        interpolated = false;
-                                    }
+                                if matches!(result.get_inner(), Expression::StringLiteral { .. }) {
+                                    interpolated = false;
                                 }
 
                                 result
@@ -568,7 +561,7 @@ impl CodeGen {
                                 continue;
                             }
                         } else {
-                            Expression::Literal { value: Rc::from(portion.as_ref()), tok: tok.clone(), kind: LiteralKind::String }
+                            Expression::StringLiteral { value: Rc::from(portion.as_ref()), tok: tok.clone(), kind: StringKind::Slice }
                         }
                     };
 
@@ -663,7 +656,7 @@ impl CodeGen {
 
                                     ast_note!(portion_expr, "Implement a \"asString\" or \"toString\" method to be able to print this type");
                                     token_note!(tok, "This error occurred while evaluating this interpolated string");
-                                    Expression::Literal { value: Rc::from(""), tok: tok.clone(), kind: LiteralKind::Void }
+                                    Expression::VoidLiteral(tok.clone())
                                 }
                             }
                         } else {
@@ -721,7 +714,7 @@ impl CodeGen {
                                             Token::dummy(Rc::from("expect"))
                                         )),
                                         tok.clone(),
-                                        vec![Expression::Literal { value: Rc::from("String interpolation failed writing to file"), tok: tok.clone(), kind: LiteralKind::String }]
+                                        vec![Expression::StringLiteral { value: Rc::from("String interpolation failed writing to file"), tok: tok.clone(), kind: StringKind::Slice }]
                                     )
                                 ));
                             } else {
@@ -1555,15 +1548,23 @@ impl CodeGen {
 
                                 curr_expr = curr_expr.replace_variable(
                                     &Rc::from("PANIC_POS"),
-                                    &Expression::Literal { value: Rc::from(format!(
-                                        "{}: line {}, pos {}",
-                                        escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                    )), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                    &Expression::StringLiteral { 
+                                        value: Rc::from(format!(
+                                            "{}: line {}, pos {}",
+                                            escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
+                                        )), 
+                                        tok: Token::dummy(Rc::from("")), 
+                                        kind: StringKind::Slice 
+                                    }
                                 );
                             } else {
                                 curr_expr = curr_expr.replace_variable(
                                     &Rc::from("PANIC_POS"),
-                                    &Expression::Literal { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: LiteralKind::String }
+                                    &Expression::StringLiteral { 
+                                        value: Rc::from(""), 
+                                        tok: Token::dummy(Rc::from("")), 
+                                        kind: StringKind::Slice
+                                    }
                                 );
                             }
 
@@ -1903,7 +1904,7 @@ impl CodeGen {
             let panic_stmt = Statement::Expression(Expression::Call(
                 Box::new(Expression::Unary { op: at_tok, expr: Box::new(Expression::Variable(panic_tok)), is_prefix: true }),
                 tok.clone(),
-                vec![Expression::Literal { value: Rc::from(msg), tok: tok.clone(), kind: LiteralKind::String }]
+                vec![Expression::StringLiteral { value: Rc::from(msg), tok: tok.clone(), kind: StringKind::Slice }]
             ));
 
             let _ = ctx.run(|ctx| self.execute(&panic_stmt, index, ctx)).await;
@@ -2014,6 +2015,38 @@ impl CodeGen {
         }
     }
 
+    fn prepare_array_struct(&mut self, array_specifier: Rc<str>, type_name: &Rc<str>, type_: &SkyeType, size: usize) {
+        if !self.arrays.contains(&array_specifier) {
+            let mut buf = String::from("typedef struct SKYE_ARRAY_STRUCT_");
+            buf.push_str(&array_specifier);
+
+            self.arrays.insert(array_specifier);
+
+            self.declarations.push(CodeOutput::new());
+            self.declarations.last_mut().unwrap().push(&buf);
+            self.declarations.last_mut().unwrap().push(";\n");
+
+            let mut def_buf = CodeOutput::new();
+            def_buf.push(&buf);
+            def_buf.push(" {\n");
+            def_buf.inc_indent();
+
+            def_buf.push_indent();
+            def_buf.push(&type_.stringify());
+            def_buf.push(" SKYE_ARRAY[");
+            def_buf.push(&size.to_string());
+            def_buf.push("];\n");
+            def_buf.dec_indent();
+
+            def_buf.push("} ");
+            def_buf.push(&type_name);
+            def_buf.push(";\n\n");
+
+            self.struct_definitions.insert(Rc::clone(&type_name), def_buf);
+            self.struct_defs_order.push(Rc::clone(&type_name));
+        }
+    }
+
     async fn evaluate(&mut self, expr: &Expression, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         match expr {
             Expression::Grouping(inner_expr) => {
@@ -2118,72 +2151,140 @@ impl CodeGen {
                     panic!("struct template generation resulted in not a type");
                 }
             }
-            Expression::Array { opening_brace, item: item_expr, size: size_expr } => {
+            Expression::Array { item: item_expr, size: size_expr, .. } => {
                 let item = ctx.run(|ctx| self.evaluate(&item_expr, index, allow_unknown, ctx)).await;
 
-                let size = 0; // TODO: check that size is a literal and get inner value
+                let size = {
+                    match size_expr.get_inner() {
+                        Expression::SignedIntLiteral { value, .. } => value as usize,
+                        Expression::UnsignedIntLiteral { value, .. } => value as usize,
+                        _ => {
+                            ast_error!(self, size_expr, "Array size must be an integer literal");
+                            ast_note!(size_expr, "The value must be known at compile time");
+                            return SkyeValue::get_unknown_type();
+                        }
+                    }
+                };
 
-                if let SkyeType::Type(inner) = item.type_ {
-                    let array_specifier: Rc<str> = format!("{}_{}", inner.mangle(), size).into();
-                    let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
+                let (type_, is_type) = {
+                    if let SkyeType::Type(inner) = item.type_ {
+                        (*inner, true)
+                    } else {
+                        (item.type_, false)
+                    }
+                };
 
-                    if !self.arrays.contains(&array_specifier) {
-                        let mut buf = String::from("typedef struct SKYE_ARRAY_STRUCT_");
-                        buf.push_str(&array_specifier);
+                let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
+                let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
+                self.prepare_array_struct(array_specifier, &type_name, &type_, size);
 
-                        self.arrays.insert(array_specifier);
+                if is_type {
+                    SkyeValue::new(type_name, SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))), true)
+                } else {
+                    let value = self.get_temporary_var();
 
-                        self.declarations.push(CodeOutput::new());
-                        self.declarations.last_mut().unwrap().push(&buf);
-                        self.declarations.last_mut().unwrap().push(";\n");
+                    self.definitions[index].push_indent();
+                    self.definitions[index].push(&type_.stringify());
+                    self.definitions[index].push(" ");
+                    self.definitions[index].push(&value);
+                    self.definitions[index].push(" = ");
+                    self.definitions[index].push(&item.value);
+                    self.definitions[index].push(";\n");
 
-                        let mut def_buf = CodeOutput::new();
-                        def_buf.push(&buf);
-                        def_buf.push(" {\n");
-                        def_buf.inc_indent();
+                    let mut buf = String::new();
+                    buf.push('(');
+                    buf.push_str(&type_name);
+                    buf.push_str(") { .SKYE_ARRAY = { ");
 
-                        def_buf.push_indent();
-                        def_buf.push(&inner.stringify());
-                        def_buf.push(" ");
-                        def_buf.push("SKYE_ARRAY[");
-                        def_buf.push(&size.to_string());
-                        def_buf.push("];\n");
-                        def_buf.dec_indent();
+                    for i in 0 .. size {
+                        buf.push_str(&value);
 
-                        def_buf.push("} ");
-                        def_buf.push(&type_name);
-                        def_buf.push(";\n\n");
-
-                        self.struct_definitions.insert(Rc::clone(&type_name), def_buf);
-                        self.struct_defs_order.push(Rc::clone(&type_name));
+                        if i + 1 != size {
+                            buf.push_str(", ");
+                        }
                     }
 
-                    SkyeValue::new(type_name, SkyeType::Type(Box::new(SkyeType::Array(inner, size))), true)
-                } else {
-                    todo!("implement initialization syntax")
+                    buf.push_str(" } }");
+                    SkyeValue::new(buf.into(), SkyeType::Array(Box::new(type_), size), false)
                 }
             }
-            Expression::Literal { value, kind, .. } => {
+            Expression::ArrayLiteral { items, .. } => {
+                let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
+                
+                let size = items.len();
+                let type_ = first_item.type_;
+                let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
+                let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
+                self.prepare_array_struct(array_specifier, &type_name, &type_, size);
+
+                let mut buf = String::new();
+                buf.push('(');
+                buf.push_str(&type_name);
+                buf.push_str(") { .SKYE_ARRAY = { ");
+
+                buf.push_str(&first_item.value);
+
+                if items.len() != 1 {
+                    buf.push_str(", ");
+                }
+
+                for i in 1 .. items.len() {
+                    let evaluated = ctx.run(|ctx| self.evaluate(&items[i], index, allow_unknown, ctx)).await;
+
+                    if !evaluated.type_.equals(&type_, EqualsLevel::Typewise) {
+                        ast_error!(
+                            self, items[i],
+                            format!(
+                                "Items inside array do not have matching types (expecting {} but got {})",
+                                type_.stringify_native(), evaluated.type_.stringify_native()
+                            ).as_ref()
+                        );
+                        ast_note!(items[0], "First item defined here");
+                    }
+
+                    buf.push_str(&evaluated.value);
+
+                    if i != items.len() - 1 {
+                        buf.push_str(", ");
+                    }
+                }
+
+                buf.push_str(" } }");
+                SkyeValue::new(buf.into(), SkyeType::Array(Box::new(type_), size), false)
+            }
+            Expression::VoidLiteral(_) => SkyeValue::special(SkyeType::Void),
+            Expression::SignedIntLiteral { value, bits, .. } => {
+                match bits {
+                    Bits::B8  => SkyeValue::new(Rc::from(format!("INT8_C({})",  value)), SkyeType::I8,  true),
+                    Bits::B16 => SkyeValue::new(Rc::from(format!("INT16_C({})", value)), SkyeType::I16, true),
+                    Bits::B32 => SkyeValue::new(Rc::from(format!("INT32_C({})", value)), SkyeType::I32, true),
+                    Bits::B64 => SkyeValue::new(Rc::from(format!("INT64_C({})", value)), SkyeType::I64, true),
+                    Bits::Any => SkyeValue::new(value.to_string().into(), SkyeType::AnyInt, true),
+                    Bits::Bsz => unreachable!()
+                }
+            }
+            Expression::UnsignedIntLiteral { value, bits, .. } => {
+                match bits {
+                    Bits::B8  => SkyeValue::new(Rc::from(format!("UINT8_C({})",  value)), SkyeType::U8,  true),
+                    Bits::B16 => SkyeValue::new(Rc::from(format!("UINT16_C({})", value)), SkyeType::U16, true),
+                    Bits::B32 => SkyeValue::new(Rc::from(format!("UINT32_C({})", value)), SkyeType::U32, true),
+                    Bits::B64 => SkyeValue::new(Rc::from(format!("UINT64_C({})", value)), SkyeType::U64, true),
+                    Bits::Bsz => SkyeValue::new(Rc::from(format!("SIZE_T_C({})", value)), SkyeType::Usz, true),
+                    Bits::Any => unreachable!()
+                }
+            }
+            Expression::FloatLiteral { value, bits, .. } => {
+                match bits {
+                    Bits::B32 => SkyeValue::new(Rc::from(format!("(float){}",  value)), SkyeType::F32, true),
+                    Bits::B64 => SkyeValue::new(Rc::from(format!("(double){}", value)), SkyeType::F64, true),
+                    Bits::Any => SkyeValue::new(value.to_string().into(), SkyeType::AnyFloat, true),
+                    _ => unreachable!()
+                }
+            }
+            Expression::StringLiteral { value, kind, .. } => {
                 match kind {
-                    LiteralKind::Void => SkyeValue::special(SkyeType::Void),
-
-                    LiteralKind::U8  => SkyeValue::new(Rc::from(format!("UINT8_C({})",  value)), SkyeType::U8,  true),
-                    LiteralKind::I8  => SkyeValue::new(Rc::from(format!("INT8_C({})",   value)), SkyeType::I8,  true),
-                    LiteralKind::U16 => SkyeValue::new(Rc::from(format!("UINT16_C({})", value)), SkyeType::U16, true),
-                    LiteralKind::I16 => SkyeValue::new(Rc::from(format!("INT16_C({})",  value)), SkyeType::I16, true),
-                    LiteralKind::U32 => SkyeValue::new(Rc::from(format!("UINT32_C({})", value)), SkyeType::U32, true),
-                    LiteralKind::I32 => SkyeValue::new(Rc::from(format!("INT32_C({})",  value)), SkyeType::I32, true),
-                    LiteralKind::U64 => SkyeValue::new(Rc::from(format!("UINT64_C({})", value)), SkyeType::U64, true),
-                    LiteralKind::I64 => SkyeValue::new(Rc::from(format!("INT64_C({})",  value)), SkyeType::I64, true),
-                    LiteralKind::Usz => SkyeValue::new(Rc::from(format!("SIZE_T_C({})", value)), SkyeType::Usz, true),
-                    LiteralKind::F32 => SkyeValue::new(Rc::from(format!("(float){}",    value)), SkyeType::F32, true),
-                    LiteralKind::F64 => SkyeValue::new(Rc::from(format!("(double){}",   value)), SkyeType::F64, true),
-
-                    LiteralKind::AnyInt   => SkyeValue::new(Rc::clone(value), SkyeType::AnyInt, true),
-                    LiteralKind::AnyFloat => SkyeValue::new(Rc::clone(value), SkyeType::AnyFloat, true),
-
-                    LiteralKind::Char => SkyeValue::new(Rc::from(format!("'{}'", value)), SkyeType::Char, true),
-                    LiteralKind::RawString => {
+                    StringKind::Char => SkyeValue::new(Rc::from(format!("'{}'", value)), SkyeType::Char, true),
+                    StringKind::Raw => {
                         if let Some(string_const) = self.strings.get(value) {
                             SkyeValue::new(Rc::from(format!("SKYE_STRING_{}", string_const)), SkyeType::Pointer(Box::new(SkyeType::Char), true, false), true)
                         } else {
@@ -2197,7 +2298,7 @@ impl CodeGen {
                             SkyeValue::new(Rc::from(format!("SKYE_STRING_{}", str_index)), SkyeType::Pointer(Box::new(SkyeType::Char), true, false), true)
                         }
                     }
-                    LiteralKind::String => {
+                    StringKind::Slice => {
                         if self.string_type.is_none() {
                             if let SkyeType::Type(inner_type) = &self.globals.borrow().get(
                                 &Token::dummy(Rc::from("String"))
@@ -2303,10 +2404,14 @@ impl CodeGen {
                                 let mut custom_token = op.clone();
                                 custom_token.set_lexeme("core_DOT_Result");
 
-                                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(custom_token)), paren: op.clone(), args: vec![
-                                        Expression::Literal { value: Rc::from(""), tok: op.clone(), kind: LiteralKind::Void },
+                                let subscript_expr = Expression::Subscript { 
+                                    subscripted: Box::new(Expression::Variable(custom_token)), 
+                                    paren: op.clone(), 
+                                    args: vec![
+                                        Expression::VoidLiteral(op.clone()),
                                         *inner_expr.clone()
-                                    ] };
+                                    ] 
+                                };
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -4032,7 +4137,7 @@ impl CodeGen {
                            }
                         }
                     }
-                    SkyeType::Array(inner_type, _size) => {
+                    SkyeType::Array(inner_type, size) => {
                         if arguments.len() != 1 {
                             token_error!(self, paren, "Expecting one subscript argument for array access");
                             return SkyeValue::special(*inner_type.clone());
@@ -4044,9 +4149,33 @@ impl CodeGen {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                             SkyeType::Usz | SkyeType::AnyInt => {
-                                // TODO: here we could add a check to see if the inner value is accessing out of bounds,
-                                //       since we know the array size at comptime. the check could also be deferred 
-                                //       to runtime (in debug mode)
+                                let index = {
+                                    match arguments[0].get_inner() {
+                                        Expression::SignedIntLiteral { value, .. } => Some(value as usize),
+                                        Expression::UnsignedIntLiteral { value, .. } => Some(value as usize),
+                                        _ => None
+                                    }
+                                };
+
+                                if let Some(index) = index {
+                                    if index > size {
+                                        ast_error!(
+                                            self, arguments[0], 
+                                            format!(
+                                                "Index {} is out of bounds for length {}",
+                                                index, size
+                                            ).as_str()
+                                        );
+
+                                        ast_note!(
+                                            subscripted_expr,
+                                            format!("This array has length {}", size).as_str()
+                                        );
+                                    }
+                                } else {
+                                    // TODO: this check should be deferred at runtime (in debug mode)
+                                }
+
                                 return SkyeValue::new(Rc::from(format!("({}).SKYE_ARRAY[{}]", subscripted.value, arg.value)), *inner_type.clone(), false);
                             }
                             _ => {

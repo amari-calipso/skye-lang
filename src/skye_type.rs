@@ -106,6 +106,10 @@ impl SkyeValue {
     pub fn get_unknown() -> SkyeValue {
         SkyeValue { value: Rc::from(""), type_: SkyeType::get_unknown(), is_const: false, self_info: None }
     }
+
+    pub fn get_unknown_type() -> SkyeValue {
+        SkyeValue { value: Rc::from(""), type_: SkyeType::get_unknown_type(), is_const: false, self_info: None }
+    }
 }
 
 const ALL_INTS: &[SkyeType] = &[
@@ -1010,5 +1014,9 @@ impl SkyeType {
 
     pub fn get_unknown() -> SkyeType {
         SkyeType::Unknown(Rc::from(""))
+    }
+
+    pub fn get_unknown_type() -> SkyeType {
+        SkyeType::Type(Box::new(SkyeType::Unknown(Rc::from(""))))
     }
 }
