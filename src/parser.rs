@@ -1,19 +1,91 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{BitfieldField, EnumVariant, Expression, FunctionParam, Generic, ImportType, LiteralKind, MacroBody, MacroParams, Statement, StructField, SwitchCase, Ast},
+    ast::{BitfieldField, EnumVariant, Expression, Bits, StringKind, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StructField, SwitchCase, Ast},
     ast_error, ast_note, token_error, token_note,
     tokens::{Token, TokenType}
 };
 
-macro_rules! match_literal {
-    ($parser: expr, $type_: tt) => {
+macro_rules! match_number_literal {
+    ($parser: expr, $type_: tt, $bits: tt, $expr_type: tt, $parse: expr) => {
+        if $parser.match_(&[TokenType::$type_]) {
+            let tok = $parser.previous().clone();
+            return Some(Expression::$expr_type {
+                value: {
+                    if let Some(value) = ($parse)(&tok.lexeme) {
+                        value
+                    } else {
+                        crate::token_error!($parser, tok, "Invalid integer literal");
+                        Default::default()
+                    }
+                },
+                tok, bits: Bits::$bits
+            });
+        }
+    };
+}
+
+macro_rules! match_sint_literal {
+    ($parser: expr, $type_: tt, $bits: tt) => {
+        match_number_literal!($parser, $type_, $bits, SignedIntLiteral, |x: &str| {
+            let result = {
+                if let Ok(result) = x.parse() {
+                    result
+                } else if let Ok(result) = i128::from_str_radix(&x[2..], 16) {
+                    result
+                } else if let Ok(result) = i128::from_str_radix(&x[2..], 8) {
+                    result
+                } else if let Ok(result) = i128::from_str_radix(&x[2..], 2) {
+                    result
+                } else {
+                    return None;
+                }
+            };
+
+            if result > 0 && matches!(TryInto::<u64>::try_into(result), Err(_)) {
+                None
+            } else {
+                Some(result)
+            }
+        })
+    };
+}
+
+macro_rules! match_uint_literal {
+    ($parser: expr, $type_: tt, $bits: tt) => {
+        match_number_literal!($parser, $type_, $bits, UnsignedIntLiteral, |x: &str| {
+            if let Ok(result) = x.parse() {
+                Some(result)
+            } else if let Ok(result) = u64::from_str_radix(&x[2..], 16) {
+                Some(result)
+            } else if let Ok(result) = u64::from_str_radix(&x[2..], 8) {
+                Some(result)
+            } else if let Ok(result) = u64::from_str_radix(&x[2..], 2) {
+                Some(result)
+            } else {
+                None
+            }
+        })
+    };
+}
+
+macro_rules! match_float_literal {
+    ($parser: expr, $type_: tt, $bits: tt) => {
+        match_number_literal!(
+            $parser, $type_, $bits, FloatLiteral, 
+            |x: &str| x.parse().ok()
+        )
+    };
+}
+
+macro_rules! match_string_literal {
+    ($parser: expr, $type_: tt, $kind: tt) => {
         if $parser.match_(&[TokenType::$type_]) {
             let prev = $parser.previous();
-            return Some(Expression::Literal {
+            return Some(Expression::StringLiteral {
                 value: prev.lexeme.clone(),
                 tok: prev.clone(),
-                kind: LiteralKind::$type_
+                kind: StringKind::$kind
             });
         }
     };
@@ -197,7 +269,7 @@ impl Parser {
 
     fn primary(&mut self) -> Option<Expression> {
         if self.match_(&[TokenType::Void]) {
-            return Some(Expression::Literal { value: Rc::from(""), tok: self.previous().clone(), kind: LiteralKind::Void });
+            return Some(Expression::VoidLiteral(self.previous().clone()));
         }
 
         if self.match_(&[TokenType::Fn]) {
@@ -223,26 +295,40 @@ impl Parser {
 
         if self.match_(&[TokenType::LeftSquare]) {
             let opening_brace = self.previous().clone();
-            let items = self.get_nonzero_expressions(TokenType::RightSquare)?;
-            self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
+            let first = self.expression()?;
 
-            let mut method_tok = opening_brace.clone();
-            method_tok.set_lexeme("core_DOT_Array_DOT_from");
-
-            return Some(Expression::Call(
-                Box::new(Expression::Variable(method_tok)),
-                opening_brace.clone(),
-                vec![Expression::Slice { opening_brace: opening_brace, items: items }]
-            ));
+            if self.match_(&[TokenType::Semicolon]) {
+                let size = self.expression()?;
+                self.consume(TokenType::RightSquare, "Expecting ']' after array declaration")?;
+                return Some(Expression::Array { opening_brace, item: Box::new(first), size: Box::new(size) });
+            } else {
+                self.match_(&[TokenType::Comma]); // consumes comma after first expression, if any
+                let mut items = self.get_expressions(TokenType::RightSquare)?;
+                self.consume(TokenType::RightSquare, "Expecting ']' after array")?;
+                items.insert(0, first);
+                return Some(Expression::ArrayLiteral { opening_brace, items });
+            }
         }
 
-        match_literal!(self, U8);  match_literal!(self, I8);
-        match_literal!(self, U16); match_literal!(self, I16);
-        match_literal!(self, U32); match_literal!(self, I32); match_literal!(self, F32);
-        match_literal!(self, U64); match_literal!(self, I64); match_literal!(self, F64);
-        match_literal!(self, Usz);
-        match_literal!(self, AnyInt);    match_literal!(self, AnyFloat);
-        match_literal!(self, RawString); match_literal!(self, String); match_literal!(self, Char);
+        match_sint_literal!(self,     I8,  B8);
+        match_sint_literal!(self,    I16, B16);
+        match_sint_literal!(self,    I32, B32);
+        match_sint_literal!(self,    I64, B64);
+        match_sint_literal!(self, AnyInt, Any);
+
+        match_uint_literal!(self,  U8,  B8);
+        match_uint_literal!(self, U16, B16);
+        match_uint_literal!(self, U32, B32);
+        match_uint_literal!(self, U64, B64);
+        match_uint_literal!(self, Usz, Bsz);
+
+        match_float_literal!(self,      F32, B32);
+        match_float_literal!(self,      F64, B64);
+        match_float_literal!(self, AnyFloat, Any);
+
+        match_string_literal!(self,    String, Slice);
+        match_string_literal!(self, RawString,   Raw);
+        match_string_literal!(self,      Char,  Char);
 
         let last = self.peek();
         token_error!(self, last, "Expecting expression");
@@ -272,10 +358,10 @@ impl Parser {
         self.static_access()
     }
 
-    fn get_expressions(&mut self) -> Option<Vec<Expression>> {
+    fn get_expressions(&mut self, type_: TokenType) -> Option<Vec<Expression>> {
         let mut expressions = Vec::new();
 
-        while !self.check(TokenType::RightParen) {
+        while !self.check(type_) {
             expressions.push(self.expression()?);
 
             if !self.match_(&[TokenType::Comma]) {
@@ -287,13 +373,13 @@ impl Parser {
     }
 
     fn finish_call(&mut self, callee: Expression) -> Option<Expression> {
-        let arguments = self.get_expressions()?;
+        let arguments = self.get_expressions(TokenType::RightParen)?;
         let paren = self.consume(TokenType::RightParen, "Expecting ')' after arguments.")?.clone();
         Some(Expression::Call(Box::new(callee), paren, arguments))
     }
 
     fn finish_subscript(&mut self, subscripted: Expression) -> Option<Expression> {
-        let arguments = self.get_expressions()?;
+        let arguments = self.get_expressions(TokenType::RightParen)?;
         let paren = self.consume(TokenType::RightSquare, "Expecting ']' after subscript operation")?.clone();
         Some(Expression::Subscript { subscripted: Box::new(subscripted), paren, args: arguments })
     }
@@ -532,7 +618,7 @@ impl Parser {
 
         let cond = {
             if self.check(TokenType::Semicolon) {
-                Expression::Literal { value: Rc::from("1"), tok: self.previous().clone(), kind: LiteralKind::U8 }
+                Expression::UnsignedIntLiteral { value: 1, tok: self.previous().clone(), bits: Bits::Any }
             } else {
                 self.expression()?
             }
@@ -545,7 +631,7 @@ impl Parser {
                         if self.check(TokenType::RightParen) {
                             Vec::new()
                         } else {
-                            self.get_expressions()?
+                            self.get_expressions(TokenType::RightParen)?
                         }
                     };
 
@@ -554,7 +640,7 @@ impl Parser {
                 } else if self.check(TokenType::LeftBrace) {
                     Vec::new()
                 } else {
-                    self.get_expressions()?
+                    self.get_expressions(TokenType::RightParen)?
                 }
             };
 
@@ -910,7 +996,7 @@ impl Parser {
             if !(self.check(TokenType::LeftBrace) || self.check(TokenType::Semicolon)) {
                 self.expression()?
             } else {
-                Expression::Literal { value: Rc::from(""), tok: self.previous().clone(), kind: LiteralKind::Void }
+                Expression::VoidLiteral(self.previous().clone())
             }
         };
 
@@ -1164,18 +1250,14 @@ impl Parser {
                         if self.match_(&[TokenType::LeftParen]) {
                             let res = self.expression()?;
 
-                            if is_simple {
-                                if let Expression::Literal { kind, .. } = &res {
-                                    is_simple = *kind == LiteralKind::Void;
-                                } else {
-                                    is_simple = false;
-                                }
+                            if is_simple && !matches!(res, Expression::VoidLiteral(_)) {
+                                is_simple = false;
                             }
 
                             self.consume(TokenType::RightParen, "Expecting ')' after enum variant type")?;
                             res
                         } else {
-                            Expression::Literal { value: Rc::from(""), tok: variant_name.clone(), kind: LiteralKind::Void }
+                            Expression::VoidLiteral(variant_name.clone())
                         }
                     };
 

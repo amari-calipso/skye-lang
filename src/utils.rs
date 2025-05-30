@@ -2,6 +2,8 @@ use std::{cmp::max, rc::Rc};
 
 use colored::{ColoredString, Colorize};
 
+use crate::{ast::Expression, tokens::Token};
+
 pub fn substring(string: &String, a: usize, b: usize) -> String {
     string.chars().skip(a).take(b - a).collect()
 }
@@ -271,4 +273,14 @@ pub fn fix_raw_string(str: &str) -> String {
 
 pub fn escape_string(str: &str) -> String {
     str.replace('\\', "\\\\")
+}
+
+pub fn literal_as_string(expr: Expression) -> Option<(Rc<str>, Token)> {
+     match expr {
+        Expression::StringLiteral { value, tok, .. } => Some((value, tok)),
+        Expression::VoidLiteral(tok) => Some((Rc::from(""), tok)),
+        Expression::SignedIntLiteral { value, tok, .. } => Some((value.to_string().into(), tok)),
+        Expression::UnsignedIntLiteral { value, tok, .. } => Some((value.to_string().into(), tok)),
+        _ => None
+    }
 }
