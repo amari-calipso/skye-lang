@@ -2174,6 +2174,11 @@ impl CodeGen {
                     }
                 };
 
+                if size == 0 {
+                    ast_error!(self, size_expr, "Array size cannot be zero");
+                    return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
+                }
+
                 let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
                 let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
                 self.prepare_array_struct(array_specifier, &type_name, &type_, size);
