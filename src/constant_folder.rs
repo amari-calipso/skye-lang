@@ -733,8 +733,58 @@ impl ConstantFolder {
                     }
                 }
             }
-            Statement::Switch { kw, expr, cases } => (), // TODO
-            Statement::If { kw, condition, then_branch, else_branch } => (), // TODO
+            Statement::If { condition, then_branch, else_branch, .. } => {
+                ctx.run(|ctx| self.fold_expression(condition, ctx)).await;
+                ctx.run(|ctx| self.fold_statement(then_branch, ctx)).await;
+
+                if let Some(else_branch) = else_branch {
+                    ctx.run(|ctx| self.fold_statement(else_branch, ctx)).await;
+                }
+
+                let condition_inner = condition.get_inner();
+                match condition_inner {
+                    Expression::SignedIntLiteral { value, .. } => {
+                        if value == 0 {
+                            if let Some(else_branch) = else_branch {
+                                *stmt = *else_branch.clone();
+                            } else {
+                                *stmt = Statement::Empty;
+                            }
+                        } else {
+                            *stmt = *then_branch.clone();
+                        }
+                    }
+                    Expression::UnsignedIntLiteral { value, .. } => {
+                        if value == 0 {
+                            if let Some(else_branch) = else_branch {
+                                *stmt = *else_branch.clone();
+                            } else {
+                                *stmt = Statement::Empty;
+                            }
+                        } else {
+                            *stmt = *then_branch.clone();
+                        }
+                    }
+                    _ => ()
+                }
+            }
+            Statement::Switch { expr, cases, .. } => {
+                ctx.run(|ctx| self.fold_expression(expr, ctx)).await;
+
+                for branch in cases {
+                    if let Some(cases) = &mut branch.cases {
+                        for case in cases {
+                            ctx.run(|ctx| self.fold_expression(case, ctx)).await;
+                        }
+                    }
+
+                    for statement in branch.code.iter_mut() {
+                        ctx.run(|ctx| self.fold_statement(statement, ctx)).await;
+                    }
+                }
+
+                // TODO: do constant folding here
+            }
             _ => ()
         }
     }
