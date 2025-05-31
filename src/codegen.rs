@@ -913,6 +913,7 @@ impl CodeGen {
         };
 
         match &callee.type_ {
+            SkyeType::Unknown(_) => SkyeValue::get_unknown(),
             SkyeType::Function(params, return_type, _) => {
                 if params.len() != arguments_len {
                     ast_error!(
@@ -2051,7 +2052,17 @@ impl CodeGen {
         match expr {
             Expression::Grouping(inner_expr) => {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
-                SkyeValue::new(Rc::from(format!("({})", inner.value)), inner.type_, inner.is_const)
+                SkyeValue::new(
+                    {
+                        if inner.value.as_ref() == "" {
+                            inner.value
+                        } else {
+                            Rc::from(format!("({})", inner.value))
+                        }
+                    }, 
+                    inner.type_, 
+                    inner.is_const
+                )
             }
             Expression::InMacro { inner: inner_expr, source } => {
                 let old_errors = self.errors;

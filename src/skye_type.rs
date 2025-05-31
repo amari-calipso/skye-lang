@@ -863,7 +863,8 @@ impl SkyeType {
 
             SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat => {
                 match op {
-                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr => ImplementsHow::No,
+                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr | 
+                    Operator::Inv | Operator::Not => ImplementsHow::No,
                     _ => ImplementsHow::Native(Vec::new())
                 }
             }

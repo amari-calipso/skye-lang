@@ -3,6 +3,7 @@ use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, 
 use ast::{ImportType, Statement};
 use clap::ValueEnum;
 use codegen::CodeGen;
+use constant_folder::ConstantFolder;
 use import_processor::ImportProcessor;
 use macro_expander::MacroExpander;
 use parser::Parser;
@@ -20,6 +21,7 @@ mod environment;
 mod codegen;
 mod import_processor;
 mod macro_expander;
+mod constant_folder;
 
 pub const MAX_PACKAGE_SIZE_BYTES: u128 = 2u128.pow(32); // Max uncompressed package size is 4 GB (basic protection against malicious ZIPs)
 
@@ -104,10 +106,24 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compile_
         return None;
     }
 
+    let mut constant_folder = ConstantFolder::new();
+    constant_folder.fold(&mut statements);
+
+    if constant_folder.errors != 0 {
+        return None;
+    }
+
     let mut macro_expander = MacroExpander::new(compile_mode);
     macro_expander.expand(&mut statements);
 
     if macro_expander.errors != 0 {
+        return None;
+    }
+
+    constant_folder.reset();
+    constant_folder.fold(&mut statements);
+
+    if constant_folder.errors != 0 {
         return None;
     }
 
