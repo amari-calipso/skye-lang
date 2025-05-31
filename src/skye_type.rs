@@ -392,8 +392,8 @@ impl SkyeType {
             SkyeType::Usz => matches!(other, SkyeType::Usz | SkyeType::AnyInt),
             SkyeType::F32 => matches!(other, SkyeType::F32 | SkyeType::AnyFloat),
             SkyeType::F64 => matches!(other, SkyeType::F64 | SkyeType::AnyFloat),
-            SkyeType::AnyInt   => matches!(other, SkyeType::AnyInt)   || other.equals(self, level),
-            SkyeType::AnyFloat => matches!(other, SkyeType::AnyFloat) || other.equals(self, level),
+            SkyeType::AnyInt   => matches!(other, SkyeType::AnyInt)   || (!matches!(other, SkyeType::AnyFloat) && other.equals(self, level)),
+            SkyeType::AnyFloat => matches!(other, SkyeType::AnyFloat) || (!matches!(other, SkyeType::AnyInt)   && other.equals(self, level)),
 
             SkyeType::Char => matches!(other, SkyeType::Char),
             SkyeType::Void => matches!(other, SkyeType::Void),
@@ -863,7 +863,8 @@ impl SkyeType {
 
             SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat => {
                 match op {
-                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr => ImplementsHow::No,
+                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr | 
+                    Operator::Inv | Operator::Not => ImplementsHow::No,
                     _ => ImplementsHow::Native(Vec::new())
                 }
             }

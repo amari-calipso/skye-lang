@@ -130,48 +130,6 @@ impl MacroExpander {
                     Some(Expression::StringLiteral { value: Rc::clone(&lexeme), tok, kind: StringKind::Slice })
                 }
             }
-            // TODO: this probably won't be needed when and if the constant folding step is implemented
-            //       because one can just use subscripting syntax
-            "sliceAt" => {
-                if let Expression::Slice { items, .. } = arguments[0].get_inner() {
-                    let index = {
-                        match arguments[1].get_inner() {
-                            Expression::SignedIntLiteral { value, .. } => value as usize,
-                            Expression::UnsignedIntLiteral { value, .. } => value as usize,
-                            _ => {
-                                ast_error!(self, arguments[1], "Index for @sliceAt macro must be an integer literal");
-                                ast_note!(arguments[1], "The value must be known at compile time");
-                                return None;
-                            }
-                        }
-                    };
-
-                    if index < items.len() {
-                        return Some(items[index].clone());
-                    }
-
-                    ast_error!(
-                        self, arguments[1],
-                        format!(
-                            "Index {} is out of bounds for length {}",
-                            index, items.len()
-                        ).as_str()
-                    );
-
-                    ast_note!(
-                        arguments[0],
-                        format!(
-                            "This slice has length {}",
-                            items.len()
-                        ).as_str()
-                    );
-                } else {
-                    ast_error!(self, arguments[0], "Argument for @sliceAt macro must be a literal");
-                    ast_note!(arguments[0], "The value must be known at compile time");
-                }
-
-                None
-            }
             _ => None
         }
     }

@@ -618,7 +618,7 @@ impl Parser {
 
         let cond = {
             if self.check(TokenType::Semicolon) {
-                Expression::UnsignedIntLiteral { value: 1, tok: self.previous().clone(), bits: Bits::Any }
+                Expression::UnsignedIntLiteral { value: 1, tok: self.previous().clone(), bits: Bits::B8 }
             } else {
                 self.expression()?
             }
