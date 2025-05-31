@@ -4,6 +4,61 @@ pub struct ConstantFolder {
     pub errors: usize
 }
 
+macro_rules! signed_op_for_bits {
+    ($slf: expr, $left_value: expr, $right_value: expr, $expr: expr, $operator: tt, $op_type: ty) => {
+        {
+            if let Ok(right_value) = $right_value.try_into() {
+                if let Some(value) = ($left_value as $op_type).$operator(right_value) {
+                    value as i128
+                } else {
+                    ast_error!($slf, $expr, "Cannot perform overflowing addition");
+                    0
+                }
+            } else {
+                ast_error!($slf, $expr, "Cannot perform overflowing addition");
+                0
+            }    
+        }
+    };
+}
+
+macro_rules! unsigned_op_signed_for_bits {
+    ($slf: expr, $left_value: expr, $right_value: expr, $expr: expr, $operator: tt, $op_type: ty) => {
+        {
+            if let Some(value) = ($left_value as u128).$operator($right_value) {
+                if let Ok(value) = value.try_into() {
+                    let _: $op_type = value;
+                    value as u64
+                } else {
+                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                    0
+                }
+            } else {
+                ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                0
+            }
+        }
+    };
+}
+
+macro_rules! unsigned_op_for_bits {
+    ($slf: expr, $left_value: expr, $right_value: expr, $expr: expr, $operator: tt, $op_type: ty) => {
+        {
+            if let Ok(right_value) = $right_value.try_into() {
+                if let Some(value) = ($left_value as $op_type).$operator(right_value) {
+                    value as u64
+                } else {
+                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                    0
+                }
+            } else {
+                ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                0
+            }  
+        }
+    };
+}
+
 impl ConstantFolder {
     pub fn new() -> Self {
         ConstantFolder { errors: 0 }
@@ -113,32 +168,55 @@ impl ConstantFolder {
                     }
                     TokenType::Tilde => {
                         match &mut inner {
-                            Expression::SignedIntLiteral { value, .. } => {
-                                *value = !*value;
+                            Expression::SignedIntLiteral { value, bits, .. } => {
+                                *value = {
+                                    match bits {
+                                        Bits::B8  => (!(*value as  i8)) as i128,
+                                        Bits::B16 => (!(*value as i16)) as i128,
+                                        Bits::B32 => (!(*value as i32)) as i128,
+                                        Bits::B64 => (!(*value as i64)) as i128,
+                                        Bits::Any => {
+                                            if *value > -(i64::MIN as i128) {
+                                                (!(*value as u64)) as i128
+                                            } else {
+                                                (!(*value as i64)) as i128
+                                            }
+                                        }
+                                        _ => unreachable!()
+                                    }
+                                };
+
                                 *expr = inner;
                             }
-                            Expression::UnsignedIntLiteral { value, .. } => {
-                                *value = !*value;
+                            Expression::UnsignedIntLiteral { value, bits, .. } => {
+                                match bits {
+                                    Bits::B8  => *value = (!(*value as  u8)) as u64,
+                                    Bits::B16 => *value = (!(*value as u16)) as u64,
+                                    Bits::B32 => *value = (!(*value as u32)) as u64,
+                                    Bits::B64 => *value = !*value,
+                                    Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
+                                    _ => unreachable!()
+                                }
+
                                 *expr = inner;
                             }
                             _ => ()
                         }
                     }
-                    // TODO: properly account for integer width
                     TokenType::Minus => {
                         match &mut inner {
                             Expression::SignedIntLiteral { value, bits, .. } => {
                                 if *bits == Bits::Any && *value > -(i64::MIN as i128) {
                                     ast_error!(self, expr, "Cannot apply '-' operator to unsigned integer");
-                                    ast_note!(expr, format!("This operation will overflow to {}", (*value as u64).wrapping_neg()).as_str());
+                                    ast_note!(expr, "This operation will overflow");
                                 } else {
                                     *value = -*value;
                                     *expr = inner;
                                 }
                             }
-                            Expression::UnsignedIntLiteral { value, .. } => {
+                            Expression::UnsignedIntLiteral { .. } => {
                                 ast_error!(self, expr, "Cannot apply '-' operator to unsigned integer");
-                                ast_note!(expr, format!("This operation will overflow to {}", value.wrapping_neg()).as_str());
+                                ast_note!(expr, "This operation will overflow");
                             }
                             Expression::FloatLiteral { value, .. } => {
                                 *value = -*value;
@@ -231,10 +309,286 @@ impl ConstantFolder {
                 let left_inner = left.get_inner();
                 let right_inner = right.get_inner();
 
-                // TODO
                 match op.type_ {
-                    TokenType::Plus => (), 
-                    TokenType::Minus => (),
+                    TokenType::Plus => {
+                        match left_inner {
+                            Expression::SignedIntLiteral { value: left_value, bits: left_bits, tok } => {
+                                match right_inner {
+                                    Expression::SignedIntLiteral { value: right_value, .. } => {
+                                        let value = 'value_block: {
+                                            match left_bits {
+                                                Bits::B8  => signed_op_for_bits!(self, left_value, right_value, expr, checked_add,  i8),
+                                                Bits::B16 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i16),
+                                                Bits::B32 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i32),
+                                                Bits::B64 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i64),
+                                                Bits::Any => {
+                                                    if left_value > -(i64::MIN as i128) {
+                                                        if let Some(value) = (left_value as u128).checked_add_signed(right_value) {
+                                                            let value: Result<u64, _> = value.try_into();
+                                                            if let Ok(value) = value {
+                                                                break 'value_block value as i128;
+                                                            }
+                                                        }
+                                                        
+                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        0
+                                                    } else {
+                                                        signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i64)
+                                                    }
+                                                }
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        if value > -(i64::MIN as i128) {
+                                            *expr = Expression::UnsignedIntLiteral {
+                                                value: value as u64, tok,
+                                                bits: left_bits
+                                            };
+                                        } else {
+                                            *expr = Expression::SignedIntLiteral {
+                                                value, tok,
+                                                bits: left_bits
+                                            };
+                                        }
+                                    }
+                                    Expression::UnsignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => signed_op_for_bits!(self, left_value, right_value, expr, checked_add,  i8),
+                                                Bits::B16 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i16),
+                                                Bits::B32 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i32),
+                                                Bits::B64 => signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i64),
+                                                Bits::Any => {
+                                                    if left_value > -(i64::MIN as i128) {
+                                                        if let Some(value) = (left_value as u64).checked_add(right_value) {
+                                                            value as i128
+                                                        } else {
+                                                            ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                            0
+                                                        }
+                                                    } else {
+                                                        signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i64)
+                                                    }
+                                                }
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        if value > -(i64::MIN as i128) {
+                                            *expr = Expression::UnsignedIntLiteral {
+                                                value: value as u64, tok,
+                                                bits: left_bits
+                                            };
+                                        } else {
+                                            *expr = Expression::SignedIntLiteral {
+                                                value, tok,
+                                                bits: left_bits
+                                            };
+                                        }
+                                    }
+                                    _ => ()
+                                }
+                            }
+                            Expression::UnsignedIntLiteral { value: left_value, bits: left_bits, tok } => {
+                                match right_inner {
+                                    Expression::SignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed,  u8),
+                                                Bits::B16 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u16),
+                                                Bits::B32 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u32),
+                                                Bits::B64 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u64),
+                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        *expr = Expression::UnsignedIntLiteral {
+                                            value, tok,
+                                            bits: left_bits
+                                        };
+                                    }
+                                    Expression::UnsignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_add,  u8),
+                                                Bits::B16 => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_add, u16),
+                                                Bits::B32 => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_add, u32),
+                                                Bits::B64 => {
+                                                    if let Some(value) = left_value.checked_add(right_value) {
+                                                        value
+                                                    } else {
+                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        0
+                                                    }
+                                                }
+                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        *expr = Expression::UnsignedIntLiteral {
+                                            value, tok,
+                                            bits: left_bits
+                                        };
+                                    }
+                                    _ => ()
+                                }
+                            }
+                            Expression::FloatLiteral { value: left_value, bits, tok, .. } => {
+                                if let Expression::FloatLiteral { value: right_value, .. } = right_inner {
+                                    *expr = Expression::FloatLiteral {
+                                        value: left_value + right_value, 
+                                        tok, bits
+                                    };
+                                }
+                            }
+                            _ => ()
+                        }
+                    }
+                    TokenType::Minus => {
+                        match left_inner {
+                            Expression::SignedIntLiteral { value: left_value, bits: left_bits, tok } => {
+                                match right_inner {
+                                    Expression::SignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub,  i8),
+                                                Bits::B16 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i16),
+                                                Bits::B32 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i32),
+                                                Bits::B64 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i64),
+                                                Bits::Any => {
+                                                    if left_value > -(i64::MIN as i128) {
+                                                        // TODO: checked_sub_signed is unstable rust
+                                                        
+                                                        // if let Some(value) = (left_value as u128).checked_sub_signed(right_value) {
+                                                        //     let value: Result<u64, _> = value.try_into();
+                                                        //     if let Ok(value) = value {
+                                                        //         break 'value_block value as i128;
+                                                        //     }
+                                                        // }
+                                                        
+                                                        // ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        // 0
+                                                        return;
+                                                    } else {
+                                                        signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i64)
+                                                    }
+                                                }
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        if value > -(i64::MIN as i128) {
+                                            *expr = Expression::UnsignedIntLiteral {
+                                                value: value as u64, tok,
+                                                bits: left_bits
+                                            };
+                                        } else {
+                                            *expr = Expression::SignedIntLiteral {
+                                                value, tok,
+                                                bits: left_bits
+                                            };
+                                        }
+                                    }
+                                    Expression::UnsignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub,  i8),
+                                                Bits::B16 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i16),
+                                                Bits::B32 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i32),
+                                                Bits::B64 => signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i64),
+                                                Bits::Any => {
+                                                    if left_value > -(i64::MIN as i128) {
+                                                        if let Some(value) = (left_value as u64).checked_sub(right_value) {
+                                                            value as i128
+                                                        } else {
+                                                            ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                            0
+                                                        }
+                                                    } else {
+                                                        signed_op_for_bits!(self, left_value, right_value, expr, checked_sub, i64)
+                                                    }
+                                                }
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        if value > -(i64::MIN as i128) {
+                                            *expr = Expression::UnsignedIntLiteral {
+                                                value: value as u64, tok,
+                                                bits: left_bits
+                                            };
+                                        } else {
+                                            *expr = Expression::SignedIntLiteral {
+                                                value, tok,
+                                                bits: left_bits
+                                            };
+                                        }
+                                    }
+                                    _ => ()
+                                }
+                            }
+                            Expression::UnsignedIntLiteral { value: left_value, bits: left_bits, tok } => {
+                                match right_inner {
+                                    // TODO: checked_sub_signed is unstable rust
+
+                                    // Expression::SignedIntLiteral { value: right_value, .. } => {
+                                    //     let value = {
+                                    //         match left_bits {
+                                    //             Bits::B8  => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed,  u8),
+                                    //             Bits::B16 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u16),
+                                    //             Bits::B32 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u32),
+                                    //             Bits::B64 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u64),
+                                    //             Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
+                                    //             _ => unreachable!()
+                                    //         }
+                                    //     };
+
+                                    //     *expr = Expression::UnsignedIntLiteral {
+                                    //         value, tok,
+                                    //         bits: left_bits
+                                    //     };
+                                    // }
+                                    Expression::UnsignedIntLiteral { value: right_value, .. } => {
+                                        let value = {
+                                            match left_bits {
+                                                Bits::B8  => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_sub,  u8),
+                                                Bits::B16 => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_sub, u16),
+                                                Bits::B32 => unsigned_op_for_bits!(self, left_value, right_value, expr, checked_sub, u32),
+                                                Bits::B64 => {
+                                                    if let Some(value) = left_value.checked_sub(right_value) {
+                                                        value
+                                                    } else {
+                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        0
+                                                    }
+                                                }
+                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
+                                                _ => unreachable!()
+                                            }
+                                        };
+
+                                        *expr = Expression::UnsignedIntLiteral {
+                                            value, tok,
+                                            bits: left_bits
+                                        };
+                                    }
+                                    _ => ()
+                                }
+                            }
+                            Expression::FloatLiteral { value: left_value, bits, tok, .. } => {
+                                if let Expression::FloatLiteral { value: right_value, .. } = right_inner {
+                                    *expr = Expression::FloatLiteral {
+                                        value: left_value - right_value, 
+                                        tok, bits
+                                    };
+                                }
+                            }
+                            _ => ()
+                        }
+                    }
                     TokenType::Slash => (),
                     TokenType::Star => (),
                     TokenType::Mod => (),
