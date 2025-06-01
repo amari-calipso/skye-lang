@@ -13,73 +13,27 @@ pub struct MacroExpander {
     pub errors: usize,
 }
 
-macro_rules! at_operator {
-    ($slf: ident, $inner: expr, $expr: ident, $op: expr, $pos: expr, $ctx: expr) => {
-        if let Some(SkyeType::Type(inner)) = $inner {
-            if let SkyeType::Macro(_, params, _) = &*inner {
-                if !matches!(params, MacroParams::None) {
-                    return Some(*inner);
-                }
-
-                if let SkyeType::Macro(_, _, body) = *inner {
-                    match body {
-                        MacroBody::Expression(expression) => {
-                            *$expr = Expression::InMacro {
-                                inner: Box::new(expression),
-                                source: $pos
-                            };
-                        }
-                        MacroBody::Block(statements) => {
-                            *$expr = Expression::MacroExpandedStatements {
-                                inner: statements,
-                                source: $pos
-                            };
-                        }
-                        MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at codegen time
-                    }
-                } else {
-                    unreachable!()
-                }
-
-                // re-expand the expression to expand potential nested macros and return values where needed
-                return $ctx.run(|ctx| $slf.expand_expression($expr, ctx)).await;
-            }
-
-            token_error!(
-                $slf, $op,
-                format!(
-                    "'@' can only be used on macros (got {})",
-                    inner.stringify_native()
-                ).as_ref()
-            );
-        }
-    };
-}
-
 impl MacroExpander {
     pub fn new(compile_mode: CompileMode) -> Self {
         let mut globals = HashMap::new();
         globals.insert(
-            Rc::from("COMPILE_MODE"),
-            SkyeType::Type(
-                Box::new(SkyeType::Macro(
-                    Rc::from("COMPILE_MODE"),
-                    MacroParams::None,
-                    MacroBody::Expression({
-                        let value = {
-                            match compile_mode {
-                                CompileMode::Debug         => 0,
-                                CompileMode::Release       => 1,
-                                CompileMode::ReleaseUnsafe => 2
-                            }
-                        };
+            Rc::from("@COMPILE_MODE"),
+            SkyeType::Macro(
+                Rc::from("@COMPILE_MODE"),
+                MacroParams::None,
+                MacroBody::Expression({
+                    let value = {
+                        match compile_mode {
+                            CompileMode::Debug         => 0,
+                            CompileMode::Release       => 1,
+                            CompileMode::ReleaseUnsafe => 2
+                        }
+                    };
 
-                        Expression::SignedIntLiteral { value, tok: Token::dummy(Rc::from("")), bits: Bits::Any }
-                    })
-                ))
+                    Expression::SignedIntLiteral { value, tok: Token::dummy(Rc::from("")), bits: Bits::Any }
+                })
             )
         );
-
 
         MacroExpander {
             globals, compile_mode,
@@ -100,7 +54,7 @@ impl MacroExpander {
 
     fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, callee_expr: &Expression) -> Option<Expression> {
         match macro_name.as_ref() {
-            "concat" => {
+            "@concat" => {
                 if arguments.len() == 1 {
                     let arg_inner = arguments[0].get_inner();
                     if matches!(arg_inner, Expression::Slice { .. } | Expression::ArrayLiteral { .. }) {
@@ -155,6 +109,40 @@ impl MacroExpander {
         }
     }
 
+    async fn expand_noparam_macro(&mut self, expr: &mut Expression, value: &SkyeType, ctx: &mut reblessive::Stk) -> Option<SkyeType> {
+        if let SkyeType::Macro(name, params, body) = value {
+            if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
+                return None;
+            }
+
+            if !matches!(params, MacroParams::None) {
+                return Some(value.clone());
+            }
+
+            let pos = expr.get_pos();
+            match body {
+                MacroBody::Expression(expression) => {
+                    *expr = Expression::InMacro {
+                        inner: Box::new(expression.clone()),
+                        source: pos
+                    };
+                }
+                MacroBody::Block(statements) => {
+                    *expr = Expression::MacroExpandedStatements {
+                        inner: statements.clone(),
+                        source: pos
+                    };
+                }
+                MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at codegen time
+            }
+
+            // re-expand the expression to expand potential nested macros and return values where needed
+            ctx.run(|ctx| self.expand_expression(expr, ctx)).await
+        } else {
+            Some(value.clone())
+        }
+    }
+
     async fn expand_expression(&mut self, expr: &mut Expression, ctx: &mut reblessive::Stk) -> Option<SkyeType> {
         let expr_pos = expr.get_pos();
 
@@ -170,22 +158,19 @@ impl MacroExpander {
                 ctx.run(|ctx| self.expand_expression(left, ctx)).await;
                 ctx.run(|ctx| self.expand_expression(right, ctx)).await;
             }
+            Expression::Unary { expr, .. } |
+            Expression::Get(expr, _) => {
+                ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
+            }
             Expression::Grouping(expr) |
-            Expression::Get(expr, _) |
             Expression::InMacro { inner: expr, .. } => {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
-                let value = self.globals.get(&name.lexeme).cloned();
+                let mut value = self.globals.get(&name.lexeme).cloned();
 
-                if let Some(value) = &value {
-                    if let SkyeType::Type(inner) = value {
-                        if let SkyeType::Macro(name, ..) = &**inner {
-                            if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
-                                return None;
-                            }
-                        }
-                    }
+                if let Some(inner) = &value {
+                    value = ctx.run(|ctx| self.expand_noparam_macro(expr, inner, ctx)).await;
                 }
 
                 return value;
@@ -227,24 +212,15 @@ impl MacroExpander {
                     ctx.run(|ctx| self.expand_expression(item, ctx)).await;
                 }
             }
-            Expression::Unary { expr: inner_expr, op, is_prefix } => {
-                let inner = ctx.run(|ctx| self.expand_expression(inner_expr, ctx)).await;
-                if *is_prefix && op.type_ == TokenType::At {
-                    at_operator!(self, inner, expr, op, expr_pos, ctx);
-                }
-            }
-            Expression::StaticGet(object_expr, name, gets_macro) => {
+            Expression::StaticGet(object_expr, name) => {
                 let object = ctx.run(|ctx| self.expand_expression(object_expr, ctx)).await;
 
                 if let Some(object) = object {
                     match object.static_get(&name) {
                         GetResult::Ok(value, ..) => {
                             if let Some(var) = self.globals.get(&value) {
-                                if *gets_macro {
-                                    at_operator!(self, Some(var.clone()), expr, name, expr_pos, ctx);
-                                }
-
-                                return Some(var.clone());
+                                let var = var.clone();
+                                return ctx.run(|ctx| self.expand_noparam_macro(expr, &var, ctx)).await;
                             }
                         }
                         GetResult::InvalidType => {
@@ -276,7 +252,7 @@ impl MacroExpander {
                 }
 
                 if let Some(SkyeType::Macro(name, params, body)) = callee {
-                    assert!(!matches!(params, MacroParams::None)); // covered by unary '@' evaluation
+                    assert!(!matches!(params, MacroParams::None)); // covered by variable access
 
                     match &params {
                         MacroParams::Some(params) => {
@@ -319,7 +295,7 @@ impl MacroExpander {
                                         return_expr = return_expr.replace_variable(&params[i].lexeme, &args[i]);
                                     }
 
-                                    if name.as_ref() == "panic" {
+                                    if name.as_ref() == "@panic" {
                                         // panic also includes position information
 
                                         if matches!(self.compile_mode, CompileMode::Debug) {
@@ -566,13 +542,11 @@ impl MacroExpander {
                 let full_name = self.get_name(&name.lexeme);
                 self.globals.insert(
                     Rc::clone(&full_name),
-                    SkyeType::Type(Box::new(
-                        SkyeType::Macro(
-                            full_name,
-                            params.clone(),
-                            body.clone()
-                        )
-                    ))
+                    SkyeType::Macro(
+                        full_name,
+                        params.clone(),
+                        body.clone()
+                    )
                 );
             }
             _ => ()

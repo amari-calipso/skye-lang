@@ -151,7 +151,7 @@ namespace core {
         }
     }
 
-    macro MIN_ARRAY_CAPACITY 8;
+    macro @MIN_ARRAY_CAPACITY 8;
 
     struct Array[T, U = core::mem::HeapAllocator] {
         array: Ptr[T, U],
@@ -685,16 +685,16 @@ impl core::io::File {
 }
 
 // compiler built-ins
-macro format(args+) void;
-macro fprint(args+) void;
-macro fprintln(args+) void;
+macro @format(args+) void;
+macro @fprint(args+) void;
+macro @fprintln(args+) void;
 
-macro print(args+)    @fprint(..@concat({&core::io::stdOut}, args));
-macro eprint(args+)   @fprint(..@concat({&core::io::stdErr}, args));
-macro println(args+)  @fprintln(..@concat({&core::io::stdOut}, args));
-macro eprintln(args+) @fprintln(..@concat({&core::io::stdErr}, args));
+macro @print(args+)    @fprint(..@concat({&core::io::stdOut}, args));
+macro @eprint(args+)   @fprint(..@concat({&core::io::stdErr}, args));
+macro @println(args+)  @fprintln(..@concat({&core::io::stdOut}, args));
+macro @eprintln(args+) @fprintln(..@concat({&core::io::stdErr}, args));
 
-macro array(items+) core::Array::from(items);
+macro @array(items+) core::Array::from(items);
 
 #init fn _SKYE_BUILTINS_INIT() {
     core::mem::heapAllocator = core::mem::HeapAllocator::new();

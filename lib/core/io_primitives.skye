@@ -21,7 +21,6 @@ import <"errno.h">;
 
 #bind fn strerror(errnum: i32) *const char;
 
-// actually not macros but this "hides" the C handles a little bit
 macro stdout -> *CFile;
 macro stderr -> *CFile;
 macro stdin  -> *CFile;
@@ -161,7 +160,7 @@ namespace core {
 }
 
 #init fn _SKYE_PRIMITIVES_INIT() {
-    core::io::stdOut = core::io::File::fromCFile(@stdout);
-    core::io::stdErr = core::io::File::fromCFile(@stderr);
-    core::io::stdIn  = core::io::File::fromCFile(@stdin);
+    core::io::stdOut = core::io::File::fromCFile(stdout);
+    core::io::stdErr = core::io::File::fromCFile(stderr);
+    core::io::stdIn  = core::io::File::fromCFile(stdin);
 }

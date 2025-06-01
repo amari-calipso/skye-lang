@@ -50,6 +50,9 @@ let a = 0; // Skye will infer the type for this variable
 let b: u64 = 0; // You can manually specify types
 const c = 3; // This variable is immutable, it cannot be modified
 let d: f32; // Variables can be left undefined, but the type needs to be specified
+
+// you can use reserved identifiers by using "@" at the start of your identifier
+let @if = 3; 
 ```
 
 # Primitive types
@@ -222,7 +225,7 @@ fn printAllFunction(strings: Slice[String]) {
     }
 }
 
-macro printAll(strings*) printAllFunction(strings);
+macro @printAll(strings*) printAllFunction(strings);
 ```
 
 It's possible to create function pointers either by referencing an existing function or using the function pointer type.
@@ -447,7 +450,7 @@ use myNamespace::test; // in case of namespaces accesses, `as` can be omitted an
 
 use myNamespace::test as myTestAlias;
 
-macro defineAdd(constant) {
+macro @defineAdd(constant) {
     fn addValue[T: AnyFloat](x: T) T {
         return a + constant;
     }
@@ -535,40 +538,25 @@ fn main() !i32 { // omitting the left value makes the compiler assume it's `void
 }
 ```
 # Macros
-It's possible to create macros in Skye, and unlike in C, they are based on the AST instead of using a preprocessor. It's also possible to bind to C macros.
+It's possible to create macros in Skye, and unlike in C, they are based on the AST instead of using a preprocessor. It's also possible to bind to C macros. It's recommended to use "@" identifiers when defining macros, to easily distinguish them from functions and variables.
 ```
-macro constantNumber 32;
-macro count(n) {
+macro @constantNumber 32;
+macro @count(n) {
     for let i = @cast(@typeOf(n), 0); i < n; i++ {
         @println("%", i);
     }
 }
 
-macro addTwo(x) x + 2;
+macro @addTwo(x) x + 2;
 
 // C macro bindings
 macro __WORDSIZE -> u8;
 macro A_C_MACRO(x, y) -> i32;
 ```
-To reference macros, the `@` operator must be used.
-```
-let number = @costantNumber;
-@saySomething("hello!");
-let result = @A_C_MACRO(1, 1);
-```
-
-To reference macros inside namespaces, this syntax is used:
-```
-namespace myNamespace {
-    macro constantNumber 32;
-}
-
-// myNamespace::@constantNumber
-```
 
 You can create macros with variable parameter length using the following syntax:
 ```
-macro variableArgumentsMacro(args*) {
+macro @variableArgumentsMacro(args*) {
     // `args` will be bound to a `Slice` of whatever arguments it got passed
 }
 ```

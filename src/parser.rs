@@ -340,22 +340,11 @@ impl Parser {
         let mut expr = self.primary()?;
 
         while self.match_(&[TokenType::ColonColon]) {
-            let gets_macro = self.match_(&[TokenType::At]);
             let name = self.consume(TokenType::Identifier, "Expecting property name after '::'")?.clone();
-            expr = Expression::StaticGet(Box::new(expr), name, gets_macro);
+            expr = Expression::StaticGet(Box::new(expr), name);
         }
 
         Some(expr)
-    }
-
-    fn macro_call(&mut self) -> Option<Expression> {
-        if self.match_(&[TokenType::At]) {
-            let op = self.previous().clone();
-            let name = self.consume(TokenType::Identifier, "Expecting macro name after '@'")?.clone();
-            return Some(Expression::Unary { op, expr: Box::new(Expression::Variable(name)), is_prefix: true });
-        }
-
-        self.static_access()
     }
 
     fn get_expressions(&mut self, type_: TokenType) -> Option<Vec<Expression>> {
@@ -413,7 +402,7 @@ impl Parser {
     }
 
     fn call(&mut self) -> Option<Expression> {
-        let mut expr = self.macro_call()?;
+        let mut expr = self.static_access()?;
 
         loop {
             if self.match_(&[TokenType::LeftParen]) {
@@ -1184,7 +1173,7 @@ impl Parser {
         let use_expr = self.expression()?;
 
         let as_ = {
-            if let Expression::StaticGet(_, name, _) = &use_expr {
+            if let Expression::StaticGet(_, name) = &use_expr {
                 if self.match_(&[TokenType::As]) {
                     self.consume(TokenType::Identifier, "Expecting identifier after \"as\"")?.clone()
                 } else {

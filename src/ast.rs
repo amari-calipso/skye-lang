@@ -119,7 +119,7 @@ pub enum Expression {
     CompoundLiteral { type_: Box<Expression>, closing_brace: Token, fields: Vec<StructField> },
     Subscript { subscripted: Box<Expression>, paren: Token, args: Vec<Expression> },
     Get(Box<Expression>, Token), // object name
-    StaticGet(Box<Expression>, Token, bool), // object name gets_macro
+    StaticGet(Box<Expression>, Token), // object name
     Slice { opening_brace: Token, items: Vec<Expression> },
     InMacro { inner: Box<Expression>, source: AstPos },
     MacroExpandedStatements { inner: Vec<Statement>, source: AstPos },
@@ -225,7 +225,7 @@ impl Ast for Expression {
                     AstPos::new(Rc::clone(&subscripted_pos.source), Rc::clone(&subscripted_pos.filename), subscripted_pos.start, paren.end, subscripted_pos.line)
                 }
             }
-            Expression::Get(object, name) | Expression::StaticGet(object, name, _)=> {
+            Expression::Get(object, name) | Expression::StaticGet(object, name)=> {
                 let object_pos = object.get_pos();
 
                 if object_pos.line != name.line || object_pos.filename != name.filename {
@@ -313,8 +313,8 @@ impl Ast for Expression {
             Expression::Get(object, get_name) => {
                 Expression::Get(Box::new(object.replace_variable(name, replace_expr)), get_name.clone())
             }
-            Expression::StaticGet(object, get_name, gets_macro) => {
-                Expression::StaticGet(Box::new(object.replace_variable(name, replace_expr)), get_name.clone(), *gets_macro)
+            Expression::StaticGet(object, get_name) => {
+                Expression::StaticGet(Box::new(object.replace_variable(name, replace_expr)), get_name.clone())
             }
             Expression::Slice { opening_brace, items } => {
                 Expression::Slice { opening_brace: opening_brace.clone(), items: items.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }
