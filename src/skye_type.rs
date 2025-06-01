@@ -40,6 +40,7 @@ impl SkyeEnumVariant {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub enum Operator {
     Inc, Dec,
     Pos, Neg,
@@ -534,6 +535,7 @@ impl SkyeType {
         match self {
             SkyeType::AnyInt   => SkyeType::I32,
             SkyeType::AnyFloat => SkyeType::F32,
+            SkyeType::Type(inner) => SkyeType::Type(Box::new(inner.finalize())),
             _ => self.clone()
         }
     }
@@ -865,6 +867,7 @@ impl SkyeType {
                 match op {
                     Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr | 
                     Operator::Inv | Operator::Not => ImplementsHow::No,
+                    Operator::Mod | Operator::SetMod => ImplementsHow::ThirdParty,
                     _ => ImplementsHow::Native(Vec::new())
                 }
             }

@@ -758,19 +758,20 @@ impl CodeGen {
 
                 if let SkyeType::Type(inner_type) = cast_to.type_ {
                     let to_cast = ctx.run(|ctx| self.evaluate(&arguments[1], index, allow_unknown, ctx)).await;
+                    let to_cast_type = to_cast.type_.finalize();
 
-                    let castable_how = to_cast.type_.is_castable_to(&inner_type);
+                    let castable_how = to_cast_type.is_castable_to(&inner_type);
                     if matches!(castable_how, CastableHow::Yes | CastableHow::ConstnessLoss) {
                         if matches!(castable_how, CastableHow::ConstnessLoss) {
                             ast_warning!(arguments[1], "This cast discards the constness from casted type"); // +W-constness-loss
                             ast_note!(arguments[0], "Cast to a const variant of this type");
 
-                            if matches!(to_cast.type_, SkyeType::Pointer(..)) {
+                            if matches!(to_cast_type, SkyeType::Pointer(..)) {
                                 ast_note!(arguments[1], "Since this is a pointer, you can also use the @constCast macro to discard its constness");
                             }
                         }
 
-                        if inner_type.equals(&to_cast.type_, EqualsLevel::ConstStrict) {
+                        if inner_type.equals(&to_cast_type, EqualsLevel::ConstStrict) {
                             Some(to_cast)
                         } else {
                             Some(SkyeValue::new(Rc::from(format!("({})({})", inner_type.stringify(), to_cast.value)), *inner_type, true))
@@ -1233,7 +1234,7 @@ impl CodeGen {
 
                         let type_ = {
                             if let Some(t) = generic_type {
-                                Some(t.clone())
+                                Some(t.finalize())
                             } else if let Some(default) = &expr_generic.default {
                                 let previous = Rc::clone(&self.environment);
                                 self.environment = Rc::clone(&tmp_env);
@@ -1965,6 +1966,35 @@ impl CodeGen {
                 }
             }
             ImplementsHow::ThirdParty => {
+                if matches!(new_left.type_, SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat) {
+                    let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT_floatMod"));
+                    let fmod_function = self.globals.borrow().get(&fmod_tok)
+                        .expect("Cannot find core::ops::floatMod");
+
+                    match op_type {
+                        Operator::Mod => {
+                            let tmp_var = self.get_temporary_var();
+                            self.definitions[index].push_indent();
+                            self.definitions[index].push(&left.type_.stringify());
+                            self.definitions[index].push(" ");
+                            self.definitions[index].push(&tmp_var);
+                            self.definitions[index].push(" = ");
+                            self.definitions[index].push(&left.value);
+                            self.definitions[index].push(";\n");
+
+                            let tmp_var_rc = tmp_var.into();
+                            self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.type_, true, None));
+                            let args = vec![Expression::Variable(Token::dummy(Rc::clone(&tmp_var_rc))), right_expr.clone()];
+                            let fmod_value = SkyeValue::new(fmod_tok.lexeme, fmod_function.type_, true);
+                            let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, index, allow_unknown, ctx)).await;
+                            self.environment.borrow_mut().undef(tmp_var_rc);
+                            return result;
+                        }
+                        Operator::SetMod => todo!(),
+                        _ => unreachable!()
+                    }
+                }
+
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
                     let args = vec![right_expr.clone()];
@@ -3934,7 +3964,7 @@ impl CodeGen {
 
                                 let type_ = {
                                     if let Some(t) = generic_type {
-                                        Some(t.clone())
+                                        Some(t.finalize())
                                     } else if let Some(default) = &expr_generic.default {
                                         let previous = Rc::clone(&self.environment);
                                         self.environment = Rc::clone(&tmp_env);
