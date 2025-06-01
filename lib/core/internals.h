@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define SKYE_AT_empty(_T) {0} // zero-initializes object. T is required for Skye implementation, so the compiler's type checking can work properly
-#define SKYE_AT_sizeOf(EXPR) sizeof(EXPR) 
+#define empty(_T) {0} // zero-initializes object. T is required for Skye implementation, so the compiler's type checking can work properly
+#define sizeOf(EXPR) sizeof(EXPR) 
 
 typedef void* voidptr;
 typedef uint8_t u8;
@@ -23,27 +23,27 @@ typedef size_t usz;
     #define SIZE_T_C(c)	c ## U
 #endif
 
-#define SKYE_AT_WINDOWS 0
-#define SKYE_AT_LINUX 0
-#define SKYE_AT_MAC_OS 0
-#define SKYE_AT_UNIX_LIKE 0
+#define WINDOWS 0
+#define LINUX 0
+#define MAC_OS 0
+#define UNIX_LIKE 0
 
 #if defined(_WIN32) || defined(__CYGWIN__)
-    #undef SKYE_AT_WINDOWS
-    #define SKYE_AT_WINDOWS 1
+    #undef WINDOWS
+    #define WINDOWS 1
 #elif defined(__linux__)
-    #undef SKYE_AT_LINUX
-    #define SKYE_AT_LINUX 1
-    #undef SKYE_AT_UNIX_LIKE
-    #define SKYE_AT_UNIX_LIKE 1
+    #undef LINUX
+    #define LINUX 1
+    #undef UNIX_LIKE
+    #define UNIX_LIKE 1
 #elif defined(__APPLE__) && defined(__MACH__)
-    #undef SKYE_AT_MAC_OS
-    #define SKYE_AT_MAC_OS 1
-    #undef SKYE_AT_UNIX_LIKE
-    #define SKYE_AT_UNIX_LIKE 1
+    #undef MAC_OS
+    #define MAC_OS 1
+    #undef UNIX_LIKE
+    #define UNIX_LIKE 1
 #elif defined(unix) || defined(__unix__) || defined(__unix)
-    #undef SKYE_AT_UNIX_LIKE
-    #define SKYE_AT_UNIX_LIKE 1
+    #undef UNIX_LIKE
+    #define UNIX_LIKE 1
 #else
     // TODO add other platforms
 #endif

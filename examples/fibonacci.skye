@@ -1,6 +1,6 @@
 use core::io;
 
-macro @MAX_TERMS 94;
+macro MAX_TERMS 94;
 
 fn getInt() u8 {
     let buf = Array::new[char]();

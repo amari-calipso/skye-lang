@@ -241,7 +241,7 @@ impl SkyeType {
             SkyeType::Group(left, right) => format!("{} | {}", left.stringify_native(), right.stringify_native()),
             SkyeType::Template(name, ..) => format!("template \"{}\"", name.replace("_DOT_", "::")),
             SkyeType::Namespace(name) => format!("namespace \"{}\"", name.replace("_DOT_", "::")),
-            SkyeType::Macro(name, ..) => format!("macro \"{}\"", name.replace("_DOT_", "::")),
+            SkyeType::Macro(name, ..) => format!("macro \"{}\"", name),
             SkyeType::Unknown(name) => {
                 if name.as_ref() == "" {
                     String::from("any")

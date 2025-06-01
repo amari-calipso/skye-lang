@@ -32,15 +32,15 @@ impl[T] core::Slice[T] {
 
 namespace std {
     namespace math {
-        fn max[T](a: T, b: T) T {
+        fn max2[T](a: T, b: T) T {
             return a > b ? a : b;
         }
 
-        fn min[T](a: T, b: T) T {
+        fn min2[T](a: T, b: T) T {
             return a < b ? a : b;
         }
 
-        macro @max(items+) items.max();
-        macro @min(items+) items.min();
+        macro max(items+) items.max();
+        macro min(items+) items.min();
     }
 }

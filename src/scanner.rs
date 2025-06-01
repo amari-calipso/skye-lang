@@ -392,6 +392,7 @@ impl<'a> Scanner<'a> {
             ',' => self.add_token(TokenType::Comma),
             ';' => self.add_token(TokenType::Semicolon),
             '?' => self.add_token(TokenType::Question),
+            '@' => self.add_token(TokenType::At),
             '~' => self.add_token(TokenType::Tilde),
             '#' => self.add_token(TokenType::Hash),
 
@@ -538,7 +539,6 @@ impl<'a> Scanner<'a> {
             '\n' => self.line += 1,
 
             '0' => self.alt_base_number(),
-            '@' => self.identifier(),
 
             _ => {
                 if is_beginning_digit(c) {

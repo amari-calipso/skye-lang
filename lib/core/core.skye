@@ -1,10 +1,10 @@
 import <<"core/internals.h">>;
 
 // compiler built-ins
-macro @typeOf(item) void;
-macro @cast(type, item) void;
-macro @constCast(ptr) void;
-macro @concat(strings+) void;
+macro typeOf(item) void;
+macro cast(type, item) void;
+macro constCast(ptr) void;
+macro concat(strings+) void;
 
 use @typeOf(0u8)  as u8;
 use @typeOf(0i8)  as i8;
@@ -23,35 +23,35 @@ use @typeOf('\0') as char;
 use 0u8 as false;
 use 1u8 as true;
 
-macro @U8_MAX 255;
-macro @U8_MIN 0;
-macro @I8_MAX 127;
-macro @I8_MIN -128;
+macro U8_MAX 255;
+macro U8_MIN 0;
+macro I8_MAX 127;
+macro I8_MIN -128;
 
-macro @U16_MAX 65535;
-macro @U16_MIN 0;
-macro @I16_MAX 32767;
-macro @I16_MIN -32768;
+macro U16_MAX 65535;
+macro U16_MIN 0;
+macro I16_MAX 32767;
+macro I16_MIN -32768;
 
-macro @U32_MAX 4294967295;
-macro @U32_MIN 0;
-macro @I32_MAX 2147483647;
-macro @I32_MIN -2147483648;
+macro U32_MAX 4294967295;
+macro U32_MIN 0;
+macro I32_MAX 2147483647;
+macro I32_MIN -2147483648;
 
-macro @U64_MAX 18446744073709551615;
-macro @U64_MIN 0;
-macro @I64_MAX 9223372036854775807;
-macro @I64_MIN -9223372036854775808;
+macro U64_MAX 18446744073709551615;
+macro U64_MIN 0;
+macro I64_MAX 9223372036854775807;
+macro I64_MIN -9223372036854775808;
 
-macro @WINDOWS -> bool;
-macro @LINUX -> bool;
-macro @MAC_OS -> bool;
-macro @UNIX_LIKE -> bool;
+macro WINDOWS -> bool;
+macro LINUX -> bool;
+macro MAC_OS -> bool;
+macro UNIX_LIKE -> bool;
 
-macro @empty(T) -> T;
-macro @sizeOf(E) -> usz;
+macro empty(T) -> T;
+macro sizeOf(E) -> usz;
 
-macro @nullptr 0;
+macro nullptr 0;
 
 use (
     u8  | i8  | u16 | i16 |
@@ -73,10 +73,10 @@ use core::Slice;
 
 fn __panicHandler(const at: String, const msg: String);
 
-macro @panic(msg) __panicHandler(PANIC_POS, msg);
-macro @unreachable @panic("Entered unreachable code");
-macro @assert(x) @COMPILE_MODE != 0 || x ? void : @panic("Assertion failed");
-macro @todo(msg) @panic(@concat("Not implemented yet: \"", msg, "\""));
+macro panic(msg) __panicHandler(PANIC_POS, msg);
+macro unreachable @panic("Entered unreachable code");
+macro assert(x) @COMPILE_MODE != 0 || x ? void : @panic("Assertion failed");
+macro todo(msg) @panic(@concat("Not implemented yet: \"", msg, "\""));
 
 namespace core {
     enum Option[T] {
