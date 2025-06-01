@@ -218,7 +218,7 @@ Variable parameter length is not allowed, however it's possible to create [macro
 ```
 fn printAllFunction(strings: Slice[String]) {
     for string; strings {
-        @println("{string}");
+        @println("%", string);
     }
 }
 
@@ -540,7 +540,7 @@ It's possible to create macros in Skye, and unlike in C, they are based on the A
 macro constantNumber 32;
 macro count(n) {
     for let i = @cast(@typeOf(n), 0); i < n; i++ {
-        @println("{i}");
+        @println("%", i);
     }
 }
 
