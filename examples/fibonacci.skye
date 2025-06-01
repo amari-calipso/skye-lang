@@ -29,7 +29,7 @@ fn main() {
     let n = getInt();
 
     while n-- {
-        @println("{a}");
+        @println("%", a);
 
         const c = a + b;
         a = b;

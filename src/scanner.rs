@@ -390,7 +390,6 @@ impl<'a> Scanner<'a> {
             '{' => self.add_token(TokenType::LeftBrace),
             '}' => self.add_token(TokenType::RightBrace),
             ',' => self.add_token(TokenType::Comma),
-            '.' => self.add_token(TokenType::Dot),
             ';' => self.add_token(TokenType::Semicolon),
             '?' => self.add_token(TokenType::Question),
             '@' => self.add_token(TokenType::At),
@@ -402,6 +401,13 @@ impl<'a> Scanner<'a> {
                     self.add_token(TokenType::BangEqual);
                 } else {
                     self.add_token(TokenType::Bang);
+                }
+            }
+            '.' => {
+                if self.match_('.') {
+                    self.add_token(TokenType::DotDot);
+                } else {
+                    self.add_token(TokenType::Dot);
                 }
             }
             '=' => {

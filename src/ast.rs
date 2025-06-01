@@ -113,7 +113,7 @@ pub enum Expression {
     Grouping(Box<Expression>),
     Variable(Token), // name
     Assign { target: Box<Expression>, op: Token, value: Box<Expression> },
-    Call(Box<Expression>, Token, Vec<Expression>), // callee paren arguments
+    Call(Box<Expression>, Token, Vec<Expression>, bool), // callee paren arguments unpack
     FnPtr { kw: Token, return_type: Box<Expression>, params: Vec<FunctionParam> },
     Ternary { tok: Token, condition: Box<Expression>, then_expr: Box<Expression>, else_expr: Box<Expression> },
     CompoundLiteral { type_: Box<Expression>, closing_brace: Token, fields: Vec<StructField> },
@@ -179,7 +179,7 @@ impl Ast for Expression {
                     AstPos::new(Rc::clone(&target_pos.source), Rc::clone(&target_pos.filename), target_pos.start, value_pos.end, target_pos.line)
                 }
             }
-            Expression::Call(callee, paren, _) => {
+            Expression::Call(callee, paren, ..) => {
                 let callee_pos = callee.get_pos();
 
                 if callee_pos.line != paren.line || callee_pos.filename != paren.filename {
@@ -285,11 +285,12 @@ impl Ast for Expression {
             Expression::Ternary { tok: question, condition: cond, then_expr: then, else_expr: else_ } => {
                 Expression::Ternary { tok: question.clone(), condition: Box::new(cond.replace_variable(name, replace_expr)), then_expr: Box::new(then.replace_variable(name, replace_expr)), else_expr: Box::new(else_.replace_variable(name, replace_expr)) }
             }
-            Expression::Call(callee, paren, args) => {
+            Expression::Call(callee, paren, args, unpack) => {
                 Expression::Call(
                     Box::new(callee.replace_variable(name, replace_expr)),
                     paren.clone(),
-                    args.iter().map(|x| x.replace_variable(name, replace_expr)).collect()
+                    args.iter().map(|x| x.replace_variable(name, replace_expr)).collect(),
+                    *unpack
                 )
             }
             Expression::FnPtr { kw, return_type, params } => {

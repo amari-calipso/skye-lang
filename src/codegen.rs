@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, parser::Parser, scanner::Scanner, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length, note}, CompileMode
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -157,6 +157,12 @@ impl CodeOutput {
 pub enum ExecutionInterrupt {
     Interrupt(Rc<str>),
     Return(Rc<str>)
+}
+
+#[derive(Debug)]
+enum InterpolatedStringPortion {
+    Value,
+    String(String)
 }
 
 pub struct CodeGen {
@@ -434,84 +440,67 @@ impl CodeGen {
         }
     }
 
-    pub fn split_interpolated_string(&mut self, str: &Rc<str>, ref_token: &Token) -> Vec<(String, bool)> {
-        let mut result: Vec<(String, bool)> = Vec::new();
+    fn split_interpolated_string(&mut self, str: &Rc<str>) -> Vec<InterpolatedStringPortion> {
+        let mut result: Vec<InterpolatedStringPortion> = Vec::new();
 
-        let mut interpolated = 0usize;
-        let mut escaped = false;
-        for (i, ch) in str.chars().enumerate() {
-            if ch == '{' {
-                if escaped {
-                    if result.len() == 0 {
-                        result.push((String::new(), false));
-                    }
-
-                    escaped = false;
-                    result.last_mut().unwrap().0.push(ch);
+        let mut last_was_percent = false;
+        for ch in str.chars() {
+            if ch == '%' {
+                if !last_was_percent {
+                    last_was_percent = true;
                     continue;
-                } else {
-                    if i == str.len() - 1 {
-                        token_error!(self, ref_token, "Invalid interpolated string");
-                        note(
-                            &ref_token.source, "Brackets must be matched '{{'",
-                            &ref_token.filename, ref_token.pos + i, 1,
-                            ref_token.line
-                        );
-                    } else if str.chars().nth(i + 1).unwrap() == '{' {
-                        escaped = true;
-                    } else {
-                        if interpolated == 0 {
-                            result.push((String::new(), true));
-                        }
-
-                        interpolated += 1;
-                    }
                 }
-            } else if ch == '}' {
-                if escaped {
-                    if result.len() == 0 {
-                        result.push((String::new(), false));
-                    }
-
-                    escaped = false;
-                    result.last_mut().unwrap().0.push(ch);
-                    continue;
-                } else {
-                    if interpolated == 0 && i != str.len() - 1 && str.chars().nth(i + 1).unwrap() == '}' {
-                        escaped = true;
-                    } else {
-                        if interpolated == 0 {
-                            token_error!(self, ref_token, "Invalid interpolated string");
-                            note(
-                                &ref_token.source, "Unbalanced brackets",
-                                &ref_token.filename, ref_token.pos + i, 1,
-                                ref_token.line
-                            );
-                        }
-
-                        interpolated -= 1;
-                        if interpolated == 0 {
-                            result.push((String::new(), false));
-                        }
-                    }
-                }
-            } else {
-                if result.len() == 0 {
-                    result.push((String::new(), false));
-                }
-
-                result.last_mut().unwrap().0.push(ch);
+            } else if last_was_percent {
+                result.push(InterpolatedStringPortion::Value);
+                result.push(InterpolatedStringPortion::String(String::new()));
             }
+
+            last_was_percent = false;
+
+            if result.len() == 0 {
+                result.push(InterpolatedStringPortion::String(String::new()));
+            }
+
+            if let InterpolatedStringPortion::String(str) = result.last_mut().unwrap() {
+                str.push(ch);
+            } else {
+                unreachable!()
+            }
+        }
+
+        if last_was_percent {
+            result.push(InterpolatedStringPortion::Value);
         }
 
         result
     }
 
-    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, _callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
+    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
         match macro_name.as_ref() {
             "format" | "fprint" | "fprintln" => {
                 let is_format   = macro_name.as_ref() == "format";
                 let is_fprintln = macro_name.as_ref() == "fprintln";
+
+                // format, fprint, and fprintln are variadic, so arguments are bound to a slice
+                let arguments = {
+                    if let Expression::Slice { items, .. } = arguments[0].get_inner() {
+                        items
+                    } else {
+                        unreachable!()
+                    }
+                };
+
+                if arguments.len() < 2 {
+                    ast_error!(
+                        self, callee_expr,
+                        format!(
+                            "Expecting at least 2 arguments for macro call but got {}",
+                            arguments.len()
+                        ).as_str()
+                    );
+
+                    return Some(SkyeValue::special(SkyeType::Void));
+                }
 
                 let first = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
@@ -525,43 +514,45 @@ impl CodeGen {
                     }
                 };
 
-                let mut splitted = self.split_interpolated_string(&real_fmt_string, &tok);
+                let mut splitted = self.split_interpolated_string(&real_fmt_string);
 
                 if is_fprintln {
-                    splitted.push((String::from("\\n"), false));
+                    splitted.push(InterpolatedStringPortion::String(String::from("\\n")));
                 }
 
+                let mut arg_idx = 2usize;
                 let mut statements = Vec::new();
-                for (portion, mut interpolated) in &splitted {
-                    if portion == "" {
-                        continue;
-                    }
-
-                    let portion_expr = {
-                        if interpolated {
-                            let mut scanner = Scanner::new(&portion, Rc::clone(&tok.filename));
-                            scanner.scan_tokens();
-
-                            if scanner.had_error {
-                                self.errors += 1;
-                                token_note!(tok, "This error occurred while lexing this interpolated string");
+                for portion in &splitted {
+                    let mut interpolated = {
+                        if let InterpolatedStringPortion::String(string) = portion {
+                            if string == "" {
                                 continue;
                             }
 
-                            let mut parser = Parser::new(scanner.tokens);
-                            if let Some(result) = parser.expression() {
-                                if matches!(result.get_inner(), Expression::StringLiteral { .. }) {
-                                    interpolated = false;
-                                }
-
-                                result
-                            } else {
-                                self.errors += 1;
-                                token_note!(tok, "This error occurred while parsing this interpolated string");
-                                continue;
-                            }
+                            false
                         } else {
-                            Expression::StringLiteral { value: Rc::from(portion.as_ref()), tok: tok.clone(), kind: StringKind::Slice }
+                            true
+                        }
+                    };
+                    
+                    let portion_expr = {
+                        if let InterpolatedStringPortion::String(string) = portion {
+                            Expression::StringLiteral { value: Rc::from(string.as_ref()), tok: tok.clone(), kind: StringKind::Slice }
+                        } else {
+                            if let Some(expr) = arguments.get(arg_idx) {
+                                arg_idx += 1;
+                                let inner_expr = expr.get_inner();
+
+                                if matches!(inner_expr, Expression::StringLiteral { .. }) {
+                                    interpolated = false;
+                                    inner_expr
+                                } else {
+                                    expr.clone()
+                                }
+                            } else {
+                                ast_error!(self, callee_expr, "Not enough formatting arguments provided for formatted string");
+                                break;
+                            }
                         }
                     };
 
@@ -581,13 +572,15 @@ impl CodeGen {
                                     break 'interpolated_expr_blk Expression::Call(
                                         Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT_intToBuf")))),
                                         tok.clone(),
-                                        vec![arguments[0].clone(), portion_expr]
+                                        vec![arguments[0].clone(), portion_expr],
+                                        false
                                     );
                                 } else {
                                     break 'interpolated_expr_blk Expression::Call(
                                         Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT___intToFile")))),
                                         tok.clone(),
-                                        vec![arguments[0].clone(), portion_expr]
+                                        vec![arguments[0].clone(), portion_expr],
+                                        false
                                     );
                                 }
                             }
@@ -599,13 +592,15 @@ impl CodeGen {
                                     break 'interpolated_expr_blk Expression::Call(
                                         Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT_floatToBuf")))),
                                         tok.clone(),
-                                        vec![arguments[0].clone(), portion_expr]
+                                        vec![arguments[0].clone(), portion_expr],
+                                        false
                                     );
                                 } else {
                                     break 'interpolated_expr_blk Expression::Call(
                                         Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT___floatToFile")))),
                                         tok.clone(),
-                                        vec![arguments[0].clone(), portion_expr]
+                                        vec![arguments[0].clone(), portion_expr],
+                                        false
                                     );
                                 }
                             }
@@ -630,7 +625,8 @@ impl CodeGen {
                                         search_tok
                                     )),
                                     tok.clone(),
-                                    Vec::new()
+                                    Vec::new(),
+                                    false
                                 )
                             } else {
                                 search_tok = Token::dummy(Rc::from("toString"));
@@ -643,7 +639,8 @@ impl CodeGen {
                                             search_tok
                                         )),
                                         tok.clone(),
-                                        Vec::new()
+                                        Vec::new(),
+                                        false
                                     )
                                 } else {
                                     ast_error!(
@@ -677,7 +674,8 @@ impl CodeGen {
                                             search_tok
                                         )),
                                         tok.clone(),
-                                        vec![interpolated_expr]
+                                        vec![interpolated_expr],
+                                        false
                                     )
                                 ));
                             } else {
@@ -709,12 +707,14 @@ impl CodeGen {
                                                     search_tok
                                                 )),
                                                 tok.clone(),
-                                                vec![interpolated_expr]
+                                                vec![interpolated_expr],
+                                                false
                                             )),
                                             Token::dummy(Rc::from("expect"))
                                         )),
                                         tok.clone(),
-                                        vec![Expression::StringLiteral { value: Rc::from("String interpolation failed writing to file"), tok: tok.clone(), kind: StringKind::Slice }]
+                                        vec![Expression::StringLiteral { value: Rc::from("String interpolation failed writing to file"), tok: tok.clone(), kind: StringKind::Slice }],
+                                        false
                                     )
                                 ));
                             } else {
@@ -1905,7 +1905,8 @@ impl CodeGen {
             let panic_stmt = Statement::Expression(Expression::Call(
                 Box::new(Expression::Unary { op: at_tok, expr: Box::new(Expression::Variable(panic_tok)), is_prefix: true }),
                 tok.clone(),
-                vec![Expression::StringLiteral { value: Rc::from(msg), tok: tok.clone(), kind: StringKind::Slice }]
+                vec![Expression::StringLiteral { value: Rc::from(msg), tok: tok.clone(), kind: StringKind::Slice }],
+                false
             ));
 
             let _ = ctx.run(|ctx| self.execute(&panic_stmt, index, ctx)).await;
@@ -3513,7 +3514,7 @@ impl CodeGen {
                     _ => unreachable!()
                 }
             }
-            Expression::Call(callee_expr, _, arguments) => {
+            Expression::Call(callee_expr, _, arguments, _) => {
                 let callee = ctx.run(|ctx| self.evaluate(&callee_expr, index, allow_unknown, ctx)).await;
                 ctx.run(|ctx| self.call(&callee, expr, callee_expr, arguments, index, allow_unknown, ctx)).await
             }
@@ -7257,7 +7258,23 @@ impl CodeGen {
                                                         false
                                                     )
                                                 ]),
-                                                vec![Statement::Return { kw: name_tok.clone(), value: Some(Expression::Call(Box::new(Expression::Get(Box::new(Expression::Get(Box::new(Expression::Variable(self_tok.clone())),name_tok.clone())),fn_name.clone())),name_tok,args.clone())) }]
+                                                vec![
+                                                    Statement::Return { 
+                                                        kw: name_tok.clone(), 
+                                                        value: Some(Expression::Call(
+                                                            Box::new(Expression::Get(
+                                                                Box::new(Expression::Get(
+                                                                    Box::new(Expression::Variable(self_tok.clone())),
+                                                                    name_tok.clone()
+                                                                )),
+                                                                fn_name.clone()
+                                                            )),
+                                                            name_tok,
+                                                            args.clone(),
+                                                            false
+                                                        )) 
+                                                    }
+                                                ]
                                             ));
                                         }
                                     } else {

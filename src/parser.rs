@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{BitfieldField, EnumVariant, Expression, Bits, StringKind, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StructField, SwitchCase, Ast},
+    ast::{Ast, BitfieldField, Bits, EnumVariant, Expression, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase},
     ast_error, ast_note, token_error, token_note,
     tokens::{Token, TokenType}
 };
@@ -373,9 +373,17 @@ impl Parser {
     }
 
     fn finish_call(&mut self, callee: Expression) -> Option<Expression> {
-        let arguments = self.get_expressions(TokenType::RightParen)?;
+        let unpack = self.match_(&[TokenType::DotDot]);
+        let arguments = {
+            if unpack {
+                vec![self.expression()?]
+            } else {
+                self.get_expressions(TokenType::RightParen)?
+            }
+        };
+
         let paren = self.consume(TokenType::RightParen, "Expecting ')' after arguments.")?.clone();
-        Some(Expression::Call(Box::new(callee), paren, arguments))
+        Some(Expression::Call(Box::new(callee), paren, arguments, unpack))
     }
 
     fn finish_subscript(&mut self, subscripted: Expression) -> Option<Expression> {

@@ -685,14 +685,14 @@ impl core::io::File {
 }
 
 // compiler built-ins
-macro format(buf, string) void;
-macro fprint(file, string) void;
-macro fprintln(file, string) void;
+macro format(args+) void;
+macro fprint(args+) void;
+macro fprintln(args+) void;
 
-macro print(string)    @fprint(&core::io::stdOut, string);
-macro eprint(string)   @fprint(&core::io::stdErr, string);
-macro println(string)  @fprintln(&core::io::stdOut, string);
-macro eprintln(string) @fprintln(&core::io::stdErr, string);
+macro print(args+)    @fprint(..@concat({&core::io::stdOut}, args));
+macro eprint(args+)   @fprint(..@concat({&core::io::stdErr}, args));
+macro println(args+)  @fprintln(..@concat({&core::io::stdOut}, args));
+macro eprintln(args+) @fprintln(..@concat({&core::io::stdErr}, args));
 
 macro array(items+) core::Array::from(items);
 

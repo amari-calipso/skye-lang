@@ -102,9 +102,15 @@ impl MacroExpander {
         match macro_name.as_ref() {
             "concat" => {
                 if arguments.len() == 1 {
-                    if let Some((value, tok)) = literal_as_string(arguments[0].get_inner()) {
+                    let arg_inner = arguments[0].get_inner();
+                    if matches!(arg_inner, Expression::Slice { .. } | Expression::ArrayLiteral { .. }) {
                         ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
-                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together as a string. Calling it with one argument is unnecessary");
+                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
+                        ast_note!(callee_expr, "Remove this macro call");
+                        Some(arg_inner)
+                    } else if let Some((value, tok)) = literal_as_string(arg_inner) {
+                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
+                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
                         ast_note!(callee_expr, "Remove this macro call");
                         Some(Expression::StringLiteral { value, tok, kind: StringKind::Slice })
                     } else {
@@ -113,21 +119,36 @@ impl MacroExpander {
                         Some(Expression::StringLiteral { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: StringKind::Slice })
                     }
                 } else {
-                    let mut result = String::new();
-
-                    for argument in arguments {
-                        if let Some((value, _)) = literal_as_string(argument.get_inner().clone()) {
-                            result.push_str(&value);
-                        } else {
-                            ast_error!(self, argument, "Argument for @concat macro must be a literal");
-                            ast_note!(argument, "The value must be known at compile time");
+                    if let Expression::Slice { opening_brace, items: mut result, .. } | 
+                           Expression::ArrayLiteral { opening_brace, items: mut result, .. } = arguments[0].get_inner() 
+                    {
+                        for argument in arguments.iter().skip(1) {
+                            if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = argument.get_inner() {
+                                result.extend(items);
+                            } else {
+                                ast_error!(self, argument, "Argument for @concat macro must be a slice or array literal");
+                                ast_note!(argument, "The value must be known at compile time");
+                            }
                         }
-                    }
 
-                    let pos = callee_expr.get_pos();
-                    let lexeme = Rc::from(result.as_ref());
-                    let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
-                    Some(Expression::StringLiteral { value: Rc::clone(&lexeme), tok, kind: StringKind::Slice })
+                        Some(Expression::Slice { opening_brace, items: result })
+                    } else {
+                        let mut result = String::new();
+
+                        for argument in arguments {
+                            if let Some((value, _)) = literal_as_string(argument.get_inner()) {
+                                result.push_str(&value);
+                            } else {
+                                ast_error!(self, argument, "Argument for @concat macro must be a literal");
+                                ast_note!(argument, "The value must be known at compile time");
+                            }
+                        }
+
+                        let pos = callee_expr.get_pos();
+                        let lexeme = Rc::from(result.as_ref());
+                        let tok = Token::new(pos.source, pos.filename, TokenType::String, Rc::clone(&lexeme), pos.start, pos.end, pos.line);
+                        Some(Expression::StringLiteral { value: Rc::clone(&lexeme), tok, kind: StringKind::Slice })
+                    }
                 }
             }
             _ => None
@@ -239,11 +260,19 @@ impl MacroExpander {
                     }
                 }
             }
-            Expression::Call(callee_expr, _, args) => {
+            Expression::Call(callee_expr, _, args, unpack) => {
                 let callee = ctx.run(|ctx| self.expand_expression(callee_expr, ctx)).await;
 
                 for arg in args.iter_mut() {
                     ctx.run(|ctx| self.expand_expression(arg, ctx)).await;
+                }
+
+                if *unpack {
+                    assert!(args.len() == 1);
+
+                    if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = &args[0] {
+                        *args = items.clone();
+                    }
                 }
 
                 if let Some(SkyeType::Macro(name, params, body)) = callee {

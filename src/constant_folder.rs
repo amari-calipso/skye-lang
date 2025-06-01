@@ -86,7 +86,7 @@ impl ConstantFolder {
                     ctx.run(|ctx| self.fold_expression(item, ctx)).await;
                 }
             }
-            Expression::Call(callee, _, args) => {
+            Expression::Call(callee, _, args, _) => {
                 ctx.run(|ctx| self.fold_expression(callee, ctx)).await;
 
                 for arg in args {
