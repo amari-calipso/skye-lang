@@ -908,10 +908,7 @@ impl SkyeType {
             SkyeType::Union(..) | SkyeType::Bitfield(..) | SkyeType::Macro(..) => CastableHow::No,
             SkyeType::Unknown(_) => CastableHow::Yes,
 
-            SkyeType::U8 | SkyeType::U16 | SkyeType::U32 | SkyeType::U64 |
-            SkyeType::I8 | SkyeType::I16 | SkyeType::I32 | SkyeType::I64 |
-            SkyeType::AnyInt | SkyeType::AnyFloat | SkyeType::F32 | SkyeType::F64 |
-            SkyeType::Char => {
+            SkyeType::AnyFloat | SkyeType::F32 | SkyeType::F64 | SkyeType::Char => {
                 if matches!(
                     cast_to,
                     SkyeType::F32 |
@@ -924,7 +921,9 @@ impl SkyeType {
                     CastableHow::No
                 }
             }
-            SkyeType::Usz => {
+            SkyeType::U8 | SkyeType::U16 | SkyeType::U32 | SkyeType::U64 |
+            SkyeType::I8 | SkyeType::I16 | SkyeType::I32 | SkyeType::I64 |
+            SkyeType::AnyInt | SkyeType::Usz => {
                 if matches!(
                     cast_to,
                     SkyeType::F32 |
