@@ -5321,6 +5321,9 @@ impl CodeGen {
                 let not_block    = !matches!(**body, Statement::Block(..));
                 let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
 
+                let previous = Rc::clone(&self.environment);
+                self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
+
                 if let Some(init) = initializer {
                     let _ = ctx.run(|ctx| self.execute(&init, index, ctx)).await;
                 }
@@ -5398,6 +5401,8 @@ impl CodeGen {
                 self.definitions[index].push_indent();
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
+
+                self.environment = previous;
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
