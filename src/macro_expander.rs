@@ -176,19 +176,7 @@ impl MacroExpander {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
-                let value = self.globals.get(&name.lexeme).cloned();
-
-                if let Some(value) = &value {
-                    if let SkyeType::Type(inner) = value {
-                        if let SkyeType::Macro(name, ..) = &**inner {
-                            if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
-                                return None;
-                            }
-                        }
-                    }
-                }
-
-                return value;
+                return self.globals.get(&name.lexeme).cloned();
             }
             Expression::MacroExpandedStatements { inner, .. } => {
                 for statement in inner {
@@ -270,8 +258,8 @@ impl MacroExpander {
                 if *unpack {
                     assert!(args.len() == 1);
 
-                    if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = &args[0] {
-                        *args = items.clone();
+                    if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = args[0].get_inner() {
+                        *args = items;
                     }
                 }
 
@@ -299,6 +287,10 @@ impl MacroExpander {
                             }
                         }
                         _ => ()
+                    }
+
+                    if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
+                        return None;
                     }
 
                     if let Some(expression) = self.handle_builtin_macros(&name, &args, &callee_expr) {

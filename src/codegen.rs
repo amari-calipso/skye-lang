@@ -481,15 +481,6 @@ impl CodeGen {
                 let is_format   = macro_name.as_ref() == "format";
                 let is_fprintln = macro_name.as_ref() == "fprintln";
 
-                // format, fprint, and fprintln are variadic, so arguments are bound to a slice
-                let arguments = {
-                    if let Expression::Slice { items, .. } = arguments[0].get_inner() {
-                        items
-                    } else {
-                        unreachable!()
-                    }
-                };
-
                 if arguments.len() < 2 {
                     ast_error!(
                         self, callee_expr,
