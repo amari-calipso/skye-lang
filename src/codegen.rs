@@ -4404,7 +4404,7 @@ impl CodeGen {
 
                                     if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.type_ {
                                         let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
-                                        SkyeValue::new(Rc::from(format!("*{}", call_value_value).as_ref()), *inner_type.clone(), is_const)
+                                        SkyeValue::new(Rc::from(format!("(*{})", call_value_value).as_ref()), *inner_type.clone(), is_const)
                                     } else {
                                         ast_error!(
                                             self, subscripted_expr,
@@ -4430,7 +4430,7 @@ impl CodeGen {
 
                                         if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.type_ {
                                             let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
-                                            SkyeValue::new(Rc::from(format!("*{}", call_value_value).as_ref()), *inner_type.clone(), is_const)
+                                            SkyeValue::new(Rc::from(format!("(*{})", call_value_value).as_ref()), *inner_type.clone(), is_const)
                                         } else {
                                             ast_error!(
                                                 self, subscripted_expr,
