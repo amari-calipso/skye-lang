@@ -5324,6 +5324,10 @@ impl CodeGen {
                 let previous = Rc::clone(&self.environment);
                 self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
 
+                self.definitions[index].push_indent();
+                self.definitions[index].push("{\n");
+                self.definitions[index].inc_indent();
+
                 if let Some(init) = initializer {
                     let _ = ctx.run(|ctx| self.execute(&init, index, ctx)).await;
                 }
@@ -5403,6 +5407,10 @@ impl CodeGen {
                 self.definitions[index].push(":;\n");
 
                 self.environment = previous;
+
+                self.definitions[index].dec_indent();
+                self.definitions[index].push_indent();
+                self.definitions[index].push("}\n");
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
