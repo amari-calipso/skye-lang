@@ -11,7 +11,7 @@ namespace build {
 
     fn wrap[T](const source: String, const result: T) !void {
         if result.isError() {
-            @println("{source}: {result.Error}");
+            @println("%: %", source, result.Error);
             return (!void)::Error;
         }
 
@@ -19,12 +19,12 @@ namespace build {
     }
 
     fn system(const command: String) !void {
-        @println("build::system: \"{command}\"");
+        @println("build::system: \"%\"", command);
         return build::wrap("build::system: non-zero return code", std::os::system(command));
     }
 
     fn removeFile(const file: String) !void {
-        @println("build::removeFile: \"{file}\"");
+        @println("build::removeFile: \"%\"", file);
         return build::wrap("build::removeFile", std::os::removeFile(file));
     }
 
@@ -32,7 +32,7 @@ namespace build {
         let buf = core::Array::from("skye compile ");
         defer buf.free();
 
-        @format(&buf, "{input} --emit-c -o {output}");
+        @format(&buf, "% --emit-c -o %", input, output);
 
         switch compileMode {
             build::Mode::Debug {}
@@ -77,11 +77,11 @@ namespace build {
         defer buf.free();
 
         const cc = try build::cc();
-        @format(&buf, "{cc} ");
+        @format(&buf, "% ", cc);
         if (cc != "c99") buf.pushString("--std=c99 ");
-        @format(&buf, "-w {input} ");
+        @format(&buf, "-w % ", input);
         if (!@WINDOWS) buf.pushString("-lm ");
-        @format(&buf, "-o {output}");
+        @format(&buf, "-o %", output);
         try build::system(buf.asString());
     }
 }
