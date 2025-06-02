@@ -722,6 +722,7 @@ impl SkyeType {
                     SkyeType::Type(other_inner_type) => {
                         self_inner_type.infer_type_from_similar_internal(other_inner_type, data)?;
                     }
+                    SkyeType::Unknown(_) => (),
                     _ => unreachable!()
                 }
             }
@@ -733,7 +734,7 @@ impl SkyeType {
                     }
 
                     self_return.infer_type_from_similar_internal(&other_return, data)?;
-                } else {
+                } else if !matches!(other, SkyeType::Unknown(_)) {
                     unreachable!()
                 }
             }
@@ -749,7 +750,7 @@ impl SkyeType {
                             }
                         }
                     }
-                } else {
+                } else if !matches!(other, SkyeType::Unknown(_)) {
                     unreachable!()
                 }
             }
@@ -768,6 +769,7 @@ impl SkyeType {
                             }
                         }
                     }
+                    SkyeType::Unknown(_) => (),
                     _ => unreachable!()
                 }
             }
@@ -797,6 +799,7 @@ impl SkyeType {
                             }
                         }
                     }
+                    SkyeType::Unknown(_) => (),
                     _ => unreachable!()
                 }
             }
