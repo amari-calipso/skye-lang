@@ -23,6 +23,8 @@ fn main() {
 }
 ```
 
+Check out more examples [here](https://github.com/amari-calipso/skye-lang-examples)
+
 # Projects
 Creating a new project in Skye is simple!
 
