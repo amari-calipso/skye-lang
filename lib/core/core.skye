@@ -19,7 +19,7 @@ use @typeOf(0f64) as f64;
 use @typeOf(0usz) as usz;
 use @typeOf('\0') as char;
 
-#typedef use u8 as bool;
+use u8 as bool;
 use 0u8 as false;
 use 1u8 as true;
 
