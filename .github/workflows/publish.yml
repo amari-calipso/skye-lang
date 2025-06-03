@@ -1,0 +1,45 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  test:
+    name: Publish for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
+        include:
+          - os: ubuntu-latest
+            rust_toolchain: stable
+          - os: macos-latest
+            rust_toolchain: stable
+          - os: macos-13
+            rust_toolchain: stable
+          - os: windows-latest
+            rust_toolchain: stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5 
+        with:
+          python-version: '3.13'
+
+      - name: Produce binaries
+        run: python publish.py
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Skye ${{github.ref_name}}
+          files: publish/*.zip

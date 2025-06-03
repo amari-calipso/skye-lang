@@ -481,15 +481,6 @@ impl CodeGen {
                 let is_format   = macro_name.as_ref() == "format";
                 let is_fprintln = macro_name.as_ref() == "fprintln";
 
-                // format, fprint, and fprintln are variadic, so arguments are bound to a slice
-                let arguments = {
-                    if let Expression::Slice { items, .. } = arguments[0].get_inner() {
-                        items
-                    } else {
-                        unreachable!()
-                    }
-                };
-
                 if arguments.len() < 2 {
                     ast_error!(
                         self, callee_expr,
@@ -4469,7 +4460,7 @@ impl CodeGen {
 
                                     if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.type_ {
                                         let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
-                                        SkyeValue::new(Rc::from(format!("*{}", call_value_value).as_ref()), *inner_type.clone(), is_const)
+                                        SkyeValue::new(Rc::from(format!("(*{})", call_value_value).as_ref()), *inner_type.clone(), is_const)
                                     } else {
                                         ast_error!(
                                             self, subscripted_expr,
@@ -4495,7 +4486,7 @@ impl CodeGen {
 
                                         if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.type_ {
                                             let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
-                                            SkyeValue::new(Rc::from(format!("*{}", call_value_value).as_ref()), *inner_type.clone(), is_const)
+                                            SkyeValue::new(Rc::from(format!("(*{})", call_value_value).as_ref()), *inner_type.clone(), is_const)
                                         } else {
                                             ast_error!(
                                                 self, subscripted_expr,
@@ -5386,6 +5377,13 @@ impl CodeGen {
                 let not_block    = !matches!(**body, Statement::Block(..));
                 let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
 
+                let previous = Rc::clone(&self.environment);
+                self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
+
+                self.definitions[index].push_indent();
+                self.definitions[index].push("{\n");
+                self.definitions[index].inc_indent();
+
                 if let Some(init) = initializer {
                     let _ = ctx.run(|ctx| self.execute(&init, index, ctx)).await;
                 }
@@ -5463,6 +5461,12 @@ impl CodeGen {
                 self.definitions[index].push_indent();
                 self.definitions[index].push(&break_label);
                 self.definitions[index].push(":;\n");
+
+                self.environment = previous;
+
+                self.definitions[index].dec_indent();
+                self.definitions[index].push_indent();
+                self.definitions[index].push("}\n");
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {

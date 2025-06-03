@@ -22,7 +22,7 @@ namespace std {
             let buf = core::Array::new[char]();
             defer buf.free();
 
-            @format(&buf, "{command}\0");
+            @format(&buf, "%\0", command);
             const result = system(buf.array.ptr);
             
             if (result) return (!i32)::Error(result);
@@ -33,7 +33,7 @@ namespace std {
             let buf = core::Array::new[char]();
             defer buf.free();
 
-            @format(&buf, "{file}\0");
+            @format(&buf, "%\0", file);
 
             if remove(buf.array.ptr) {
                 return (!String)::Error(core::utils::cStringToString(strerror(errno))); 
@@ -72,7 +72,7 @@ namespace std {
             let buf = core::Array::new[char]();
             defer buf.free();
 
-            @format(&buf, "{path}\0");
+            @format(&buf, "%\0", path);
             const dir = opendir(buf.array.ptr);
 
             if (dir == @nullptr) return ListDirResult::Error(core::utils::cStringToString(strerror(errno)));
@@ -84,7 +84,7 @@ namespace std {
                 let buf = core::Array::new[char]();
                 defer buf.free();
 
-                @format(&buf, "{name}\0");
+                @format(&buf, "%\0", name);
                 const value = getenv(buf.array.ptr);
                 if (value == @nullptr) return (?String)::None;
                 return (?String)::Some(core::utils::cStringToString(value));
