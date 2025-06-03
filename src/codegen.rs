@@ -2652,19 +2652,19 @@ impl CodeGen {
                                             return SkyeValue::new(Rc::from(format!("*{}", inner.value)), inner.type_, false);
                                         }
                                         ImplementsHow::ThirdParty => {
-                                            if inner.is_const {
-                                                let mut search_tok = Token::dummy(Rc::from(""));
+                                            let mut search_tok = Token::dummy(Rc::from(""));
 
-                                                for method in ["__constderef__", "__deref__"] {
-                                                    search_tok.set_lexeme(method);
-
-                                                    if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
-                                                        let v = Vec::new();
-                                                        return ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
-                                                    }
+                                            let methods = {
+                                                if inner.is_const {
+                                                    ["__constderef__", "__deref__"]
+                                                } else {
+                                                    ["__deref__", "__constderef__"]
                                                 }
+                                            };
 
-                                                search_tok.set_lexeme("__asptr__");
+                                            for method in methods {
+                                                search_tok.set_lexeme(method);
+
                                                 if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
                                                     let v = Vec::new();
                                                     let value = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
@@ -2676,8 +2676,8 @@ impl CodeGen {
                                                             token_error!(
                                                                 self, op,
                                                                 format!(
-                                                                    "Expecting pointer as return type of __asptr__ (got {})",
-                                                                    value.type_.stringify_native()
+                                                                    "Expecting pointer as return type of {} (got {})",
+                                                                    method, value.type_.stringify_native()
                                                                 ).as_ref()
                                                             );
 
@@ -2687,40 +2687,6 @@ impl CodeGen {
 
                                                     let value_value = ctx.run(|ctx| self.zero_check(&value, op, "Null pointer dereference", index, ctx)).await;
                                                     return SkyeValue::new(Rc::from(format!("*{}", value_value)), inner_type, is_const);
-                                                }
-                                            } else {
-                                                let mut search_tok = Token::dummy(Rc::from("__asptr__"));
-                                                if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
-                                                    let v = Vec::new();
-                                                    let value = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
-
-                                                    let (inner_type, is_const) = {
-                                                        if let SkyeType::Pointer(inner, ptr_is_const, _) = &value.type_ {
-                                                            (*inner.clone(), *ptr_is_const)
-                                                        } else {
-                                                            token_error!(
-                                                                self, op,
-                                                                format!(
-                                                                    "Expecting pointer as return type of __asptr__ (got {})",
-                                                                    value.type_.stringify_native()
-                                                                ).as_ref()
-                                                            );
-
-                                                            return SkyeValue::get_unknown();
-                                                        }
-                                                    };
-
-                                                    let value_value = ctx.run(|ctx| self.zero_check(&value, op, "Null pointer dereference", index, ctx)).await;
-                                                    return SkyeValue::new(Rc::from(format!("*{}", value_value)), inner_type, is_const);
-                                                }
-
-                                                for method in ["__deref__", "__constderef__"] {
-                                                    search_tok.set_lexeme(method);
-
-                                                    if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
-                                                        let v = Vec::new();
-                                                        return ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
-                                                    }
                                                 }
                                             }
                                         }

@@ -691,8 +691,8 @@ Here is a list of operators that can be overloaded
 | `-{}` | `__neg__` | 0 | any |
 | `!{}` | `__not__` | 0 | any |
 | `~{}` | `__inv__` | 0 | any |
-| `*{}` | `__deref__` [*2](#additional-information) | 0 | any |
-| `*const {}` | `__constderef__` | 0 | any |
+| `*{}` | `__deref__` or `__constderef__` [*2](#additional-information) | 0 | pointer to any |
+| `*const {}` | `__constderef__` or `__deref__` [*2](#additional-information) | 0 | pointer to any |
 | `{} + {}` | `__add__` | 1 | any |
 | `{} - {}` | `__sub__` | 1 | any |
 | `{} / {}` | `__div__` | 1 | any |
@@ -727,7 +727,7 @@ Additionally, Skye offers you copy constructors and destructors, mostly used for
 
 ### Additional information
 1) Prefix and suffix increments and decrements are handled by the Skye compiler, and thus prevent undefined behavior for cases where multiple increments are used in the same expression or statement. Every expression is evaluated from left to right, and the outcome is always predictable.
-2) The `__deref__` method is used to bind the unary `*` operator to a different behavior. This means, for example, that dereferencing the type and assigning to the dereferenced output will not be possible with the standard syntax. To achieve that kind of behavior, a `__asptr__` method, taking no arguments and returning a pointer to any type, has to be implemented.
+2) `__constderef__` is used when dereferencing from a const source, which in some cases throws an error if using `__deref__`.
 3) In debug mode (the default compilation mode), division and modulo operators do not cause undefined behavior, but rather they panic the program if division by zero is performed. This check is disabled in release mode for performance reasons.
 4) Unlike in C, in debug mode, dereferencing a `null` pointer, either explicitly or implictly, will result in a panic rather than undefined behavior. This check is disabled in release mode for performance reasons.
 5) `__constsubscript__` is used when subscripting from a const source, which in some cases throws an error if using `__subscript__`.

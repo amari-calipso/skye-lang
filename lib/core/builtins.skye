@@ -79,12 +79,12 @@ namespace core {
             }
         }
 
-        fn __asptr__(self) *T {
+        fn __deref__(self) *T {
             return self.ptr;
         }
 
-        fn __constderef__(const self) T {
-            return *self.ptr;
+        fn __constderef__(const self) *const T {
+            return self.ptr;
         }
     }
 }
