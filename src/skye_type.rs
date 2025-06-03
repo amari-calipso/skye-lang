@@ -55,8 +55,7 @@ pub enum Operator {
     SetAdd, SetSub, SetMul, SetDiv, SetMod,
     SetShl, SetShr,
     SetAnd, SetXor, SetOr,
-    Subscript,
-    AsPtr
+    Subscript
 }
 
 pub enum ImplementsHow {
@@ -861,14 +860,14 @@ impl SkyeType {
             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
             SkyeType::Usz | SkyeType::AnyInt => {
                 match op {
-                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr => ImplementsHow::No,
+                    Operator::Subscript | Operator::Deref | Operator::ConstDeref => ImplementsHow::No,
                     _ => ImplementsHow::Native(vec![SkyeType::Char])
                 }
             }
 
             SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat => {
                 match op {
-                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr | 
+                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | 
                     Operator::Inv | Operator::Not => ImplementsHow::No,
                     Operator::Mod | Operator::SetMod => ImplementsHow::ThirdParty,
                     _ => ImplementsHow::Native(Vec::new())
@@ -877,7 +876,7 @@ impl SkyeType {
 
             SkyeType::Char => {
                 match op {
-                    Operator::Subscript | Operator::Deref | Operator::ConstDeref | Operator::AsPtr => ImplementsHow::No,
+                    Operator::Subscript | Operator::Deref | Operator::ConstDeref => ImplementsHow::No,
                     _ => ImplementsHow::Native(vec![SkyeType::AnyInt, SkyeType::U8, SkyeType::I8])
                 }
             }
