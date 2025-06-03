@@ -1288,17 +1288,45 @@ impl Parser {
             if binding.is_some() {
                 token_error!(self, binding.as_ref().unwrap(), "Cannot use enum as sum type when creating a C binding");
             }
+
+            if let Some(variant) = variants.iter().find(|x| x.name.lexeme.as_ref() == "kind") {
+                token_error!(self, variant.name, "Sum type enum variant cannot be called \"kind\"");
+                token_note!(variant.name, "This name is reserved for sum type enums");
+            }
         }
 
         if generics.len() == 0 {
-            Some(Statement::Enum { name, kind_type: type_, variants, is_simple, has_body, binding, generics_names: Vec::new(), bind_typedefed: typedefed })
+            Some(Statement::Enum { 
+                name, kind_type: 
+                type_, 
+                variants, 
+                is_simple, 
+                has_body, 
+                binding, 
+                generics_names: Vec::new(), 
+                bind_typedefed: typedefed 
+            })
         } else {
-            let mut generic_names = Vec::new();
+            let mut generics_names = Vec::new();
             for generic in &generics {
-                generic_names.push(generic.name.clone());
+                generics_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Enum { name, kind_type: type_, variants, is_simple, has_body, binding, generics_names: generic_names.clone(), bind_typedefed: typedefed }), generics, generics_names: generic_names })
+            Some(Statement::Template { 
+                name: name.clone(), 
+                declaration: Box::new(Statement::Enum { 
+                    name, 
+                    kind_type: type_, 
+                    variants, 
+                    is_simple, 
+                    has_body, 
+                    binding, 
+                    generics_names: generics_names.clone(), 
+                    bind_typedefed: typedefed 
+                }), 
+                generics, 
+                generics_names 
+            })
         }
     }
 
