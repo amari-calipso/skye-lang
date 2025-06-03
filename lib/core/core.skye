@@ -74,6 +74,7 @@ use core::Slice;
 namespace core {
     namespace ops {
         fn floatMod[T: AnyFloat](x: T, y: T) T;
+        fn __setFloatMod[T: AnyFloat](const target: &T, value: T) T;
     }
 }
 

@@ -1047,7 +1047,7 @@ impl CodeGen {
                         return SkyeValue::get_unknown();
                     }
 
-                    let mut generics_to_find = HashMap::new();
+                    let mut generics_to_find: HashMap<Rc<str>, Option<SkyeType>> = HashMap::new();
                     for generic in generics {
                         generics_to_find.insert(Rc::clone(&generic.name.lexeme), None);
                     }
@@ -1090,8 +1090,12 @@ impl CodeGen {
                         self.environment = previous;
 
                         let def_type = {
-                            if matches!(def_evaluated.type_, SkyeType::Unknown(_)) {
-                                SkyeType::Type(Box::new(def_evaluated.type_))
+                            if let SkyeType::Unknown(name) = &def_evaluated.type_ {
+                                if let Some(Some(found_type)) = generics_to_find.get(name) {
+                                    found_type.clone()
+                                } else {
+                                    SkyeType::Type(Box::new(def_evaluated.type_))
+                                }
                             } else {
                                 def_evaluated.type_
                             }
@@ -1103,8 +1107,8 @@ impl CodeGen {
                             if is_self {
                                 call_evaluated
                             } else if let SkyeType::Type(inner_type) = &def_type {
-                                if let SkyeType::Pointer(.., is_reference) = **inner_type {
-                                    if is_reference && !matches!(call_evaluated.type_, SkyeType::Pointer(..)) {
+                                if let SkyeType::Pointer(.., is_reference) = &**inner_type {
+                                    if *is_reference && !matches!(call_evaluated.type_, SkyeType::Pointer(..)) {
                                         // automatically create reference for pass-by-reference params
                                         let arg_pos = arguments[i - arguments_mod].get_pos();
                                         let custom_tok = Token::new(
@@ -1967,32 +1971,50 @@ impl CodeGen {
             }
             ImplementsHow::ThirdParty => {
                 if matches!(new_left.type_, SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat) {
-                    let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT_floatMod"));
-                    let fmod_function = self.globals.borrow().get(&fmod_tok)
-                        .expect("Cannot find core::ops::floatMod");
+                    let (fmod_tok, fmod_function) = {
+                        match op_type {
+                            Operator::Mod => {
+                                let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT_floatMod"));
+                                let fmod_function = self.globals.borrow().get(&fmod_tok)
+                                    .expect("Cannot find core::ops::floatMod");
 
-                    match op_type {
-                        Operator::Mod => {
-                            let tmp_var = self.get_temporary_var();
-                            self.definitions[index].push_indent();
-                            self.definitions[index].push(&left.type_.stringify());
-                            self.definitions[index].push(" ");
-                            self.definitions[index].push(&tmp_var);
-                            self.definitions[index].push(" = ");
-                            self.definitions[index].push(&left.value);
-                            self.definitions[index].push(";\n");
+                                (fmod_tok, fmod_function)
+                            }
+                            Operator::SetMod => {
+                                let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT___setFloatMod"));
+                                let fmod_function = self.globals.borrow().get(&fmod_tok)
+                                    .expect("Cannot find core::ops::__setFloatMod");
 
-                            let tmp_var_rc = tmp_var.into();
-                            self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.type_, true, None));
-                            let args = vec![Expression::Variable(Token::dummy(Rc::clone(&tmp_var_rc))), right_expr.clone()];
-                            let fmod_value = SkyeValue::new(fmod_tok.lexeme, fmod_function.type_, true);
-                            let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, index, allow_unknown, ctx)).await;
-                            self.environment.borrow_mut().undef(tmp_var_rc);
-                            return result;
+                                (fmod_tok, fmod_function)
+                            }
+                            _ => unreachable!()
                         }
-                        Operator::SetMod => todo!(),
-                        _ => unreachable!()
-                    }
+                    };
+
+                    let left_expr_pos = left_expr.get_pos();
+
+                    let tmp_var = self.get_temporary_var();
+                    self.definitions[index].push_indent();
+                    self.definitions[index].push(&left.type_.stringify());
+                    self.definitions[index].push(" ");
+                    self.definitions[index].push(&tmp_var);
+                    self.definitions[index].push(" = ");
+                    self.definitions[index].push(&left.value);
+                    self.definitions[index].push(";\n");
+
+                    let tmp_var_rc = tmp_var.into();
+                    let tmp_var_tok = Token::new(
+                        left_expr_pos.source, left_expr_pos.filename, 
+                        TokenType::Identifier, Rc::clone(&tmp_var_rc), 
+                        left_expr_pos.start, left_expr_pos.end, left_expr_pos.line
+                    );
+
+                    self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.type_, false, None));
+                    let args = vec![Expression::Variable(tmp_var_tok), right_expr.clone()];
+                    let fmod_value = SkyeValue::new(fmod_tok.lexeme, fmod_function.type_, true);
+                    let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, index, allow_unknown, ctx)).await;
+                    self.environment.borrow_mut().undef(tmp_var_rc);
+                    return result;
                 }
 
                 let search_tok = Token::dummy(Rc::from(op_method));
@@ -2322,9 +2344,9 @@ impl CodeGen {
             }
             Expression::FloatLiteral { value, bits, .. } => {
                 match bits {
-                    Bits::B32 => SkyeValue::new(Rc::from(format!("(float){}",  value)), SkyeType::F32, true),
-                    Bits::B64 => SkyeValue::new(Rc::from(format!("(double){}", value)), SkyeType::F64, true),
-                    Bits::Any => SkyeValue::new(value.to_string().into(), SkyeType::AnyFloat, true),
+                    Bits::B32 => SkyeValue::new(format!("(float){:?}",  value).into(), SkyeType::F32, true),
+                    Bits::B64 => SkyeValue::new(format!("(double){:?}", value).into(), SkyeType::F64, true),
+                    Bits::Any => SkyeValue::new(format!("{:?}",         value).into(), SkyeType::AnyFloat, true),
                     _ => unreachable!()
                 }
             }
@@ -3853,7 +3875,7 @@ impl CodeGen {
                                 return SkyeValue::get_unknown();
                             }
 
-                            let mut generics_to_find = HashMap::new();
+                            let mut generics_to_find: HashMap<Rc<str>, Option<SkyeType>> = HashMap::new();
                             for generic in generics {
                                 generics_to_find.insert(Rc::clone(&generic.name.lexeme), None);
                             }
@@ -3889,8 +3911,12 @@ impl CodeGen {
                                     let literal_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await;
 
                                     let def_type = {
-                                        if matches!(def_evaluated.type_, SkyeType::Unknown(_)) {
-                                            SkyeType::Type(Box::new(def_evaluated.type_))
+                                        if let SkyeType::Unknown(name) = &def_evaluated.type_ {
+                                            if let Some(Some(found_type)) = generics_to_find.get(name) {
+                                                found_type.clone()
+                                            } else {
+                                                SkyeType::Type(Box::new(def_evaluated.type_))
+                                            }
                                         } else {
                                             def_evaluated.type_
                                         }
