@@ -5,6 +5,7 @@ import <"math.h">;
 import <"errno.h">;
 
 #bind fn pow(base: f64, exp: f64) f64;
+#bind fn fmod(x: f64, y: f64) f64;
 
 #bind fn malloc(size: usz) voidptr;
 #bind fn realloc(ptr: voidptr, size: usz) voidptr;
@@ -32,6 +33,16 @@ namespace core {
     namespace utils {
         fn cStringLength(const str: *const char) usz {
             return strlen(str);
+        }
+    }
+
+    namespace ops {
+        fn floatMod[T: AnyFloat](x: T, y: T) T {
+            return @cast(T, fmod(@cast(f64, x), @cast(f64, y)));
+        }
+
+        fn __setFloatMod[T: AnyFloat](const target: &T, value: T) T {
+            return *target = @cast(T, fmod(@cast(f64, *target), @cast(f64, value)));
         }
     }
 

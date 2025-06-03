@@ -71,6 +71,13 @@ namespace core {
 use core::Slice[char] as String;
 use core::Slice;
 
+namespace core {
+    namespace ops {
+        fn floatMod[T: AnyFloat](x: T, y: T) T;
+        fn __setFloatMod[T: AnyFloat](const target: &T, value: T) T;
+    }
+}
+
 fn __panicHandler(const at: String, const msg: String);
 
 macro panic(msg) __panicHandler(PANIC_POS, msg);
