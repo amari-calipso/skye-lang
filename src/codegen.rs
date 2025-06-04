@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -1135,13 +1135,41 @@ impl CodeGen {
                                 if let Some(inferred) = inner_type.infer_type_from_similar(&new_call_evaluated.type_) {
                                     for (generic_name, generic_type) in inferred {
                                         if let Some(generic_to_find) = generics_to_find.get(&generic_name) {
-                                            if generic_to_find.is_none() {
+                                            let generic_type = {
                                                 if matches!(generic_type, SkyeType::Void) {
-                                                    generics_to_find.insert(Rc::clone(&generic_name), Some(generic_type));
+                                                    generic_type
                                                 } else {
-                                                    generics_to_find.insert(Rc::clone(&generic_name), Some(SkyeType::Type(Box::new(generic_type))));
+                                                    SkyeType::Type(Box::new(generic_type))
                                                 }
+                                            };
 
+                                            if let Some(generic_to_find) = generic_to_find {
+                                                // we already found this generic type before, check if this new inference conflicts with the previous one
+                                                if !generic_to_find.equals(&generic_type, EqualsLevel::Typewise) {
+                                                    ast_error!(self, arguments[i - arguments_mod], "Argument type does not match parameter type");
+
+                                                    let found_at_idx = *generics_found_at.get(&generic_name).unwrap();
+                                                    let expr: &Expression = &arguments[found_at_idx - arguments_mod];
+                                                    ast_note!(
+                                                        expr, 
+                                                        format!(
+                                                            "Based on this argument, {} is inferred to be of type {}...",
+                                                            generic_name, generic_to_find.stringify()
+                                                        ).as_ref()
+                                                    );
+
+                                                    ast_note!(
+                                                        arguments[i - arguments_mod], 
+                                                        format!(
+                                                            "...this argument would make {} assume type {}",
+                                                            generic_name, generic_type.stringify()
+                                                        ).as_ref()
+                                                    );
+
+                                                    ast_note!(params[i].type_, "Parameter type defined here");
+                                                }
+                                            } else {
+                                                generics_to_find.insert(Rc::clone(&generic_name), Some(generic_type));
                                                 generics_found_at.insert(generic_name, i);
                                             }
                                         }
@@ -3915,13 +3943,39 @@ impl CodeGen {
                                             if let Some(inferred) = inner_type.infer_type_from_similar(&literal_evaluated.type_) {
                                                 for (generic_name, generic_type) in inferred {
                                                     if let Some(generic_to_find) = generics_to_find.get(&generic_name) {
-                                                        if generic_to_find.is_none() {
+                                                        let generic_type = {
                                                             if matches!(generic_type, SkyeType::Void) {
-                                                                generics_to_find.insert(Rc::clone(&generic_name), Some(generic_type));
+                                                                generic_type
                                                             } else {
-                                                                generics_to_find.insert(Rc::clone(&generic_name), Some(SkyeType::Type(Box::new(generic_type))));
+                                                                SkyeType::Type(Box::new(generic_type))
                                                             }
+                                                        };
 
+                                                        if let Some(generic_to_find) = generic_to_find {
+                                                            // we already found this generic type before, check if this new inference conflicts with the previous one
+                                                            if !generic_to_find.equals(&generic_type, EqualsLevel::Typewise) {
+                                                                ast_error!(self, field.expr, "Field type does not match definition field type");
+
+                                                                let found_at_idx = *generics_found_at.get(&generic_name).unwrap();
+                                                                let previous_field: &StructField = &fields[found_at_idx];
+                                                                ast_note!(
+                                                                    previous_field.expr, 
+                                                                    format!(
+                                                                        "Based on this field, {} is inferred to be of type {}...",
+                                                                        generic_name, generic_to_find.stringify()
+                                                                    ).as_ref()
+                                                                );
+
+                                                                ast_note!(
+                                                                    field.expr, 
+                                                                    format!(
+                                                                        "...this field would make {} assume type {}",
+                                                                        generic_name, generic_type.stringify()
+                                                                    ).as_ref()
+                                                                );
+                                                            }
+                                                        } else {
+                                                            generics_to_find.insert(Rc::clone(&generic_name), Some(generic_type));
                                                             generics_found_at.insert(generic_name, i);
                                                         }
                                                     }
