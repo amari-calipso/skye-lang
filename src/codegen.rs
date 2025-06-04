@@ -4075,7 +4075,7 @@ impl CodeGen {
 
                                         if evaluated.type_.is_type() || matches!(evaluated.type_, SkyeType::Void) {
                                             if evaluated.type_.is_respected_by(&inner_type) {
-                                                let mut env = self.environment.borrow_mut();
+                                                let mut env = tmp_env.borrow_mut();
                                                 env.define(
                                                     Rc::clone(&expr_generic.name.lexeme),
                                                     SkyeVariable::new(
@@ -4106,7 +4106,7 @@ impl CodeGen {
                                             );
                                         }
                                     } else {
-                                        let mut env = self.environment.borrow_mut();
+                                        let mut env = tmp_env.borrow_mut();
                                         env.define(
                                             Rc::clone(&expr_generic.name.lexeme),
                                             SkyeVariable::new(
@@ -4419,9 +4419,24 @@ impl CodeGen {
                         let search_tok = Token::dummy(Rc::clone(&final_name));
 
                         let mut env = self.globals.borrow_mut();
-                        if let Some(var) = env.get(&search_tok) {
-                            if let SkyeType::Function(.., has_body) = var.type_ {
-                                if has_body {
+
+                        if !final_name.contains("_UNKNOWN_") {
+                            if let Some(var) = env.get(&search_tok) {
+                                if let SkyeType::Function(.., has_body) = var.type_ {
+                                    if has_body {
+                                        env = tmp_env.borrow_mut();
+
+                                        for generic in generics {
+                                            env.undef(Rc::clone(&generic.name.lexeme));
+                                        }
+
+                                        if let Some(self_info) = subscripted.self_info {
+                                            return SkyeValue::with_self_info(final_name, var.type_, var.is_const, self_info);
+                                        } else {
+                                            return SkyeValue::new(final_name, var.type_, var.is_const);
+                                        }
+                                    }
+                                } else {
                                     env = tmp_env.borrow_mut();
 
                                     for generic in generics {
@@ -4433,18 +4448,6 @@ impl CodeGen {
                                     } else {
                                         return SkyeValue::new(final_name, var.type_, var.is_const);
                                     }
-                                }
-                            } else {
-                                env = tmp_env.borrow_mut();
-
-                                for generic in generics {
-                                    env.undef(Rc::clone(&generic.name.lexeme));
-                                }
-
-                                if let Some(self_info) = subscripted.self_info {
-                                    return SkyeValue::with_self_info(final_name, var.type_, var.is_const, self_info);
-                                } else {
-                                    return SkyeValue::new(final_name, var.type_, var.is_const);
                                 }
                             }
                         }
@@ -5015,26 +5018,30 @@ impl CodeGen {
                 let existing = env.get(&search_tok);
 
                 let has_decl = {
-                    if let Some(var) = &existing {
-                        if let SkyeType::Function(.., has_body) = var.type_ {
-                            if has_body && body.is_some() {
-                                token_error!(self, name, "Cannot redeclare functions");
+                    if !full_name.contains("_UNKNOWN_") {
+                        if let Some(var) = &existing {
+                            if let SkyeType::Function(.., has_body) = var.type_ {
+                                if has_body && body.is_some() {
+                                    token_error!(self, name, "Cannot redeclare functions");
+
+                                    if let Some(token) = &var.tok {
+                                        token_note!(*token, "Previously defined here");
+                                    }
+
+                                    false
+                                } else {
+                                    true
+                                }
+                            } else {
+                                token_error!(self, name, "Cannot declare function with same name as existing symbol");
 
                                 if let Some(token) = &var.tok {
                                     token_note!(*token, "Previously defined here");
                                 }
 
                                 false
-                            } else {
-                                true
                             }
                         } else {
-                            token_error!(self, name, "Cannot declare function with same name as existing symbol");
-
-                            if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
-                            }
-
                             false
                         }
                     } else {
@@ -5689,19 +5696,29 @@ impl CodeGen {
                 );
 
                 let has_decl = {
-                    if let Some(var) = &existing {
-                        if let SkyeType::Type(inner_type) = &var.type_ {
-                            if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
-                                if *has_body && existing_fields.is_some() {
-                                    token_error!(self, name, "Cannot redefine structs");
+                    if !full_name.contains("_UNKNOWN_") {
+                        if let Some(var) = &existing {
+                            if let SkyeType::Type(inner_type) = &var.type_ {
+                                if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
+                                    if *has_body && existing_fields.is_some() {
+                                        token_error!(self, name, "Cannot redefine structs");
+
+                                        if let Some(token) = &var.tok {
+                                            token_note!(*token, "Previously defined here");
+                                        }
+
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                } else {
+                                    token_error!(self, name, "Cannot declare struct with same name as existing symbol");
 
                                     if let Some(token) = &var.tok {
                                         token_note!(*token, "Previously defined here");
                                     }
 
                                     false
-                                } else {
-                                    true
                                 }
                             } else {
                                 token_error!(self, name, "Cannot declare struct with same name as existing symbol");
@@ -5713,12 +5730,6 @@ impl CodeGen {
                                 false
                             }
                         } else {
-                            token_error!(self, name, "Cannot declare struct with same name as existing symbol");
-
-                            if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
-                            }
-
                             false
                         }
                     } else {
@@ -6445,13 +6456,21 @@ impl CodeGen {
                 };
 
                 let mut env = self.globals.borrow_mut();
-                let existing = env.get(&Token::dummy(Rc::clone(&full_name)));
+                if !full_name.contains("_UNKNOWN_") {
+                    let existing = env.get(&Token::dummy(Rc::clone(&full_name)));
 
-                if let Some(var) = &existing {
-                    if let SkyeType::Type(inner_type) = &var.type_ {
-                        if let SkyeType::Enum(_, existing_fields, _) = &**inner_type {
-                            if *has_body && existing_fields.is_some() {
-                                token_error!(self, name, "Cannot redefine enums");
+                    if let Some(var) = &existing {
+                        if let SkyeType::Type(inner_type) = &var.type_ {
+                            if let SkyeType::Enum(_, existing_fields, _) = &**inner_type {
+                                if *has_body && existing_fields.is_some() {
+                                    token_error!(self, name, "Cannot redefine enums");
+
+                                    if let Some(token) = &var.tok {
+                                        token_note!(*token, "Previously defined here");
+                                    }
+                                }
+                            } else {
+                                token_error!(self, name, "Cannot declare enum with same name as existing symbol");
 
                                 if let Some(token) = &var.tok {
                                     token_note!(*token, "Previously defined here");
@@ -6464,15 +6483,9 @@ impl CodeGen {
                                 token_note!(*token, "Previously defined here");
                             }
                         }
-                    } else {
-                        token_error!(self, name, "Cannot declare enum with same name as existing symbol");
-
-                        if let Some(token) = &var.tok {
-                            token_note!(*token, "Previously defined here");
-                        }
                     }
                 }
-
+                
                 if let Some(out) = output_type {
                     let final_type = SkyeType::Type(Box::new(out));
 
