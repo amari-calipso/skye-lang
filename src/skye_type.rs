@@ -960,8 +960,12 @@ impl SkyeType {
             }
 
             SkyeType::Array(..) => {
-                if matches!(cast_to, SkyeType::Pointer(..)) {
-                    CastableHow::Yes
+                if let SkyeType::Pointer(.., is_reference) = cast_to {
+                    if *is_reference {
+                        CastableHow::No
+                    } else {
+                        CastableHow::Yes
+                    }
                 } else {
                     CastableHow::No
                 }
