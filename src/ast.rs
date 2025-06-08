@@ -413,7 +413,7 @@ pub enum Statement {
     Break(Token), // kw
     Continue(Token), // kw
     Block(Token, Vec<Statement>), // kw statements
-    TransparentBlock(Vec<Statement>),
+    ImportedBlock { statements: Vec<Statement>, source: AstPos },
     While { kw: Token, condition: Expression, body: Box<Statement> },
     DoWhile { kw: Token, condition: Expression, body: Box<Statement> },
     Return { kw: Token, value: Option<Expression> },
@@ -515,7 +515,8 @@ impl Ast for Statement {
 
     fn get_pos(&self) -> AstPos {
         match self {
-            Statement::Empty | Statement::Undef(_) | Statement::TransparentBlock(_) => {
+            Statement::ImportedBlock { source, .. } => source.clone(), 
+            Statement::Empty | Statement::Undef(_) => {
                 AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0)
             }
             Statement::Expression(expr) |
@@ -567,8 +568,11 @@ impl Ast for Statement {
             Statement::Block(kw, statements) => {
                 Statement::Block(kw.clone(), statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect())
             }
-            Statement::TransparentBlock(statements) => {
-                Statement::TransparentBlock(statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect())
+            Statement::ImportedBlock { statements, source } => {
+                Statement::ImportedBlock { 
+                    statements: statements.iter().map(|x| x.replace_variable(name, replace_expr)).collect(),
+                    source: source.clone()
+                }
             }
             Statement::If { kw, condition: cond, then_branch, else_branch } => {
                 Statement::If {

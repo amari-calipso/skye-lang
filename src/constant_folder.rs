@@ -629,10 +629,20 @@ impl ConstantFolder {
                 ctx.run(|ctx| self.fold_statement(body, ctx)).await;
             }
             Statement::Block(_, body) | 
-            Statement::TransparentBlock(body) |
             Statement::Namespace { body, .. } => {
                 for statement in body {
                     ctx.run(|ctx| self.fold_statement(statement, ctx)).await;
+                }
+            }
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+
+                for statement in statements {
+                    ctx.run(|ctx| self.fold_statement(statement, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
                 }
             }
             Statement::Struct { fields, .. } |

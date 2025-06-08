@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -8,6 +8,7 @@ pub struct MacroExpander {
     curr_name:    String,
     in_impl:      bool,
     in_interface: bool,
+    in_function:  bool,
     compile_mode: CompileMode,
 
     pub errors: usize,
@@ -86,6 +87,7 @@ impl MacroExpander {
             curr_name: String::new(),
             in_impl: false,
             in_interface: false,
+            in_function: false,
             errors: 0
         }
     }
@@ -171,16 +173,32 @@ impl MacroExpander {
                 ctx.run(|ctx| self.expand_expression(right, ctx)).await;
             }
             Expression::Grouping(expr) |
-            Expression::Get(expr, _) |
-            Expression::InMacro { inner: expr, .. } => {
+            Expression::Get(expr, _) => {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
                 return self.globals.get(&name.lexeme).cloned();
             }
-            Expression::MacroExpandedStatements { inner, .. } => {
+            Expression::InMacro { inner, source } => {
+                let old_errors = self.errors;
+                
+                let res = ctx.run(|ctx| self.expand_expression(inner, ctx)).await;
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "This error is a result of this macro expansion");
+                }
+
+                return res;
+            }
+            Expression::MacroExpandedStatements { inner, source } => {
+                let old_errors = self.errors;
+                
                 for statement in inner {
                     ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "This error is a result of this macro expansion");
                 }
             }
             Expression::FnPtr { return_type, params, .. } => {
@@ -395,11 +413,24 @@ impl MacroExpander {
     async fn expand_statement(&mut self, stmt: &mut Statement, ctx: &mut reblessive::Stk) {
         match stmt {
             Statement::Expression(expression) => {
-                ctx.run(|ctx| self.expand_expression(expression, ctx)).await;
+                if self.in_function {
+                    ctx.run(|ctx| self.expand_expression(expression, ctx)).await;
+                }
             }
-            Statement::Block(_, statements) | Statement::TransparentBlock(statements) => {
+            Statement::Block(_, statements) => {
                 for statement in statements {
                     ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
+                }
+            }
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+                
+                for statement in statements {
+                    ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
                 }
             }
             Statement::While { condition, body, .. } |
@@ -454,9 +485,14 @@ impl MacroExpander {
                 }
 
                 if let Some(body) = body {
+                    let old_in_function = self.in_function;
+                    self.in_function = true;
+
                     for statement in body {
                         ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
                     }
+
+                    self.in_function = old_in_function;
                 }
             }
             Statement::Template { declaration, generics, .. } => {

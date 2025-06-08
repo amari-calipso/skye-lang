@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::{Path, PathBuf}};
 
-use crate::{ast::{ImportType, MacroBody, Statement}, parse_file, token_error, token_note};
+use crate::{ast::{Ast, ImportType, MacroBody, Statement}, astpos_note, parse_file, token_error, token_note};
 
 pub struct ImportProcessor {
     source_path: Option<Box<PathBuf>>,
@@ -56,7 +56,7 @@ impl ImportProcessor {
                     match parse_file(path.as_os_str()) {
                         Ok(mut statements) => {
                             ctx.run(|ctx| self.process_many(&mut statements, ctx)).await;
-                            *stmt = Statement::TransparentBlock(statements);
+                            *stmt = Statement::ImportedBlock { statements, source: stmt.get_pos() };
                         }
                         Err(e) => {
                             token_error!(self, path_tok, format!("Could not import this file. Error: {}", e.to_string()).as_ref());
@@ -64,11 +64,19 @@ impl ImportProcessor {
                     }
                 } 
             }
-            Statement::Block(_, body) | 
-            Statement::TransparentBlock(body) | 
+            Statement::Block(_, body) |  
             Statement::Impl { declarations: body, .. } | 
             Statement::Namespace { body, .. } => {
                 ctx.run(|ctx| self.process_many(body, ctx)).await;
+            }
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+
+                ctx.run(|ctx| self.process_many(statements, ctx)).await;
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
+                }
             }
             Statement::Function { body, .. } |
             Statement::Interface { declarations: body, .. } => {

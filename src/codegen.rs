@@ -2983,6 +2983,11 @@ impl CodeGen {
                                             }
                                         } else {
                                             ast_error!(self, expr, "Macro is not allowed here");
+
+                                            if matches!(self.curr_function, CurrentFn::None) {
+                                                ast_note!(expr, "If your macro expands to a declaration, use the \"use ... as _;\" syntax to expand it");
+                                            }
+
                                             SkyeValue::get_unknown()
                                         }
                                     } else {
@@ -4759,9 +4764,15 @@ impl CodeGen {
     pub async fn execute(&mut self, stmt: &Statement, index: usize, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
         match stmt {
             Statement::Empty => (),
-            Statement::TransparentBlock(statements) => {
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+
                 for statement in statements {
                     ctx.run(|ctx| self.execute(&statement, index, ctx)).await?;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
                 }
             }
             Statement::Expression(expr) => {
