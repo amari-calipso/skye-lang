@@ -541,7 +541,11 @@ impl SkyeType {
 
     fn get_internal(&self, from: &Rc<str>, name: &Token, is_source_const: bool, d: usize, zero_check: &mut Box<impl FnMut(SkyeValue) -> Rc<str>>) -> GetResultInternal {
         match self {
-            SkyeType::Pointer(inner_type, is_pointer_const, _) => {
+            SkyeType::Pointer(inner_type, is_pointer_const, is_reference) => {
+                if !*is_reference {
+                    return GetResultInternal::InvalidType;
+                }
+
                 let inner_res = inner_type.get_internal(from, name, *is_pointer_const, d + 1, zero_check);
                 if let GetResultInternal::Ok(inner_str, type_, holder_type, is_const) = inner_res {
                     let mut tmp_var_type = holder_type.clone();

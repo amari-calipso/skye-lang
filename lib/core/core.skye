@@ -4,6 +4,7 @@ import <<"core/internals.h">>;
 macro typeOf(item) void;
 macro cast(type, item) void;
 macro constCast(ptr) void;
+macro asPtr(ptr) void;
 macro concat(strings+) void;
 
 use @typeOf(0u8)  as u8;

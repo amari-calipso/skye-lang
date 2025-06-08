@@ -10,7 +10,8 @@ const OUTPUT_INDENT_SPACES: usize = 4;
 
 lazy_static! {
     pub static ref BUILTIN_MACROS: HashSet<&'static str> = HashSet::from([
-        "format", "fprint", "fprintln", "typeOf", "cast", "constCast"
+        "format", "fprint", "fprintln", "typeOf", 
+        "cast", "constCast", "asPtr"
     ]);
 }
 
@@ -858,6 +859,27 @@ impl CodeGen {
                         self, arguments[0],
                         format!(
                             "Expecting pointer as @constCast argument (got {})",
+                            to_cast.type_.stringify_native()
+                        ).as_ref()
+                    );
+
+                    Some(to_cast)
+                }
+            }
+            "asPtr" => {
+                let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+
+                if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.type_ {
+                    if *is_reference {
+                        Some(SkyeValue::new(to_cast.value, SkyeType::Pointer(inner_type.clone(), *is_const, false), true))
+                    } else {
+                        Some(to_cast)
+                    }
+                } else {
+                    ast_error!(
+                        self, arguments[0],
+                        format!(
+                            "Expecting pointer or reference as @asPtr argument (got {})",
                             to_cast.type_.stringify_native()
                         ).as_ref()
                     );

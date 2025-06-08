@@ -10,8 +10,8 @@ struct CDirent: dirent {
     const d_name: *const char
 }
 
-#bind fn opendir(const path: *const char) *CDir;
-#bind fn readdir(const dir: *const CDir) *CDirent;
+#bind fn opendir(const path: *const char) &CDir;
+#bind fn readdir(const dir: *const CDir) &CDirent;
 #bind fn closedir(const dir: *const CDir) i32;
 
 namespace std {
@@ -54,7 +54,7 @@ namespace std {
                 errno = 0;
                 const de = readdir(self.dir);
 
-                if de == @nullptr {
+                if @asPtr(de) == @nullptr {
                     if errno || closedir(self.dir) {
                         return NextOption::Some(NextResult::Error(core::utils::cStringToString(strerror(errno))));
                     } else {
@@ -75,7 +75,7 @@ namespace std {
             @format(&buf, "%\0", path);
             const dir = opendir(buf.array.ptr);
 
-            if (dir == @nullptr) return ListDirResult::Error(core::utils::cStringToString(strerror(errno)));
+            if (@asPtr(dir) == @nullptr) return ListDirResult::Error(core::utils::cStringToString(strerror(errno)));
             return ListDirResult::Ok(std::os::DirectoryIterator.{ dir });
         }
 
