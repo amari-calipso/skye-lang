@@ -667,7 +667,7 @@ impl ConstantFolder {
                 ctx.run(|ctx| self.fold_expression(kind_type, ctx)).await;
 
                 for variant in variants {
-                    ctx.run(|ctx| self.fold_expression(&mut variant.expr, ctx)).await;
+                    ctx.run(|ctx| self.fold_expression(&mut variant.type_, ctx)).await;
                 }
             }
             Statement::VarDecl { initializer, type_, .. } => {

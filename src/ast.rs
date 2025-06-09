@@ -68,12 +68,13 @@ impl StructField {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct EnumVariant {
     pub name: Token,
-    pub expr: Expression,
+    pub type_: Expression,
+    pub default: Option<Expression>,
 }
 
 impl EnumVariant {
-    pub fn new(name: Token, expr: Expression) -> Self {
-        EnumVariant { name, expr }
+    pub fn new(name: Token, type_: Expression, default: Option<Expression>) -> Self {
+        EnumVariant { name, type_, default }
     }
 }
 
@@ -643,7 +644,7 @@ impl Ast for Statement {
                 Statement::Enum {
                     name: enum_name.clone(),
                     kind_type: kind_type.replace_variable(name, replace_expr),
-                    variants: variants.iter().map(|x| EnumVariant::new(x.name.clone(), x.expr.replace_variable(name, replace_expr))).collect(),
+                    variants: variants.iter().map(|x| EnumVariant::new(x.name.clone(), x.type_.replace_variable(name, replace_expr), x.default.clone())).collect(),
                     is_simple: *is_simple,
                     has_body: *has_body,
                     binding: binding.clone(),

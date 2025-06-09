@@ -1269,7 +1269,15 @@ impl Parser {
                         }
                     };
 
-                    variants.push(EnumVariant::new(variant_name, type_));
+                    let default = {
+                        if self.match_(&[TokenType::Equal]) {
+                            Some(self.expression()?)
+                        } else {
+                            None
+                        }
+                    };
+
+                    variants.push(EnumVariant::new(variant_name, type_, default));
 
                     if !self.match_(&[TokenType::Comma]) {
                         break;

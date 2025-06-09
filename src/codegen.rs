@@ -6160,6 +6160,8 @@ impl CodeGen {
                                 }
                             }
                         } else {
+                            drop(env);
+                            
                             if let Some(bound_name) = binding {
                                 let mut write = true;
                                 if !*bind_typedefed {
@@ -6199,6 +6201,18 @@ impl CodeGen {
                                     self.declarations.last_mut().unwrap().push("_DOT_");
                                     self.declarations.last_mut().unwrap().push(&variant.name.lexeme);
 
+                                    if let Some(default) = &variant.default {
+                                        self.declarations.last_mut().unwrap().push(" = ");
+
+                                        if matches!(default, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. }) {
+                                            let value = ctx.run(|ctx| self.evaluate(default, index, false, ctx)).await;
+                                            self.declarations.last_mut().unwrap().push(&value.value);
+                                        } else {
+                                            ast_error!(self, default, "Enum value must be a literal");
+                                            ast_note!(default, "The value must be known at compile time");
+                                        }
+                                    }
+
                                     if i != variants.len() - 1 {
                                         self.declarations.last_mut().unwrap().push(",\n");
                                     }
@@ -6210,7 +6224,6 @@ impl CodeGen {
                                 self.declarations.last_mut().unwrap().push(";\n");
                             }
 
-                            drop(env);
                             let mut env = self.globals.borrow_mut();
                             env.define(
                                 Rc::clone(&simple_enum_full_name),
@@ -6251,7 +6264,7 @@ impl CodeGen {
                         let mut evaluated_variants = Vec::with_capacity(variants.len());
                         for variant in variants {
                             let variant_type = {
-                                let type_ = ctx.run(|ctx| self.evaluate(&variant.expr, index, false, ctx)).await.type_;
+                                let type_ = ctx.run(|ctx| self.evaluate(&variant.type_, index, false, ctx)).await.type_;
                                 match type_ {
                                     SkyeType::Void | SkyeType::Unknown(_) => type_,
                                     SkyeType::Type(inner_type) => {
@@ -6259,18 +6272,18 @@ impl CodeGen {
                                             if inner_type.can_be_instantiated(false) {
                                                 *inner_type
                                             } else {
-                                                ast_error!(self, variant.expr, format!("Cannot instantiate type {}", inner_type.stringify_native()).as_ref());
+                                                ast_error!(self, variant.type_, format!("Cannot instantiate type {}", inner_type.stringify_native()).as_ref());
                                                 SkyeType::get_unknown()
                                             }
                                         } else {
-                                            ast_error!(self, variant.expr, "Cannot use incomplete type directly");
-                                            ast_note!(variant.expr, "Define this type or reference it through a pointer");
+                                            ast_error!(self, variant.type_, "Cannot use incomplete type directly");
+                                            ast_note!(variant.type_, "Define this type or reference it through a pointer");
                                             SkyeType::get_unknown()
                                         }
                                     }
                                     _ => {
                                         ast_error!(
-                                            self, variant.expr,
+                                            self, variant.type_,
                                             format!(
                                                 "Expecting type as enum variant type (got {})",
                                                 type_.stringify_native()
@@ -7363,7 +7376,7 @@ impl CodeGen {
 
                             let mut name_tok = name.clone();
                             name_tok.set_lexeme(evaluated.type_.mangle().as_ref());
-                            variants.push(EnumVariant::new(name_tok.clone(), bound_type.clone()));
+                            variants.push(EnumVariant::new(name_tok.clone(), bound_type.clone(), None));
                             evaluated_types.push(evaluated.type_);
                         }
 
@@ -7465,7 +7478,16 @@ impl CodeGen {
                         let mut custom_tok = name.clone();
                         custom_tok.set_lexeme("i32");
 
-                        let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok.clone()), variants, is_simple: false, has_body: true, binding: None, generics_names: Vec::new(), bind_typedefed: false };
+                        let enum_def = Statement::Enum { 
+                            name: name.clone(), 
+                            kind_type: Expression::Variable(custom_tok.clone()), 
+                            variants, 
+                            is_simple: false, 
+                            has_body: true, 
+                            binding: None, 
+                            generics_names: Vec::new(), 
+                            bind_typedefed: false 
+                        };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
 
@@ -7537,7 +7559,16 @@ impl CodeGen {
                     let mut custom_tok = name.clone();
                     custom_tok.set_lexeme("i32");
 
-                    let enum_def = Statement::Enum { name: name.clone(), kind_type: Expression::Variable(custom_tok), variants: Vec::new(), is_simple: false, has_body: false, binding: None, generics_names: Vec::new(), bind_typedefed: false };
+                    let enum_def = Statement::Enum { 
+                        name: name.clone(), 
+                        kind_type: Expression::Variable(custom_tok), 
+                        variants: Vec::new(), 
+                        is_simple: false, 
+                        has_body: false, 
+                        binding: None, 
+                        generics_names: Vec::new(), 
+                        bind_typedefed: false 
+                    };
 
                     let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
                 }

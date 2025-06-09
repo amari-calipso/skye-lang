@@ -340,8 +340,18 @@ enum U64Enum as u64 {
     Variant2
 }
 
+enum EnumWithCustomValues {
+    Variant1 = 0,
+    Variant2
+}
+
 enum SumTypeEnum {
     Variant1(i32),
+    Variant2(f64)
+}
+
+enum SumTypeEnumWithCustomValues {
+    Variant1(i32) = 0, // custom values will be applied to the kind enum
     Variant2(f64)
 }
 ```
