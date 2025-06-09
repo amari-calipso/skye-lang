@@ -442,35 +442,44 @@ impl CodeGen {
     }
 
     fn split_interpolated_string(&mut self, str: &Rc<str>) -> Vec<InterpolatedStringPortion> {
-        let mut result: Vec<InterpolatedStringPortion> = Vec::new();
+        let mut result = Vec::new();
 
-        let mut last_was_percent = false;
+        let mut last_was_backslash = false;
         for ch in str.chars() {
-            if ch == '%' {
-                if !last_was_percent {
-                    last_was_percent = true;
-                    continue;
+            if ch == '\\' {
+                last_was_backslash = !last_was_backslash;
+
+                if result.len() == 0 {
+                    result.push(InterpolatedStringPortion::String(String::new()));
                 }
-            } else if last_was_percent {
-                result.push(InterpolatedStringPortion::Value);
-                result.push(InterpolatedStringPortion::String(String::new()));
+
+                if let InterpolatedStringPortion::String(str) = result.last_mut().unwrap() {
+                    str.push(ch);
+                } else {
+                    unreachable!()
+                }
+
+                continue;
             }
 
-            last_was_percent = false;
-
+            if ch == '%' && !last_was_backslash {
+                result.push(InterpolatedStringPortion::Value);
+                result.push(InterpolatedStringPortion::String(String::new()));
+                last_was_backslash = false;
+                continue;
+            } 
+            
             if result.len() == 0 {
                 result.push(InterpolatedStringPortion::String(String::new()));
             }
+
+            last_was_backslash = false;
 
             if let InterpolatedStringPortion::String(str) = result.last_mut().unwrap() {
                 str.push(ch);
             } else {
                 unreachable!()
             }
-        }
-
-        if last_was_percent {
-            result.push(InterpolatedStringPortion::Value);
         }
 
         result
