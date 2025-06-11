@@ -29,16 +29,14 @@ macro_rules! match_sint_literal {
     ($parser: expr, $type_: tt, $bits: tt) => {
         match_number_literal!($parser, $type_, $bits, SignedIntLiteral, |x: &str| {
             let result = {
-                if let Ok(result) = x.parse() {
-                    result
-                } else if let Ok(result) = i128::from_str_radix(&x[2..], 16) {
-                    result
-                } else if let Ok(result) = i128::from_str_radix(&x[2..], 8) {
-                    result
-                } else if let Ok(result) = i128::from_str_radix(&x[2..], 2) {
-                    result
+                if x.starts_with("0x") {
+                    i128::from_str_radix(&x[2..], 16).ok()?
+                } else if x.starts_with("0o") {
+                    i128::from_str_radix(&x[2..], 8).ok()?
+                } else if x.starts_with("0b") {
+                    i128::from_str_radix(&x[2..], 2).ok()?
                 } else {
-                    return None;
+                    x.parse().ok()?
                 }
             };
 
@@ -54,16 +52,14 @@ macro_rules! match_sint_literal {
 macro_rules! match_uint_literal {
     ($parser: expr, $type_: tt, $bits: tt) => {
         match_number_literal!($parser, $type_, $bits, UnsignedIntLiteral, |x: &str| {
-            if let Ok(result) = x.parse() {
-                Some(result)
-            } else if let Ok(result) = u64::from_str_radix(&x[2..], 16) {
-                Some(result)
-            } else if let Ok(result) = u64::from_str_radix(&x[2..], 8) {
-                Some(result)
-            } else if let Ok(result) = u64::from_str_radix(&x[2..], 2) {
-                Some(result)
+            if x.starts_with("0x") {
+                u64::from_str_radix(&x[2..], 16).ok()
+            } else if x.starts_with("0o") {
+                u64::from_str_radix(&x[2..], 8).ok()
+            } else if x.starts_with("0b") {
+                u64::from_str_radix(&x[2..], 2).ok()
             } else {
-                None
+                x.parse().ok()
             }
         })
     };
