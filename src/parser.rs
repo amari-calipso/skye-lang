@@ -40,7 +40,7 @@ macro_rules! match_sint_literal {
                 }
             };
 
-            if result > 0 && matches!(TryInto::<u64>::try_into(result), Err(_)) {
+            if (result > 0 && matches!(TryInto::<u64>::try_into(result), Err(_))) || result < i64::MIN as i128 {
                 None
             } else {
                 Some(result)
