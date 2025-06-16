@@ -3,7 +3,7 @@ use std::{collections::HashMap, env, ffi:: OsString, fs::{self, create_dir, remo
 use clap::{Parser, Subcommand};
 use scopeguard::defer;
 use serde_json::Value;
-use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, CompileMode, MAX_PACKAGE_SIZE_BYTES};
+use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, CompileMode, CompilerFlags, MAX_PACKAGE_SIZE_BYTES};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BUILD_FILE_INIT: &[u8] = concat!(
@@ -37,6 +37,10 @@ struct Args {
     #[arg(long, default_value_t = String::from("core/io_primitives"))]
     /// Filename containing primitives for different platforms
     primitives: String,
+
+    #[arg(long, default_value_t = false)]
+    /// If set, Skye builtins will not be imported
+    no_builtins: bool,
 
     #[arg(long, default_value_t = false)]
     /// If set, a custom panic handler must be provided
@@ -137,6 +141,13 @@ fn main() -> Result<(), Error> {
 
     match args.command {
         CompilerCommand::Compile { file, emit_c, compile_mode, output } => {
+            let compiler_flags = CompilerFlags { 
+                no_builtins: args.no_builtins, 
+                no_panic: args.no_panic, 
+                primitives: args.primitives, 
+                compile_mode 
+            };
+
             if emit_c {
                 let output_file = OsString::from({
                     if output.len() == 0 {
@@ -146,7 +157,7 @@ fn main() -> Result<(), Error> {
                     }
                 });
 
-                compile_file_to_c(&file, &output_file, compile_mode, &args.primitives, args.no_panic, skye_path)?;
+                compile_file_to_c(&file, &output_file, compiler_flags, skye_path)?;
             } else {
                 let output_file = OsString::from({
                     if output.len() == 0 {
@@ -156,15 +167,29 @@ fn main() -> Result<(), Error> {
                     }
                 });
 
-                compile_file_to_exec(&file, &output_file, compile_mode, &args.primitives, args.no_panic, skye_path)?;
+                compile_file_to_exec(&file, &output_file, compiler_flags, skye_path)?;
             }
         }
         CompilerCommand::Run { file, program_args } => {
-            run_skye(file, &args.primitives, &program_args, args.no_panic, skye_path)?;
+            let compiler_flags = CompilerFlags { 
+                no_builtins: args.no_builtins, 
+                no_panic: args.no_panic, 
+                primitives: args.primitives, 
+                compile_mode: CompileMode::Debug
+            };
+
+            run_skye(file, &program_args, compiler_flags, skye_path)?;
         }
         CompilerCommand::Build { path, program_args } => {
+            let compiler_flags = CompilerFlags { 
+                no_builtins: args.no_builtins, 
+                no_panic: args.no_panic, 
+                primitives: args.primitives, 
+                compile_mode: CompileMode::Debug
+            };
+
             env::set_current_dir(&path)?;
-            run_skye(OsString::from(PathBuf::from(path).join("build.skye")), &args.primitives, &program_args, args.no_panic, skye_path)?;
+            run_skye(OsString::from(PathBuf::from(path).join("build.skye")), &program_args, compiler_flags, skye_path)?;
         }
         CompilerCommand::New { project_type } => {
             match project_type {
@@ -291,7 +316,14 @@ fn main() -> Result<(), Error> {
             };
 
             if let Some(setup_file) = data_relative.iter().find(|x| **x == PathBuf::from("setup.skye")) {
-                run_skye(setup_file.clone().into_os_string(), &args.primitives, &None, args.no_panic, skye_path)?;
+                let compiler_flags = CompilerFlags { 
+                    no_builtins: args.no_builtins, 
+                    no_panic: args.no_panic, 
+                    primitives: args.primitives, 
+                    compile_mode: CompileMode::Debug
+                };
+
+                run_skye(setup_file.clone().into_os_string(), &None, compiler_flags, skye_path)?;
             }
 
             copy_dir_recursive(&tmp_folder, &lib_folder)?;
@@ -359,12 +391,18 @@ fn main() -> Result<(), Error> {
 mod tests {
     use std::{ffi::OsStr, fs, path::PathBuf};
 
-    use skye::CompileMode;
+    use skye::{CompileMode, CompilerFlags};
 
     #[test]
     fn test_can_compile_examples() {
         let output = OsStr::new("tmp");
-        let primitives = String::from("core/io_primitives");
+        let mut compiler_flags = CompilerFlags { 
+            no_builtins: false, 
+            no_panic: false, 
+            primitives: String::from("core/io_primitives"), 
+            compile_mode: CompileMode::Debug
+        };
+        
         let skye_path = PathBuf::from(".");
 
         for file in fs::read_dir("examples").expect("Couldn't read examples dir") {
@@ -372,9 +410,10 @@ mod tests {
             let input = path.as_os_str();
 
             for mode in [CompileMode::Debug, CompileMode::Release, CompileMode::ReleaseUnsafe] {
+                compiler_flags.compile_mode = mode;
+                
                 skye::compile_file_to_exec(
-                    &input, output, mode.clone(),
-                    &primitives, false, skye_path.clone()
+                    &input, output, compiler_flags.clone(), skye_path.clone()
                 ).expect(format!("Couldn't compile file with mode {:?}", mode).as_str());
             }
         }
