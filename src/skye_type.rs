@@ -117,6 +117,13 @@ const ALL_INTS: &[SkyeType] = &[
     SkyeType::I8, SkyeType::I16, SkyeType::I32, SkyeType::I64, SkyeType::AnyInt
 ];
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkyeField {
+    pub type_: SkyeType,
+    pub bits: Option<u64>,
+    pub is_const: bool,
+}
+
 #[derive(Clone, PartialEq)]
 pub enum SkyeType {
     U8, U16, U32, U64, Usz,
@@ -132,12 +139,11 @@ pub enum SkyeType {
     Type(Box<SkyeType>),
     Group(Box<SkyeType>, Box<SkyeType>), // left right
     Function(Vec<SkyeFunctionParam>, Box<SkyeType>, bool), // params return_type has_body
-    Struct(Rc<str>, Option<HashMap<Rc<str>, (SkyeType, bool)>>, Rc<str>), // name fields base_name
+    Struct(Rc<str>, Option<HashMap<Rc<str>, SkyeField>>, Rc<str>), // name fields base_name
     Namespace(Rc<str>), // name
     Enum(Rc<str>, Option<HashMap<Rc<str>, SkyeType>>, Rc<str>), // name variants base_name
     Template(Rc<str>, Statement, Vec<Generic>, Vec<Token>, String, Rc<RefCell<Environment>>), // name definition generics generics_names curr_name environment
-    Union(Rc<str>, Option<HashMap<Rc<str>, SkyeType>>), // name fields
-    Bitfield(Rc<str>, Option<HashMap<Rc<str>, SkyeType>>), // name fields
+    Union(Rc<str>, Option<HashMap<Rc<str>, SkyeField>>), // name fields
     Macro(Rc<str>, MacroParams, MacroBody), // name params body
 }
 
@@ -170,7 +176,6 @@ impl std::fmt::Debug for SkyeType {
             Self::Enum(arg0, arg1, arg2) => f.debug_tuple("Enum").field(arg0).field(arg1).field(arg2).finish(),
             Self::Template(arg0, arg1, arg2, arg3, arg4, _) => f.debug_tuple("Template").field(arg0).field(arg1).field(arg2).field(arg3).field(arg4).finish(),
             Self::Union(arg0, arg1) => f.debug_tuple("Union").field(arg0).field(arg1).finish(),
-            Self::Bitfield(arg0, arg1) => f.debug_tuple("Bitfield").field(arg0).field(arg1).finish(),
             Self::Macro(arg0, arg1, arg2) => f.debug_tuple("Macro").field(arg0).field(arg1).field(arg2).finish(),
         }
     }
@@ -214,8 +219,7 @@ impl SkyeType {
             SkyeType::Struct(name, ..) |
             SkyeType::Namespace(name) |
             SkyeType::Enum(name, ..) |
-            SkyeType::Union(name, _) |
-            SkyeType::Bitfield(name, _) => name.to_string(),
+            SkyeType::Union(name, _) => name.to_string(),
         }
     }
 
@@ -305,8 +309,7 @@ impl SkyeType {
                     .replace("_UNKNOWN_", "{any}")
             }
 
-            SkyeType::Union(name, _) |
-            SkyeType::Bitfield(name, _) => name.to_string().replace("_DOT_", "::"),
+            SkyeType::Union(name, _) => name.to_string().replace("_DOT_", "::"),
         }
     }
 
@@ -336,8 +339,7 @@ impl SkyeType {
             SkyeType::Type(inner) => inner.mangle(),
             SkyeType::Struct(name, ..) |
             SkyeType::Enum(name, ..) |
-            SkyeType::Union(name, _) |
-            SkyeType::Bitfield(name, _) => name.to_string(),
+            SkyeType::Union(name, _) => name.to_string(),
 
             SkyeType::Pointer(inner, ..) => {
                 let inner_mangled = inner.mangle();
@@ -506,13 +508,6 @@ impl SkyeType {
                     false
                 }
             }
-            SkyeType::Bitfield(self_name, _) => {
-                if let SkyeType::Bitfield(other_name, _) = other {
-                    self_name == other_name
-                } else {
-                    false
-                }
-            }
         }
     }
 
@@ -568,13 +563,14 @@ impl SkyeType {
                     inner_res
                 }
             }
-            SkyeType::Struct(_, fields, _) => {
+            SkyeType::Struct(_, fields, _) |
+            SkyeType::Union(_, fields) => {
                 if let Some(defined_fields) = fields {
-                    if let Some((field, is_const)) = defined_fields.get(&name.lexeme) {
+                    if let Some(field) = defined_fields.get(&name.lexeme) {
                         if d == 0 {
-                            GetResultInternal::Ok(Rc::from(format!("{}.{}", from, name.lexeme)), field.clone(), self.clone(), is_source_const || *is_const)
+                            GetResultInternal::Ok(Rc::from(format!("{}.{}", from, name.lexeme)), field.type_.clone(), self.clone(), is_source_const || field.is_const)
                         } else {
-                            GetResultInternal::Ok(Rc::clone(from), field.clone(), self.clone(), is_source_const || *is_const)
+                            GetResultInternal::Ok(Rc::clone(from), field.type_.clone(), self.clone(), is_source_const || field.is_const)
                         }
                     } else {
                         GetResultInternal::FieldNotFound
@@ -590,21 +586,6 @@ impl SkyeType {
                             GetResultInternal::Ok(Rc::from(format!("{}.{}", from, name.lexeme)), field.clone(), self.clone(), true)
                         } else {
                             GetResultInternal::Ok(Rc::clone(from), field.clone(), self.clone(), true)
-                        }
-                    } else {
-                        GetResultInternal::FieldNotFound
-                    }
-                } else {
-                    GetResultInternal::InvalidType
-                }
-            }
-            SkyeType::Union(_, fields) | SkyeType::Bitfield(_, fields) => {
-                if let Some(defined_fields) = fields {
-                    if let Some(field) = defined_fields.get(&name.lexeme) {
-                        if d == 0 {
-                            GetResultInternal::Ok(Rc::from(format!("{}.{}", from, name.lexeme)), field.clone(), self.clone(), is_source_const)
-                        } else {
-                            GetResultInternal::Ok(Rc::clone(from), field.clone(), self.clone(), is_source_const)
                         }
                     } else {
                         GetResultInternal::FieldNotFound
@@ -748,9 +729,9 @@ impl SkyeType {
                 if let SkyeType::Struct(_, other_fields, _) = other {
                     if let Some(real_self_fields) = self_fields {
                         if let Some(real_other_fields) = other_fields {
-                            for (key, (value, _)) in real_self_fields {
-                                if let Some((field, _)) = real_other_fields.get(key) {
-                                    value.infer_type_from_similar_internal(field, Rc::clone(&data))?;
+                            for (key, self_field) in real_self_fields {
+                                if let Some(other_field) = real_other_fields.get(key) {
+                                    self_field.type_.infer_type_from_similar_internal(&other_field.type_, Rc::clone(&data))?;
                                 }
                             }
                         }
@@ -759,16 +740,14 @@ impl SkyeType {
                     unreachable!()
                 }
             }
-            SkyeType::Union(_, self_fields) |
-            SkyeType::Bitfield(_, self_fields) => {
+            SkyeType::Union(_, self_fields) => {
                 match other {
-                    SkyeType::Union(_, other_fields) |
-                    SkyeType::Bitfield(_, other_fields) => {
+                    SkyeType::Union(_, other_fields) => {
                         if let Some(real_self_fields) = self_fields {
                             if let Some(real_other_fields) = other_fields {
-                                for (key, value) in real_self_fields {
-                                    if let Some(field) = real_other_fields.get(key) {
-                                        value.infer_type_from_similar_internal(field, Rc::clone(&data))?;
+                                for (key, self_field) in real_self_fields {
+                                    if let Some(other_field) = real_other_fields.get(key) {
+                                        self_field.type_.infer_type_from_similar_internal(&other_field.type_, Rc::clone(&data))?;
                                     }
                                 }
                             }
@@ -852,7 +831,7 @@ impl SkyeType {
                 ImplementsHow::No
             }
 
-            SkyeType::Union(..) | SkyeType::Function(..) | SkyeType::Bitfield(..) => {
+            SkyeType::Union(..) | SkyeType::Function(..) => {
                 if matches!(op, Operator::Ref | Operator::ConstRef) {
                     ImplementsHow::Native(Vec::new())
                 } else {
@@ -902,8 +881,7 @@ impl SkyeType {
             SkyeType::Macro(..) => false,
 
             SkyeType::Struct(_, fields, _) => fields.is_some(),
-            SkyeType::Union(_, fields) |
-            SkyeType::Bitfield(_, fields) => fields.is_some()
+            SkyeType::Union(_, fields) => fields.is_some()
         }
     }
 
@@ -911,7 +889,7 @@ impl SkyeType {
         match self {
             SkyeType::Void | SkyeType::Type(_) | SkyeType::Group(..) | SkyeType::Function(..) |
             SkyeType::Struct(..) | SkyeType::Namespace(_) | SkyeType::Template(..) |
-            SkyeType::Union(..) | SkyeType::Bitfield(..) | SkyeType::Macro(..) => CastableHow::No,
+            SkyeType::Union(..) | SkyeType::Macro(..) => CastableHow::No,
             SkyeType::Unknown(_) => CastableHow::Yes,
 
             SkyeType::AnyFloat | SkyeType::F32 | SkyeType::F64 | SkyeType::Char => {

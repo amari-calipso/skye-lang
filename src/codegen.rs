@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -3765,15 +3765,15 @@ impl CodeGen {
 
                                     let mut fields_output = String::new();
                                     for (i, field) in fields.iter().enumerate() {
-                                        if let Some((field_type, _)) = defined_fields.get(&field.name.lexeme) {
+                                        if let Some(defined_field) = defined_fields.get(&field.name.lexeme) {
                                             let field_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, index, allow_unknown, ctx)).await;
 
-                                            if !field_type.equals(&field_evaluated.type_, EqualsLevel::Strict) {
+                                            if !defined_field.type_.equals(&field_evaluated.type_, EqualsLevel::Strict) {
                                                 ast_error!(
                                                     self, field.expr,
                                                     format!(
                                                         "Invalid type for this field (expecting {} but got {})",
-                                                        field_type.stringify_native(), field_evaluated.type_.stringify_native()
+                                                        defined_field.type_.stringify_native(), field_evaluated.type_.stringify_native()
                                                     ).as_ref()
                                                 );
                                             }
@@ -3807,52 +3807,6 @@ impl CodeGen {
                                     SkyeValue::get_unknown()
                                 }
                             }
-                            SkyeType::Bitfield(name, def_fields) => {
-                                if let Some(defined_fields) = def_fields {
-                                    if fields.len() != defined_fields.len() {
-                                        ast_error!(self, expr, format!(
-                                            "Expecting {} fields but got {}",
-                                            defined_fields.len(), fields.len()
-                                        ).as_str());
-                                        return SkyeValue::special(*inner_type.clone());
-                                    }
-
-                                    let mut fields_output = String::new();
-                                    for (i, field) in fields.iter().enumerate() {
-                                        if let Some(field_type) = defined_fields.get(&field.name.lexeme) {
-                                            let field_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, index, allow_unknown, ctx)).await;
-
-                                            if !field_type.equals(&field_evaluated.type_, EqualsLevel::Strict) {
-                                                ast_error!(
-                                                    self, field.expr,
-                                                    format!(
-                                                        "Invalid type for this field (expecting {} but got {})",
-                                                        field_type.stringify_native(), field_evaluated.type_.stringify_native()
-                                                    ).as_ref()
-                                                );
-                                            }
-
-                                            // copy costructor here is not needed because bitfields always have numeric types
-
-                                            fields_output.push('.');
-                                            fields_output.push_str(&field.name.lexeme);
-                                            fields_output.push_str(" = ");
-                                            fields_output.push_str(&field_evaluated.value);
-
-                                            if i != fields.len() - 1 {
-                                                fields_output.push_str(", ");
-                                            }
-                                        } else {
-                                            token_error!(self, field.name, "Unknown bitfield field");
-                                        }
-                                    }
-
-                                    SkyeValue::new(Rc::from(format!("({}) {{ {} }}", name, fields_output)), *inner_type.clone(), true)
-                                } else {
-                                    ast_error!(self, identifier_expr, "Cannot initialize bitfield that is declared but has no definition");
-                                    SkyeValue::get_unknown()
-                                }
-                            }
                             SkyeType::Union(name, def_fields) => {
                                 if let Some(defined_fields) = def_fields {
                                     if fields.len() != 1 {
@@ -3861,15 +3815,15 @@ impl CodeGen {
                                     }
 
                                     let mut buf = String::new();
-                                    if let Some(field_type) = defined_fields.get(&fields[0].name.lexeme) {
+                                    if let Some(defined_field) = defined_fields.get(&fields[0].name.lexeme) {
                                         let field_evaluated = ctx.run(|ctx| self.evaluate(&fields[0].expr, index, allow_unknown, ctx)).await;
 
-                                        if !field_type.equals(&field_evaluated.type_, EqualsLevel::Strict) {
+                                        if !defined_field.type_.equals(&field_evaluated.type_, EqualsLevel::Strict) {
                                             ast_error!(
                                                 self, fields[0].expr,
                                                 format!(
                                                     "Invalid type for this field (expecting {} but got {})",
-                                                    field_type.stringify_native(), field_evaluated.type_.stringify_native()
+                                                    defined_field.type_.stringify_native(), field_evaluated.type_.stringify_native()
                                                 ).as_ref()
                                             );
                                         }
@@ -5855,13 +5809,43 @@ impl CodeGen {
                                 token_error!(self, field.name, "Cannot define the same struct field multiple times");
                             } else {
                                 let field_type_stringified = field_type.stringify();
-                                output_fields.insert(Rc::clone(&field.name.lexeme), (field_type, field.is_const));
+
+                                let bits = {
+                                    if let Some(bits_expr) = &field.bits {
+                                        match bits_expr.get_inner() {
+                                            Expression::SignedIntLiteral { value, .. } => Some(value as u64),
+                                            Expression::UnsignedIntLiteral { value, .. } => Some(value as u64),
+                                            _ => {
+                                                ast_error!(self, bits_expr, "Bit size must be an integer literal");
+                                                ast_note!(bits_expr, "The value must be known at compile time");
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                };
+
+                                output_fields.insert(
+                                    Rc::clone(&field.name.lexeme), 
+                                    SkyeField {
+                                        type_: field_type,
+                                        is_const: field.is_const,
+                                        bits
+                                    }
+                                );
 
                                 if binding.is_none() {
                                     def_buf.push_indent();
                                     def_buf.push(&field_type_stringified);
                                     def_buf.push(" ");
                                     def_buf.push(&field.name.lexeme);
+
+                                    if let Some(bits) = bits {
+                                        def_buf.push(": ");
+                                        def_buf.push(&bits.to_string());
+                                    }
+
                                     def_buf.push(";\n");
                                 }
                             }
@@ -6946,13 +6930,43 @@ impl CodeGen {
                                 token_error!(self, field.name, "Cannot define the same union field multiple times");
                             } else {
                                 let field_type_stringified = field_type.stringify();
-                                output_fields.insert(Rc::clone(&field.name.lexeme), field_type);
+
+                                let bits = {
+                                    if let Some(bits_expr) = &field.bits {
+                                        match bits_expr.get_inner() {
+                                            Expression::SignedIntLiteral { value, .. } => Some(value as u64),
+                                            Expression::UnsignedIntLiteral { value, .. } => Some(value as u64),
+                                            _ => {
+                                                ast_error!(self, bits_expr, "Bit size must be an integer literal");
+                                                ast_note!(bits_expr, "The value must be known at compile time");
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                };
+
+                                output_fields.insert(
+                                    Rc::clone(&field.name.lexeme), 
+                                    SkyeField {
+                                        type_: field_type,
+                                        is_const: field.is_const,
+                                        bits
+                                    }
+                                );
 
                                 if binding.is_none() {
                                     def_buf.push_indent();
                                     def_buf.push(&field_type_stringified);
                                     def_buf.push(" ");
                                     def_buf.push(&field.name.lexeme);
+
+                                    if let Some(bits) = bits {
+                                        def_buf.push(": ");
+                                        def_buf.push(&bits.to_string());
+                                    }
+
                                     def_buf.push(";\n");
                                 }
                             }
@@ -6971,148 +6985,6 @@ impl CodeGen {
                         SkyeType::Union(Rc::clone(&full_name), Some(output_fields))
                     } else {
                         SkyeType::Union(Rc::clone(&full_name), None)
-                    }
-                };
-
-                let output_type = SkyeType::Type(Box::new(type_));
-
-                let mut env = self.globals.borrow_mut();
-
-                env.define(
-                    Rc::clone(&full_name),
-                    SkyeVariable::new(
-                        output_type.clone(), true,
-                        Some(Box::new(name.clone()))
-                    )
-                );
-            }
-            Statement::Bitfield { name, fields, has_body, binding, bind_typedefed } => {
-                let full_name = self.get_name(&name.lexeme);
-
-                let env = self.globals.borrow();
-                let existing = env.get(&Token::dummy(Rc::clone(&full_name)));
-
-                let has_decl = {
-                    if let Some(var) = &existing {
-                        if let SkyeType::Type(inner_type) = &var.type_ {
-                            if let SkyeType::Bitfield(_, existing_fields) = &**inner_type {
-                                if *has_body && existing_fields.is_some() {
-                                    token_error!(self, name, "Cannot redefine bitfields");
-
-                                    if let Some(token) = &var.tok {
-                                        token_note!(*token, "Previously defined here");
-                                    }
-
-                                    false
-                                } else {
-                                    true
-                                }
-                            } else {
-                                token_error!(self, name, "Cannot declare union with same name as existing symbol");
-
-                                if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
-                                }
-
-                                false
-                            }
-                        } else {
-                            token_error!(self, name, "Cannot declare union with same name as existing symbol");
-
-                            if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
-                            }
-
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                };
-
-                drop(env);
-
-                let mut buf = String::from("typedef ");
-                let mut equal_binding = false;
-
-                if let Some(bound_name) = binding {
-                    if !*bind_typedefed {
-                        buf.push_str("struct ");
-                    } else {
-                        equal_binding = bound_name.lexeme != full_name;
-                    }
-
-                    buf.push_str(&bound_name.lexeme);
-                } else {
-                    buf.push_str("struct ");
-                    let full_struct_name = self.get_name(&Rc::from(format!("SKYE_STRUCT_{}", name.lexeme)));
-                    buf.push_str(&full_struct_name);
-                }
-
-                buf.push(' ');
-
-                if (!equal_binding) && ((!has_decl) || (!*has_body)) {
-                    self.declarations.push(CodeOutput::new());
-                    self.declarations.last_mut().unwrap().push(&buf);
-                    self.declarations.last_mut().unwrap().push(&full_name);
-                    self.declarations.last_mut().unwrap().push(";\n");
-                }
-
-                let mut def_buf = CodeOutput::new();
-
-                if *has_body && binding.is_none() {
-                    def_buf.push(&buf);
-                }
-
-                let type_ = {
-                    if *has_body {
-                        if binding.is_none() {
-                            def_buf.push("{\n");
-                            def_buf.inc_indent();
-                        }
-
-                        let mut output_fields = HashMap::new();
-                        for field in fields {
-                            let field_type = {
-                                match field.bits {
-                                    0  ..= 8  => SkyeType::U8,
-                                    9  ..= 16 => SkyeType::U16,
-                                    17 ..= 32 => SkyeType::U32,
-                                    33 ..= 64 => SkyeType::U64,
-                                    _ => unreachable!() // parser ensures this is unreachable
-                                }
-                            };
-
-                            if output_fields.contains_key(&field.name.lexeme) {
-                                token_error!(self, field.name, "Cannot define the same bitfield field multiple times");
-                            } else {
-                                let field_type_stringified = field_type.stringify();
-                                output_fields.insert(Rc::clone(&field.name.lexeme), field_type);
-
-                                if binding.is_none() {
-                                    def_buf.push_indent();
-                                    def_buf.push(&field_type_stringified);
-                                    def_buf.push(" ");
-                                    def_buf.push(&field.name.lexeme);
-                                    def_buf.push(format!(": {}", field.bits).as_ref());
-                                    def_buf.push(";\n");
-                                }
-                            }
-                        }
-
-                        if binding.is_none() {
-                            def_buf.dec_indent();
-                            def_buf.push("} ");
-                            def_buf.push(&full_name);
-                            def_buf.push(";\n\n");
-                        }
-
-                        self.struct_definitions.insert(Rc::clone(&full_name), def_buf);
-                        self.struct_defs_order.push(Rc::clone(&full_name));
-
-                        SkyeType::Bitfield(Rc::clone(&full_name), Some(output_fields))
-                    } else {
-                        SkyeType::Bitfield(Rc::clone(&full_name), None)
                     }
                 };
 

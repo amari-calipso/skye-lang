@@ -56,12 +56,13 @@ impl FunctionParam {
 pub struct StructField {
     pub name: Token,
     pub expr: Expression,
+    pub bits: Option<Expression>,
     pub is_const: bool
 }
 
 impl StructField {
-    pub fn new(name: Token, expr: Expression, is_const: bool) -> Self {
-        StructField { name, expr, is_const }
+    pub fn new(name: Token, expr: Expression, bits: Option<Expression>, is_const: bool) -> Self {
+        StructField { name, expr, bits, is_const }
     }
 }
 
@@ -87,18 +88,6 @@ pub struct SwitchCase {
 impl SwitchCase {
     pub fn new(cases: Option<Vec<Expression>>, code: Vec<Statement>) -> Self {
         SwitchCase { cases, code }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct BitfieldField {
-    pub name: Token,
-    pub bits: u8
-}
-
-impl BitfieldField {
-    pub fn new(name: Token, bits: u8) -> Self {
-        BitfieldField { name, bits }
     }
 }
 
@@ -304,7 +293,8 @@ impl Ast for Expression {
             Expression::CompoundLiteral { type_: struct_, closing_brace, fields } => {
                 Expression::CompoundLiteral { type_: Box::new(struct_.replace_variable(name, replace_expr)), closing_brace: closing_brace.clone(), fields: fields.iter().map(
                         |x| StructField::new(
-                            x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const
+                            x.name.clone(), x.expr.replace_variable(name, replace_expr), 
+                            x.bits.clone().map(|x| x.replace_variable(name, replace_expr)), x.is_const
                         )
                     ).collect() }
             }
@@ -491,13 +481,6 @@ pub enum Statement {
         binding: Option<Token>,
         bind_typedefed: bool
     },
-    Bitfield {
-        name: Token,
-        fields: Vec<BitfieldField>,
-        has_body: bool,
-        binding: Option<Token>,
-        bind_typedefed: bool
-    },
     Foreach {
         kw: Token,
         variable_name: Token,
@@ -542,7 +525,6 @@ impl Ast for Statement {
             Statement::Continue(tok) |
             Statement::Import { path: tok, .. } |
             Statement::Union { name: tok, .. } |
-            Statement::Bitfield { name: tok, .. } |
             Statement::Macro { name: tok, .. } |
             Statement::Foreach { kw: tok, .. } |
             Statement::Interface { name: tok, .. } => {
@@ -554,7 +536,7 @@ impl Ast for Statement {
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Statement {
         match self {
             Statement::Empty | Statement::Undef(_) |  Statement::Break(_) | Statement::Continue(_) |
-            Statement::Import { .. } | Statement::Bitfield { .. } => self.clone(),
+            Statement::Import { .. } => self.clone(),
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),
             Statement::VarDecl { name: var_name, initializer, type_, is_const, qualifiers } => {
@@ -624,7 +606,16 @@ impl Ast for Statement {
             Statement::Struct { name: struct_name, fields, has_body, binding, generics_names, bind_typedefed } => {
                 Statement::Struct {
                     name: struct_name.clone(),
-                    fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(),
+                    fields: {
+                        fields.iter().map(|x| 
+                            StructField::new(
+                                x.name.clone(), 
+                                x.expr.replace_variable(name, replace_expr), 
+                                x.bits.clone().map(|x| x.replace_variable(name, replace_expr)),
+                                x.is_const
+                            )
+                        ).collect()
+                    },
                     has_body: *has_body,
                     binding: binding.clone(),
                     generics_names: generics_names.clone(),
@@ -679,7 +670,16 @@ impl Ast for Statement {
             Statement::Union { name: union_name, fields, has_body, binding, bind_typedefed } => {
                 Statement::Union {
                     name: union_name.clone(),
-                    fields: fields.iter().map(|x| StructField::new(x.name.clone(), x.expr.replace_variable(name, replace_expr), x.is_const)).collect(),
+                    fields: {
+                        fields.iter().map(|x| 
+                            StructField::new(
+                                x.name.clone(), 
+                                x.expr.replace_variable(name, replace_expr), 
+                                x.bits.clone().map(|x| x.replace_variable(name, replace_expr)),
+                                x.is_const
+                            )
+                        ).collect()
+                    },
                     has_body: *has_body,
                     binding: binding.clone(),
                     bind_typedefed: *bind_typedefed

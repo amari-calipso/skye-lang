@@ -309,15 +309,15 @@ struct MyStruct {
 }
 ```
 
-# Bitfields
+You can create a bitfield by specifying bit size for reach field
+
 ```
-bitfield MyBitfield {
-    a: 10, // bitfields fields can be 0-64 bits
-    b: 48,
-    d: 0,
-    c: 1,
+struct MyBitfield {
+    a[2]: u8,
+    b[128]: MyType
 }
 ```
+
 # Unions
 Unions are mostly meant for C interop.
 ```

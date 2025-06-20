@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{Ast, BitfieldField, Bits, EnumVariant, Expression, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase},
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase},
     ast_error, ast_note, token_error, token_note,
     tokens::{Token, TokenType}
 };
@@ -394,9 +394,9 @@ impl Parser {
             let name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
 
             if self.match_(&[TokenType::Colon]) {
-                fields.push(StructField::new(name, self.expression()?, true));
+                fields.push(StructField::new(name, self.expression()?, None, true));
             } else {
-                fields.push(StructField::new(name.clone(), Expression::Variable(name), true));
+                fields.push(StructField::new(name.clone(), Expression::Variable(name), None, true));
             }
 
             if !self.match_(&[TokenType::Comma]) {
@@ -1080,10 +1080,21 @@ impl Parser {
                 while !self.check(TokenType::RightBrace) {
                     let is_const = self.match_(&[TokenType::Const]);
                     let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+
+                    let bits = {
+                        if self.match_(&[TokenType::LeftSquare]) {
+                            let ret = self.expression()?;
+                            self.consume(TokenType::RightBrace, "Expecting ']' after struct field bit size");
+                            Some(ret)
+                        } else {
+                            None
+                        }
+                    };
+
                     self.consume(TokenType::Colon, "Expecting ':' after field name")?;
                     let type_ = self.type_expression()?;
 
-                    fields.push(StructField::new(field_name, type_, is_const));
+                    fields.push(StructField::new(field_name, type_, bits, is_const));
 
                     if !self.match_(&[TokenType::Comma]) {
                         break;
@@ -1406,11 +1417,23 @@ impl Parser {
         let has_body = {
             if self.match_(&[TokenType::LeftBrace]) {
                 while !self.check(TokenType::RightBrace) {
+                    let is_const = self.match_(&[TokenType::Const]);
                     let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
+
+                    let bits = {
+                        if self.match_(&[TokenType::LeftSquare]) {
+                            let ret = self.expression()?;
+                            self.consume(TokenType::RightBrace, "Expecting ']' after union field bit size");
+                            Some(ret)
+                        } else {
+                            None
+                        }
+                    };
+
                     self.consume(TokenType::Colon, "Expecting ':' after field name")?;
                     let type_ = self.type_expression()?;
 
-                    fields.push(StructField::new(field_name, type_, false));
+                    fields.push(StructField::new(field_name, type_, bits, is_const));
 
                     if !self.match_(&[TokenType::Comma]) {
                         break;
@@ -1426,76 +1449,6 @@ impl Parser {
         };
 
         Some(Statement::Union { name, fields, has_body, binding, bind_typedefed: typedefed })
-    }
-
-    fn bitfield_decl(&mut self) -> Option<Statement> {
-        let mut typedefed = false;
-        let mut bind = false;
-
-        for (name, qualifier) in self.curr_qualifiers.iter() {
-            match name.as_ref() {
-                "typedef" => typedefed = true,
-                "bind" => bind = true,
-                _ => token_error!(self, qualifier, "Unsupported qualifier for union definition")
-            }
-        }
-
-        self.curr_qualifiers.clear();
-
-        let name = self.consume(TokenType::Identifier, "Expecting bitfield name")?.clone();
-        if self.parse_generics(&Vec::new())?.len() != 0 {
-            token_error!(self, self.previous(), "Generics are not allowed in bitfields");
-        }
-
-        let binding = {
-            if bind {
-                Some(name.clone())
-            } else if self.match_(&[TokenType::Colon]) {
-                Some(self.consume(TokenType::Identifier, "Expecting C bitfield name after bitfield binding")?.clone())
-            } else {
-                if typedefed {
-                    token_error!(self, self.previous(), "Cannot use #typedef qualifier on bitfield that is not a binding");
-                }
-
-                None
-            }
-        };
-
-        let mut fields = Vec::new();
-
-        let has_body = {
-            if self.match_(&[TokenType::LeftBrace]) {
-                while !self.check(TokenType::RightBrace) {
-                    let field_name = self.consume(TokenType::Identifier, "Expecting field name")?.clone();
-                    self.consume(TokenType::Colon, "Expecting ':' after field name")?;
-                    let bits_tok = self.consume(TokenType::AnyInt, "Expecting integer containing field size after field name")?.clone();
-
-                    if let Ok(bits) = bits_tok.lexeme.parse::<u8>() {
-                        if bits > 64 {
-                            token_error!(self, bits_tok, "Invalid field size");
-                            token_note!(bits_tok, "Field size should be an integer [0, 64]");
-                        } else {
-                            fields.push(BitfieldField::new(field_name, bits));
-                        }
-                    } else {
-                        token_error!(self, bits_tok, "Invalid field size");
-                        token_note!(bits_tok, "Field size should be an integer [0, 64]");
-                    }
-
-                    if !self.match_(&[TokenType::Comma]) {
-                        break;
-                    }
-                }
-
-                self.consume(TokenType::RightBrace, "Expecting '}' after bitfield body")?;
-                true
-            } else {
-                self.consume(TokenType::Semicolon, "Expecting '{' or ';' after bitfield declaration")?;
-                false
-            }
-        };
-
-        Some(Statement::Bitfield { name, fields, has_body, binding, bind_typedefed: typedefed })
     }
 
     fn macro_decl(&mut self) -> Option<Statement> {
@@ -1654,10 +1607,6 @@ impl Parser {
 
         if self.match_(&[TokenType::Union]) {
             return self.union_decl();
-        }
-
-        if self.match_(&[TokenType::Bitfield]) {
-            return self.bitfield_decl();
         }
 
         if self.match_(&[TokenType::Macro]) {
