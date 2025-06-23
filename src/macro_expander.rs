@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, codegen, skye_type::{GetResult, SkyeType}, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, codegen, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -243,26 +243,22 @@ impl MacroExpander {
                 let object = ctx.run(|ctx| self.expand_expression(object_expr, ctx)).await;
 
                 if let Some(object) = object {
-                    match object.static_get(&name) {
-                        GetResult::Ok(value, ..) => {
-                            if let Some(var) = self.globals.get(&value) {
-                                if *gets_macro {
-                                    at_operator!(self, Some(var.clone()), expr, name, expr_pos, ctx);
-                                }
-
-                                return Some(var.clone());
+                    if let Some(value) = object.static_get(&name) {
+                        if let Some(var) = self.globals.get(&value) {
+                            if *gets_macro {
+                                at_operator!(self, Some(var.clone()), expr, name, expr_pos, ctx);
                             }
+
+                            return Some(var.clone());
                         }
-                        GetResult::InvalidType => {
-                            ast_error!(
-                                self, object_expr,
-                                format!(
-                                    "Can only statically access namespaces, structs, enums and instances (got {})",
-                                    object.stringify_native()
-                                ).as_ref()
-                            );
-                        }
-                        GetResult::FieldNotFound => unreachable!()
+                    } else {
+                        ast_error!(
+                            self, object_expr,
+                            format!(
+                                "Can only statically access namespaces, structs, enums and instances (got {})",
+                                object.stringify_native()
+                            ).as_ref()
+                        );
                     }
                 }
             }

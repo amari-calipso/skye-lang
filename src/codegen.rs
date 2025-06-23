@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, fix_raw_string, get_real_string_length}, CompileMode
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{IrValue, IrValueData}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -118,7 +118,10 @@ const ANY_DEF_START_INDEX: usize = 1;
 #[derive(Clone, Debug)]
 enum CurrentFn {
     None,
-    Some(SkyeType, Expression)
+    Some { 
+        return_type: SkyeType, 
+        return_type_expr: Expression 
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -178,8 +181,9 @@ pub struct CodeGen {
     struct_definitions: HashMap<Rc<str>, CodeOutput>,
     struct_defs_order:  Vec<Rc<str>>,
     definitions:        Vec<CodeOutput>,
-    string_type:        Option<SkyeType>,
-    tmp_var_cnt:        usize,
+
+    string_type: Option<SkyeType>,
+    tmp_var_cnt: usize,
 
     globals:     Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
@@ -281,7 +285,7 @@ impl CodeGen {
     async fn get_return_type(&mut self, return_type_expr: &Expression, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeType {
         let val = ctx.run(|ctx| self.evaluate(&return_type_expr, index, allow_unknown, ctx)).await;
 
-        match val.type_ {
+        match val.ir_value.type_ {
             SkyeType::Type(inner_type) => {
                 if inner_type.check_completeness() {
                     if inner_type.can_be_instantiated(false) {
@@ -296,9 +300,9 @@ impl CodeGen {
                     SkyeType::get_unknown()
                 }
             }
-            SkyeType::Void => val.type_,
+            SkyeType::Void => val.ir_value.type_,
             _ => {
-                ast_error!(self, return_type_expr, format!("Expecting type as return type (got {})", val.type_.stringify_native()).as_ref());
+                ast_error!(self, return_type_expr, format!("Expecting type as return type (got {})", val.ir_value.type_.stringify_native()).as_ref());
                 SkyeType::get_unknown()
             }
         }
@@ -309,7 +313,7 @@ impl CodeGen {
         let mut params_output = Vec::with_capacity(params.len());
         for i in 0 .. params.len() {
             let param_type: SkyeType = {
-                let inner_param_type = ctx.run(|ctx| self.evaluate(&params[i].type_, index, allow_unknown, ctx)).await.type_;
+                let inner_param_type = ctx.run(|ctx| self.evaluate(&params[i].type_, index, allow_unknown, ctx)).await.ir_value.type_;
                 if inner_param_type.check_completeness() {
                     if let SkyeType::Type(inner_type) = inner_param_type {
                         if inner_type.can_be_instantiated(false) {
@@ -428,7 +432,7 @@ impl CodeGen {
                     return Some(SkyeValue::with_self_info(
                         value, var.type_, true,
                         object.type_.get_self(
-                            &object.value,
+                            &object.ir_value,
                             object.is_const,
                             self.external_zero_check(name, index)
                         ).expect("get_self failed")
@@ -566,7 +570,7 @@ impl CodeGen {
                     let mut do_write = true;
                     let interpolated_expr = 'interpolated_expr_blk: {
                         if interpolated {
-                            if SkyeType::AnyInt.is_respected_by(&evaluated.type_) {
+                            if SkyeType::AnyInt.is_respected_by(&evaluated.ir_value.type_) {
                                 do_write = false;
 
                                 if is_format {
@@ -586,7 +590,7 @@ impl CodeGen {
                                 }
                             }
 
-                            if SkyeType::AnyFloat.is_respected_by(&evaluated.type_) {
+                            if SkyeType::AnyFloat.is_respected_by(&evaluated.ir_value.type_) {
                                 do_write = false;
 
                                 if is_format {
@@ -606,13 +610,13 @@ impl CodeGen {
                                 }
                             }
 
-                            if let SkyeType::Struct(full_name, ..) = &evaluated.type_ {
+                            if let SkyeType::Struct(full_name, ..) = &evaluated.ir_value.type_ {
                                 if full_name.as_ref() == "core_DOT_Slice_GENOF_char_GENEND_" {
                                     break 'interpolated_expr_blk portion_expr;
                                 }
                             }
 
-                            if matches!(evaluated.type_, SkyeType::Char) {
+                            if matches!(evaluated.ir_value.type_, SkyeType::Char) {
                                 break 'interpolated_expr_blk Expression::Slice { opening_brace: tok.clone(), items: vec![portion_expr] };
                             }
 
@@ -648,7 +652,7 @@ impl CodeGen {
                                         self, portion_expr,
                                         format!(
                                             "Type {} is not printable",
-                                            evaluated.type_.stringify_native()
+                                            evaluated.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
 
@@ -687,7 +691,7 @@ impl CodeGen {
                                 self, arguments[0],
                                 format!(
                                     "Type {} is not a valid string buffer",
-                                    evaluated.type_.stringify_native()
+                                    evaluated.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
 
@@ -726,7 +730,7 @@ impl CodeGen {
                                 self, arguments[0],
                                 format!(
                                     "Type {} is not a valid writable object",
-                                    first.type_.stringify_native()
+                                    first.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
 
@@ -742,24 +746,24 @@ impl CodeGen {
             "typeOf" => {
                 let inner = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
-                match inner.type_ {
+                match inner.ir_value.type_ {
                     SkyeType::Void         => ast_error!(self, arguments[0], "Cannot get type of void"),
                     SkyeType::Type(_)      => ast_error!(self, arguments[0], "Cannot get type of type"),
                     SkyeType::Group(..)    => ast_error!(self, arguments[0], "Cannot get type of type group"),
                     SkyeType::Namespace(_) => ast_error!(self, arguments[0], "Cannot get type of namespace"),
                     SkyeType::Template(..) => ast_error!(self, arguments[0], "Cannot get type of template"),
                     SkyeType::Macro(..)    => ast_error!(self, arguments[0], "Cannot get type of macro"),
-                    _ => return Some(SkyeValue::special(SkyeType::Type(Box::new(inner.type_))))
+                    _ => return Some(SkyeValue::special(SkyeType::Type(Box::new(inner.ir_value.type_))))
                 }
 
-                Some(SkyeValue::special(inner.type_))
+                Some(SkyeValue::special(inner.ir_value.type_))
             }
             "cast" => {
                 let cast_to = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
-                if let SkyeType::Type(inner_type) = cast_to.type_ {
+                if let SkyeType::Type(inner_type) = cast_to.ir_value.type_ {
                     let to_cast = ctx.run(|ctx| self.evaluate(&arguments[1], index, allow_unknown, ctx)).await;
-                    let to_cast_type = to_cast.type_.finalize();
+                    let to_cast_type = to_cast.ir_value.type_.finalize();
 
                     let castable_how = to_cast_type.is_castable_to(&inner_type);
                     if matches!(castable_how, CastableHow::Yes | CastableHow::ConstnessLoss) {
@@ -775,23 +779,38 @@ impl CodeGen {
                         if inner_type.equals(&to_cast_type, EqualsLevel::ConstStrict) {
                             Some(to_cast)
                         } else {
-                            Some(SkyeValue::new(Rc::from(format!("({})({})", inner_type.stringify(), to_cast.value)), *inner_type, true))
+                            Some(SkyeValue::new(
+                                IrValue::new(IrValueData::Cast { to: *inner_type.clone(), from: Box::new(to_cast.ir_value) }, *inner_type), 
+                                true
+                            ))
                         }
                     } else {
                         // cast from specific type to interface
                         if let SkyeType::Enum(full_name, variants, _) = &*inner_type {
                             if let Some(real_variants) = variants {
-                                let mangled = to_cast.type_.mangle();
+                                let mangled = to_cast.ir_value.type_.mangle();
                                 if let Some(result) = real_variants.get(&Rc::from(mangled.as_ref())) {
-                                    if result.equals(&to_cast.type_, EqualsLevel::Typewise) {
-                                        return Some(SkyeValue::new(Rc::from(format!("{}_DOT_{}({})", full_name, mangled, to_cast.value).as_ref()), *inner_type, true));
+                                    if result.equals(&to_cast.ir_value.type_, EqualsLevel::Typewise) {
+                                        return Some(SkyeValue::new(
+                                            IrValue::new(
+                                                IrValueData::Call { 
+                                                    callee: Box::new(IrValue::new(
+                                                        IrValueData::Variable { name: format!("{}_DOT_{}", full_name, mangled).into() }, 
+                                                        SkyeType::Void // TODO
+                                                    )), 
+                                                    args: vec![to_cast.ir_value]
+                                                },
+                                                *inner_type
+                                            ),
+                                            true
+                                        ));
                                     }
                                 }
                             }
                         }
 
                         // cast from interface to specific type
-                        if let SkyeType::Enum(_, variants, base_name) = &to_cast.type_ {
+                        if let SkyeType::Enum(_, variants, base_name) = &to_cast.ir_value.type_ {
                             if let Some(real_variants) = variants {
                                 let mangled = inner_type.mangle();
                                 if let Some(result) = real_variants.get(&Rc::from(mangled.as_ref())) {
@@ -804,24 +823,78 @@ impl CodeGen {
                                         let option_expr = Expression::Unary { op: question, expr: Box::new(Expression::Variable(custom_tok)), is_prefix: true };
                                         let option_type = ctx.run(|ctx| self.evaluate(&option_expr, index, allow_unknown, ctx)).await;
 
-                                        if let SkyeType::Type(inner_option_type) = option_type.type_ {
+                                        if let SkyeType::Type(inner_option_type) = option_type.ir_value.type_ {
                                             let mangled_option_type = inner_option_type.mangle();
 
                                             let tmp_var = self.get_temporary_var();
 
                                             self.definitions[index].push_indent();
-                                            self.definitions[index].push(&to_cast.type_.stringify());
+                                            self.definitions[index].push(&to_cast.ir_value.type_.stringify());
                                             self.definitions[index].push(" ");
                                             self.definitions[index].push(&tmp_var);
                                             self.definitions[index].push(" = ");
-                                            self.definitions[index].push(&to_cast.value);
+                                            self.definitions[index].push(&to_cast.ir_value);
                                             self.definitions[index].push(";\n");
-
+                                            
+                                            // tmp.kind == kind_we_are_trying_to_cast_to ? Some(tmp.Variant) : None
                                             return Some(SkyeValue::new(
-                                                Rc::from(format!(
-                                                    "({}.kind == {}_DOT_Kind_DOT_{} ? {}_DOT_Some({}.{}) : {}_DOT_None)",
-                                                    tmp_var, base_name, mangled, mangled_option_type, tmp_var, mangled, mangled_option_type
-                                                ).as_ref()), *inner_option_type, true
+                                                IrValue::new(
+                                                    IrValueData::Grouping(Box::new(
+                                                        IrValue::new(
+                                                            IrValueData::Ternary {
+                                                                condition: Box::new(IrValue::new(
+                                                                    IrValueData::Equal { 
+                                                                        left: Box::new(IrValue::new(
+                                                                            IrValueData::Get { 
+                                                                                from: Box::new(IrValue::new(
+                                                                                    IrValueData::Variable { name: tmp_var.into() },
+                                                                                    to_cast.ir_value.type_
+                                                                                )),
+                                                                                name: Rc::from("kind") 
+                                                                            },
+                                                                            SkyeType::Void // TODO
+                                                                        )), 
+                                                                        right: Box::new(IrValue::new(
+                                                                            IrValueData::Variable { 
+                                                                                name: format!("{}_DOT_Kind_DOT_{}", base_name, mangled).into() 
+                                                                            },
+                                                                            SkyeType::Void // TODO
+                                                                        ))
+                                                                    },
+                                                                    SkyeType::U8
+                                                                )),
+                                                                then_branch: Box::new(IrValue::new(
+                                                                    IrValueData::Call { 
+                                                                        callee: Box::new(IrValue::new(
+                                                                            IrValueData::Variable { 
+                                                                                name: format!("{}_DOT_Some", mangled_option_type).into() 
+                                                                            },
+                                                                            SkyeType::Void // TODO
+                                                                        )), 
+                                                                        args: vec![IrValue::new(
+                                                                            IrValueData::Get { 
+                                                                                from: Box::new(IrValue::new(
+                                                                                    IrValueData::Variable { name: tmp_var.into() },
+                                                                                    to_cast.ir_value.type_
+                                                                                )), 
+                                                                                name: mangled.into() 
+                                                                            },
+                                                                            SkyeType::Void // TODO
+                                                                        )]
+                                                                    },
+                                                                    *inner_option_type
+                                                                )),
+                                                                else_branch: Box::new(IrValue::new(
+                                                                    IrValueData::Variable { name: format!("{}_DOT_None", mangled_option_type).into() },
+                                                                    *inner_option_type
+                                                                ))
+                                                            },
+                                                            *inner_option_type
+                                                        )
+                                                    )),
+                                                    *inner_option_type
+                                                ),
+                                                true
                                             ));
                                         } else {
                                             panic!("option type generation resulted in not a type");
@@ -835,7 +908,7 @@ impl CodeGen {
                             self, arguments[1],
                             format!(
                                 "Type {} cannot be casted to type {}",
-                                to_cast.type_.stringify_native(),
+                                to_cast.ir_value.type_.stringify_native(),
                                 inner_type.stringify_native()
                             ).as_ref()
                         );
@@ -847,19 +920,22 @@ impl CodeGen {
                         self, arguments[0],
                         format!(
                             "Expecting type as cast type (got {})",
-                            cast_to.type_.stringify_native()
+                            cast_to.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
-                    Some(SkyeValue::special(cast_to.type_))
+                    Some(SkyeValue::special(cast_to.ir_value.type_))
                 }
             }
             "constCast" => {
                 let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
-                if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.type_ {
+                if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.ir_value.type_ {
                     if *is_const {
-                        Some(SkyeValue::new(to_cast.value, SkyeType::Pointer(inner_type.clone(), false, *is_reference), true))
+                        Some(SkyeValue::new(
+                            IrValue::new(to_cast.ir_value.data, SkyeType::Pointer(inner_type.clone(), false, *is_reference)), 
+                            true
+                        ))
                     } else {
                         Some(to_cast)
                     }
@@ -868,7 +944,7 @@ impl CodeGen {
                         self, arguments[0],
                         format!(
                             "Expecting pointer as @constCast argument (got {})",
-                            to_cast.type_.stringify_native()
+                            to_cast.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -878,9 +954,12 @@ impl CodeGen {
             "asPtr" => {
                 let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
 
-                if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.type_ {
+                if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.ir_value.type_ {
                     if *is_reference {
-                        Some(SkyeValue::new(to_cast.value, SkyeType::Pointer(inner_type.clone(), *is_const, false), true))
+                        Some(SkyeValue::new(
+                            IrValue::new(to_cast.ir_value.data, SkyeType::Pointer(inner_type.clone(), *is_const, false)), 
+                            true
+                        ))
                     } else {
                         Some(to_cast)
                     }
@@ -889,7 +968,7 @@ impl CodeGen {
                         self, arguments[0],
                         format!(
                             "Expecting pointer or reference as @asPtr argument (got {})",
-                            to_cast.type_.stringify_native()
+                            to_cast.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -935,7 +1014,7 @@ impl CodeGen {
             }
         };
 
-        match &callee.type_ {
+        match &callee.ir_value.type_ {
             SkyeType::Unknown(_) => SkyeValue::get_unknown(),
             SkyeType::Function(params, return_type, _) => {
                 if params.len() != arguments_len {
@@ -954,13 +1033,9 @@ impl CodeGen {
                 for i in 0 .. arguments_len {
                     let arg = 'argblock: {
                         if i == 0 {
-                            if let Some((info_val, info_type)) = &callee.self_info {
-                                if let SkyeType::Pointer(_, is_const, _) = info_type {
-                                    break 'argblock SkyeValue::new(
-                                        Rc::clone(info_val),
-                                        info_type.clone(),
-                                        *is_const
-                                    );
+                            if let Some(info) = &callee.self_info {
+                                if let SkyeType::Pointer(_, is_const, _) = &info.type_ {
+                                    break 'argblock SkyeValue::new(info.clone(), *is_const);
                                 } else {
                                     unreachable!()
                                 }
@@ -976,7 +1051,7 @@ impl CodeGen {
                         if is_self {
                             arg
                         } else if let SkyeType::Pointer(.., is_reference) = &params[i].type_ {
-                            if *is_reference && !matches!(arg.type_, SkyeType::Pointer(..)) {
+                            if *is_reference && !matches!(arg.ir_value.type_, SkyeType::Pointer(..)) {
                                 // automatically create reference for pass-by-reference params
                                 let arg_pos = arguments[i - arguments_mod].get_pos();
                                 let custom_tok = Token::new(
@@ -998,15 +1073,15 @@ impl CodeGen {
                         }
                     };
 
-                    if params[i].type_.equals(&new_arg.type_, EqualsLevel::Permissive) {
-                        if !params[i].type_.equals(&new_arg.type_, EqualsLevel::Strict) {
+                    if params[i].type_.equals(&new_arg.ir_value.type_, EqualsLevel::Permissive) {
+                        if !params[i].type_.equals(&new_arg.ir_value.type_, EqualsLevel::Strict) {
                             if is_self {
-                                if let Some((_, self_type)) = &callee.self_info {
+                                if let Some(info) = &callee.self_info {
                                     ast_error!(
                                         self, callee_expr,
                                         format!(
                                             "This method cannot be called from type {}",
-                                            self_type.stringify_native()
+                                            info.type_.stringify_native()
                                         ).as_ref()
                                     );
                                 } else {
@@ -1017,7 +1092,7 @@ impl CodeGen {
                                     self, arguments[i - arguments_mod],
                                     format!(
                                         "Argument type does not match parameter type (expecting {} but got {})",
-                                        params[i].type_.stringify_native(), new_arg.type_.stringify_native()
+                                        params[i].type_.stringify_native(), new_arg.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
                             }
@@ -1030,7 +1105,7 @@ impl CodeGen {
                                 self, arguments[i - arguments_mod],
                                 format!(
                                     "Argument type does not match parameter type (expecting {} but got {})",
-                                    params[i].type_.stringify_native(), new_arg.type_.stringify_native()
+                                    params[i].type_.stringify_native(), new_arg.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
                         }
@@ -1040,11 +1115,11 @@ impl CodeGen {
                     if let Some(value) = self.get_method(&new_arg, &search_tok, true, index) {
                         let v = Vec::new();
                         let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &arguments[i - arguments_mod], &v, index, allow_unknown, ctx)).await;
-                        args.push_str(&copy_constructor.value);
+                        args.push_str(&copy_constructor.ir_value);
 
                         ast_info!(arguments[i - arguments_mod], "Skye inserted a copy constructor call for this expression"); // +I-copies
                     } else {
-                        args.push_str(&new_arg.value);
+                        args.push_str(&new_arg.ir_value);
                     }
 
                     if i != arguments_len - 1 {
@@ -1052,7 +1127,7 @@ impl CodeGen {
                     }
                 }
 
-                let call_output = self.output_call(return_type, &callee.value, &args, index);
+                let call_output = self.output_call(return_type, &callee.ir_value, &args, index);
                 SkyeValue::new(Rc::from(call_output.as_ref()), *return_type.clone(), false)
             }
             SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
@@ -1083,13 +1158,9 @@ impl CodeGen {
                     for i in 0 .. arguments_len {
                         let call_evaluated = 'argblock: {
                             if i == 0 {
-                                if let Some((info_val, info_type)) = &callee.self_info {
-                                    if let SkyeType::Pointer(_, is_const, _) = info_type {
-                                        break 'argblock SkyeValue::new(
-                                            Rc::clone(info_val),
-                                            info_type.clone(),
-                                            *is_const
-                                        );
+                                if let Some(info) = &callee.self_info {
+                                    if let SkyeType::Pointer(_, is_const, _) = &info.type_ {
+                                        break 'argblock SkyeValue::new(info.clone(), *is_const);
                                     } else {
                                         unreachable!()
                                     }
@@ -1112,14 +1183,14 @@ impl CodeGen {
                         self.environment = previous;
 
                         let def_type = {
-                            if let SkyeType::Unknown(name) = &def_evaluated.type_ {
+                            if let SkyeType::Unknown(name) = &def_evaluated.ir_value.type_ {
                                 if let Some(Some(found_type)) = generics_to_find.get(name) {
                                     found_type.clone()
                                 } else {
-                                    SkyeType::Type(Box::new(def_evaluated.type_))
+                                    SkyeType::Type(Box::new(def_evaluated.ir_value.type_))
                                 }
                             } else {
-                                def_evaluated.type_
+                                def_evaluated.ir_value.type_
                             }
                         };
 
@@ -1130,7 +1201,7 @@ impl CodeGen {
                                 call_evaluated
                             } else if let SkyeType::Type(inner_type) = &def_type {
                                 if let SkyeType::Pointer(.., is_reference) = &**inner_type {
-                                    if *is_reference && !matches!(call_evaluated.type_, SkyeType::Pointer(..)) {
+                                    if *is_reference && !matches!(call_evaluated.ir_value.type_, SkyeType::Pointer(..)) {
                                         // automatically create reference for pass-by-reference params
                                         let arg_pos = arguments[i - arguments_mod].get_pos();
                                         let custom_tok = Token::new(
@@ -1162,7 +1233,7 @@ impl CodeGen {
                         }
 
                         if let SkyeType::Type(inner_type) = &def_type {
-                            if inner_type.equals(&new_call_evaluated.type_, EqualsLevel::Permissive) {
+                            if inner_type.equals(&new_call_evaluated.ir_value.type_, EqualsLevel::Permissive) {
                                 if let Some(inferred) = inner_type.infer_type_from_similar(&new_call_evaluated.type_) {
                                     for (generic_name, generic_type) in inferred {
                                         if let Some(generic_to_find) = generics_to_find.get(&generic_name) {
@@ -1208,12 +1279,12 @@ impl CodeGen {
                                 } else {
                                     if i == 0 && arguments_mod == 1 {
                                         // the only way self info makes inference error is if method is not available for type
-                                        if let Some((_, self_type)) = &callee.self_info {
+                                        if let Some(info) = &callee.self_info {
                                             ast_error!(
                                                 self, callee_expr,
                                                 format!(
                                                     "This method cannot be called from type {}",
-                                                    self_type.stringify_native()
+                                                    info.type_.stringify_native()
                                                 ).as_ref()
                                             );
                                         } else {
@@ -1224,7 +1295,7 @@ impl CodeGen {
                                             self, arguments[i - arguments_mod],
                                             format!(
                                                 "Argument type does not match parameter type (expecting {} but got {})",
-                                                inner_type.stringify_native(), new_call_evaluated.type_.stringify_native()
+                                                inner_type.stringify_native(), new_call_evaluated.ir_value.type_.stringify_native()
                                             ).as_ref()
                                         );
 
@@ -1240,7 +1311,7 @@ impl CodeGen {
                                         self, arguments[i - arguments_mod],
                                         format!(
                                             "Argument type does not match parameter type (expecting {} but got {})",
-                                            inner_type.stringify_native(), new_call_evaluated.type_.stringify_native()
+                                            inner_type.stringify_native(), new_call_evaluated.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
 
@@ -1271,11 +1342,11 @@ impl CodeGen {
 
                             let v = Vec::new();
                             let copy_constructor = ctx.run(|ctx| self.call(&value, expr, loc_callee_expr, &v, index, allow_unknown, ctx)).await;
-                            args.push_str(&copy_constructor.value);
+                            args.push_str(&copy_constructor.ir_value);
 
                             ast_info!(loc_callee_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
                         } else {
-                            args.push_str(&new_call_evaluated.value);
+                            args.push_str(&new_call_evaluated.ir_value);
                         }
 
                         if i != arguments_len - 1 {
@@ -1297,10 +1368,10 @@ impl CodeGen {
 
                                 self.environment = previous;
 
-                                if matches!(evaluated.type_, SkyeType::Type(_) | SkyeType::Void) {
-                                    if evaluated.type_.check_completeness() {
-                                        if evaluated.type_.can_be_instantiated(true) {
-                                            Some(evaluated.type_)
+                                if matches!(evaluated.ir_value.type_, SkyeType::Type(_) | SkyeType::Void) {
+                                    if evaluated.ir_value.type_.check_completeness() {
+                                        if evaluated.ir_value.type_.can_be_instantiated(true) {
+                                            Some(evaluated.ir_value.type_)
                                         } else {
                                             ast_error!(self, default, format!("Cannot instantiate type {}", evaluated.type_.stringify_native()).as_ref());
                                             None
@@ -1315,7 +1386,7 @@ impl CodeGen {
                                         self, default,
                                         format!(
                                             "Expecting type as default generic (got {})",
-                                            evaluated.type_.stringify_native()
+                                            evaluated.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
 
@@ -1335,8 +1406,8 @@ impl CodeGen {
 
                                 self.environment = previous;
 
-                                if evaluated.type_.is_type() || matches!(evaluated.type_, SkyeType::Void) {
-                                    if evaluated.type_.is_respected_by(&inner_type) {
+                                if evaluated.ir_value.type_.is_type() || matches!(evaluated.ir_value.type_, SkyeType::Void) {
+                                    if evaluated.ir_value.type_.is_respected_by(&inner_type) {
                                         let mut env = tmp_env.borrow_mut();
                                         env.define(
                                             Rc::clone(&expr_generic.name.lexeme),
@@ -1353,7 +1424,7 @@ impl CodeGen {
                                                 self, arguments[at - arguments_mod],
                                                 format!(
                                                     "Generic bound is not respected by this type (expecting {} but got {})",
-                                                    evaluated.type_.stringify_native(), inner_type.stringify_native()
+                                                    evaluated.ir_value.type_.stringify_native(), inner_type.stringify_native()
                                                 ).as_ref()
                                             );
 
@@ -1365,7 +1436,7 @@ impl CodeGen {
                                         self, bounds,
                                         format!(
                                             "Expecting type or group as generic bound (got {})",
-                                            evaluated.type_.stringify_native()
+                                            evaluated.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
                                 }
@@ -1397,7 +1468,7 @@ impl CodeGen {
                     self.curr_name = curr_name.clone();
 
                     let return_evaluated = {
-                        let ret_type = ctx.run(|ctx| self.evaluate(&return_type_expr, index, false, ctx)).await.type_;
+                        let ret_type = ctx.run(|ctx| self.evaluate(&return_type_expr, index, false, ctx)).await.ir_value.type_;
 
                         match ret_type {
                             SkyeType::Type(inner_type) => {
@@ -1501,7 +1572,7 @@ impl CodeGen {
                         callee_expr,
                         format!(
                             "This expression has type {}",
-                            callee.type_.stringify_native()
+                            callee.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1542,17 +1613,17 @@ impl CodeGen {
                     for i in 0 .. arguments_len {
                         let arg = ctx.run(|ctx| self.evaluate(&arguments[i], index, allow_unknown, ctx)).await;
 
-                        if let SkyeType::Type(inner_type) = &arg.type_ {
+                        if let SkyeType::Type(inner_type) = &arg.ir_value.type_ {
                             args.push_str(&inner_type.stringify());
                         } else {
-                            args.push_str(&arg.value);
+                            args.push_str(&arg.ir_value);
                         }
 
                         if let MacroParams::Some(params) = params_opt {
                             env.define(
                                 Rc::clone(&params[i].lexeme),
                                 SkyeVariable::new(
-                                    arg.type_, true,
+                                    arg.ir_value.type_, true,
                                     Some(Box::new(params[i].clone()))
                                 )
                             );
@@ -1571,14 +1642,14 @@ impl CodeGen {
 
                     self.environment = previous;
 
-                    if let SkyeType::Type(inner_type) = call_return_type.type_ {
-                        SkyeValue::new(Rc::from(format!("{}({})", callee.value, args)), *inner_type, false)
+                    if let SkyeType::Type(inner_type) = call_return_type.ir_value.type_ {
+                        SkyeValue::new(Rc::from(format!("{}({})", callee.ir_value, args)), *inner_type, false)
                     } else {
                         ast_error!(
                             self, return_type,
                             format!(
                                 "Expecting type as return type (got {})",
-                                call_return_type.type_.stringify_native()
+                                call_return_type.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                         ast_note!(expr, "This error is a result of this macro expansion");
@@ -1651,7 +1722,7 @@ impl CodeGen {
                     callee_expr,
                     format!(
                         "This expression has type {}",
-                        callee.type_.stringify_native()
+                        callee.ir_value.type_.stringify_native()
                     ).as_ref()
                 );
 
@@ -1666,7 +1737,7 @@ impl CodeGen {
         op_type: Operator, op: &Token, index: usize, allow_unknown: bool,
         ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        match inner.type_.implements_op(op_type) {
+        match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
                 let tmp_var = self.get_temporary_var();
 
@@ -1676,10 +1747,10 @@ impl CodeGen {
                 self.definitions[index].push(&tmp_var);
                 self.definitions[index].push(" = ");
                 self.definitions[index].push(op_stringified);
-                self.definitions[index].push(&inner.value);
+                self.definitions[index].push(&inner.ir_value);
                 self.definitions[index].push(";\n");
 
-                SkyeValue::new(Rc::from(tmp_var), inner.type_, false)
+                SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
@@ -1692,7 +1763,7 @@ impl CodeGen {
                         self, op,
                         format!(
                             "Prefix unary '{}' operator is not implemented for type {}",
-                            op_stringified, inner.type_.stringify_native()
+                            op_stringified, inner.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1704,7 +1775,7 @@ impl CodeGen {
                     self, op,
                     format!(
                         "Type {} cannot use prefix unary '{}' operator",
-                        inner.type_.stringify_native(), op_stringified
+                        inner.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -1722,34 +1793,34 @@ impl CodeGen {
         let tmp_var = self.get_temporary_var();
 
         self.definitions[index].push_indent();
-        self.definitions[index].push(&inner.type_.stringify());
+        self.definitions[index].push(&inner.ir_value.type_.stringify());
         self.definitions[index].push(" ");
         self.definitions[index].push(&tmp_var);
         self.definitions[index].push(" = ");
-        self.definitions[index].push(&inner.value);
+        self.definitions[index].push(&inner.ir_value);
         self.definitions[index].push(";\n");
 
-        match inner.type_.implements_op(op_type) {
+        match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
                 self.definitions[index].push_indent();
-                self.definitions[index].push(&inner.value);
+                self.definitions[index].push(&inner.ir_value);
                 self.definitions[index].push(op_stringified);
                 self.definitions[index].push(";\n");
 
-                SkyeValue::new(Rc::from(tmp_var), inner.type_, false)
+                SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
                     let v = Vec::new();
                     let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
-                    SkyeValue::new(Rc::from(tmp_var), inner.type_, false)
+                    SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
                 } else {
                     token_error!(
                         self, op,
                         format!(
                             "postfix unary '{}' operator is not implemented for type {}",
-                            op_stringified, inner.type_.stringify_native()
+                            op_stringified, inner.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1761,7 +1832,7 @@ impl CodeGen {
                     self, op,
                     format!(
                         "Type {} cannot use postfix unary '{}' operator",
-                        inner.type_.stringify_native(), op_stringified
+                        inner.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -1778,8 +1849,8 @@ impl CodeGen {
     ) -> SkyeValue {
         let new_inner = inner.follow_reference(self.external_zero_check(op, index));
 
-        match new_inner.type_.implements_op(op_type) {
-            ImplementsHow::Native(_) => SkyeValue::new(Rc::from(format!("{}{}", op_stringified, new_inner.value)), new_inner.type_, false),
+        match new_inner.ir_value.type_.implements_op(op_type) {
+            ImplementsHow::Native(_) => SkyeValue::new(Rc::from(format!("{}{}", op_stringified, new_inner.ir_value)), new_inner.ir_value.type_, false),
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_inner, &search_tok, true, index) {
@@ -1790,7 +1861,7 @@ impl CodeGen {
                         self, op,
                         format!(
                             "Prefix unary '{}' operator is not implemented for type {}",
-                            op_stringified, new_inner.type_.stringify_native()
+                            op_stringified, new_inner.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1802,7 +1873,7 @@ impl CodeGen {
                     self, op,
                     format!(
                         "Type {} cannot use prefix unary '{}' operator",
-                        new_inner.type_.stringify_native(), op_stringified
+                        new_inner.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -1819,25 +1890,25 @@ impl CodeGen {
     ) -> SkyeValue {
         let new_left = left.follow_reference(self.external_zero_check(op, index));
 
-        match new_left.type_.implements_op(op_type) {
+        match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await.follow_reference(self.external_zero_check(op, index));
 
-                if matches!(new_left.type_, SkyeType::Unknown(_)) ||
-                    new_left.type_.equals(&right.type_, EqualsLevel::Typewise) ||
-                    compatible_types.contains(&right.type_)
+                if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
+                    new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
+                    compatible_types.contains(&right.ir_value.type_)
                 {
                     if let Some(type_) = forced_return_type {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.value, op_stringified, right.value)), type_, false)
+                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), type_, false)
                     } else {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.value, op_stringified, right.value)), new_left.type_, false)
+                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), new_left.ir_value.type_, false)
                     }
                 } else {
                     ast_error!(
                         self, right_expr,
                         format!(
                             "Left operand type ({}) does not match right operand type ({})",
-                            new_left.type_.stringify_native(), right.type_.stringify_native()
+                            new_left.ir_value.type_.stringify_native(), right.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1854,7 +1925,7 @@ impl CodeGen {
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
-                            op_stringified, new_left.type_.stringify_native()
+                            op_stringified, new_left.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1866,7 +1937,7 @@ impl CodeGen {
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
-                        new_left.type_.stringify_native(), op_stringified
+                        new_left.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -1883,19 +1954,19 @@ impl CodeGen {
     ) -> SkyeValue {
         let new_left = left.follow_reference(self.external_zero_check(op, index));
 
-        match new_left.type_.implements_op(op_type) {
+        match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
                     .follow_reference(self.external_zero_check(op, index));
 
-                if right.type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) {
-                    SkyeValue::new(Rc::from(format!("{} {} {}", new_left.value, op_stringified, right.value)), new_left.type_, false)
+                if right.ir_value.type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) {
+                    SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), new_left.ir_value.type_, false)
                 } else {
                     ast_error!(
                         self, right_expr,
                         format!(
                             "Expecting right operand type to be integer but got {}",
-                            right.type_.stringify_native()
+                            right.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1912,7 +1983,7 @@ impl CodeGen {
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
-                            op_stringified, new_left.type_.stringify_native()
+                            op_stringified, new_left.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -1924,7 +1995,7 @@ impl CodeGen {
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
-                        new_left.type_.stringify_native(), op_stringified
+                        new_left.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -1938,11 +2009,11 @@ impl CodeGen {
             let tmp_var = self.get_temporary_var();
 
             self.definitions[index].push_indent();
-            self.definitions[index].push(&value.type_.stringify());
+            self.definitions[index].push(&value.ir_value.type_.stringify());
             self.definitions[index].push(" ");
             self.definitions[index].push(&tmp_var);
             self.definitions[index].push(" = ");
-            self.definitions[index].push(&value.value);
+            self.definitions[index].push(&value.ir_value);
             self.definitions[index].push(";\n");
 
             self.definitions[index].push_indent();
@@ -1972,7 +2043,7 @@ impl CodeGen {
 
             Rc::from(tmp_var.as_ref())
         } else {
-            value.value.clone()
+            value.ir_value.clone()
         }
     }
 
@@ -1991,28 +2062,28 @@ impl CodeGen {
     ) -> SkyeValue {
         let new_left = left.follow_reference(self.external_zero_check(op, index));
 
-        match new_left.type_.implements_op(op_type) {
+        match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
                     .follow_reference(self.external_zero_check(op, index));
 
-                if matches!(new_left.type_, SkyeType::Unknown(_)) ||
-                    new_left.type_.equals(&right.type_, EqualsLevel::Typewise) ||
-                    compatible_types.contains(&right.type_)
+                if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
+                    new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
+                    compatible_types.contains(&right.ir_value.type_)
                 {
                     let right_value = ctx.run(|ctx| self.zero_check(&right, op, "Division by zero", index, ctx)).await;
 
                     if let Some(type_) = forced_return_type {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.value, op_stringified, right_value)), type_, false)
+                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right_value)), type_, false)
                     } else {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.value, op_stringified, right_value)), new_left.type_, false)
+                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right_value)), new_left.ir_value.type_, false)
                     }
                 } else {
                     ast_error!(
                         self, right_expr,
                         format!(
                             "Left operand type ({}) does not match right operand type ({})",
-                            new_left.type_.stringify_native(), right.type_.stringify_native()
+                            new_left.ir_value.type_.stringify_native(), right.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -2020,7 +2091,7 @@ impl CodeGen {
                 }
             }
             ImplementsHow::ThirdParty => {
-                if matches!(new_left.type_, SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat) {
+                if matches!(new_left.ir_value.type_, SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat) {
                     let (fmod_tok, fmod_function) = {
                         match op_type {
                             Operator::Mod => {
@@ -2045,11 +2116,11 @@ impl CodeGen {
 
                     let tmp_var = self.get_temporary_var();
                     self.definitions[index].push_indent();
-                    self.definitions[index].push(&left.type_.stringify());
+                    self.definitions[index].push(&left.ir_value.type_.stringify());
                     self.definitions[index].push(" ");
                     self.definitions[index].push(&tmp_var);
                     self.definitions[index].push(" = ");
-                    self.definitions[index].push(&left.value);
+                    self.definitions[index].push(&left.ir_value);
                     self.definitions[index].push(";\n");
 
                     let tmp_var_rc = tmp_var.into();
@@ -2059,7 +2130,7 @@ impl CodeGen {
                         left_expr_pos.start, left_expr_pos.end, left_expr_pos.line
                     );
 
-                    self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.type_, false, None));
+                    self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.ir_value.type_, false, None));
                     let args = vec![Expression::Variable(tmp_var_tok), right_expr.clone()];
                     let fmod_value = SkyeValue::new(fmod_tok.lexeme, fmod_function.type_, true);
                     let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, index, allow_unknown, ctx)).await;
@@ -2076,7 +2147,7 @@ impl CodeGen {
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
-                            op_stringified, new_left.type_.stringify_native()
+                            op_stringified, new_left.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
@@ -2088,7 +2159,7 @@ impl CodeGen {
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
-                        new_left.type_.stringify_native(), op_stringified
+                        new_left.ir_value.type_.stringify_native(), op_stringified
                     ).as_ref()
                 );
 
@@ -2100,7 +2171,7 @@ impl CodeGen {
     async fn get_type_equality(&mut self, inner_left: &SkyeType, right_expr: &Expression, index: usize, allow_unknown: bool, reversed: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await;
 
-        if let SkyeType::Type(inner_right) = right.type_ {
+        if let SkyeType::Type(inner_right) = right.ir_value.type_ {
             if reversed ^ inner_left.equals(&inner_right, EqualsLevel::Typewise) {
                 SkyeValue::new(Rc::from("UINT8_C(1)"), SkyeType::U8, true)
             } else {
@@ -2111,7 +2182,7 @@ impl CodeGen {
                 self, right_expr,
                 format!(
                     "Left operand type does not match right operand type (expecting type on right operand but got {})",
-                    right.type_.stringify_native()
+                    right.ir_value.type_.stringify_native()
                 ).as_ref()
             );
 
@@ -2157,13 +2228,12 @@ impl CodeGen {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
                 SkyeValue::new(
                     {
-                        if inner.value.as_ref() == "" {
-                            inner.value
+                        if matches!(inner.ir_value.data, IrValueData::Empty) {
+                            inner.ir_value
                         } else {
-                            Rc::from(format!("({})", inner.value))
+                            IrValue::new(IrValueData::Grouping(Box::new(inner.ir_value)), inner.ir_value.type_)
                         }
                     }, 
-                    inner.type_, 
                     inner.is_const
                 )
             }
@@ -2192,35 +2262,24 @@ impl CodeGen {
             }
             Expression::Slice { opening_brace, items } => {
                 let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
-                let mut items_stringified = String::from("{");
-                items_stringified.push_str(&first_item.value);
-
-                if items.len() != 1 {
-                    items_stringified.push_str(", ");
-                }
-
+                let mut output_items = vec![first_item.ir_value];
+               
                 for i in 1 .. items.len() {
                     let evaluated = ctx.run(|ctx| self.evaluate(&items[i], index, allow_unknown, ctx)).await;
 
-                    if !evaluated.type_.equals(&first_item.type_, EqualsLevel::Typewise) {
+                    if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
                         ast_error!(
                             self, items[i],
                             format!(
                                 "Items inside array do not have matching types (expecting {} but got {})",
-                                first_item.type_.stringify_native(), evaluated.type_.stringify_native()
+                                output_items[0].type_.stringify_native(), evaluated.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                         ast_note!(items[0], "First item defined here");
                     }
 
-                    items_stringified.push_str(&evaluated.value);
-
-                    if i != items.len() - 1 {
-                        items_stringified.push_str(", ");
-                    }
+                    output_items.push(evaluated.ir_value);
                 }
-
-                items_stringified.push('}');
 
                 let mut slice_tok = opening_brace.clone();
                 slice_tok.set_lexeme("core_DOT_Slice");
@@ -2234,7 +2293,7 @@ impl CodeGen {
                 env.define(
                     Rc::clone(&tmp_var),
                     SkyeVariable::new(
-                        SkyeType::Type(Box::new(first_item.type_.clone())),
+                        SkyeType::Type(Box::new(output_items[0].type_.clone())),
                         true,
                         Some(Box::new(type_tok.clone()))
                     )
@@ -2249,16 +2308,15 @@ impl CodeGen {
                 let mut env = self.environment.borrow_mut();
                 env.undef(tmp_var);
 
-                if let SkyeType::Type(inner_type) = return_type.type_ {
+                if let SkyeType::Type(inner_type) = return_type.ir_value.type_ {
                     SkyeValue::new(
-                        Rc::from(format!(
-                            "({}) {{ .ptr = ({}[]) {}, .length = {} }}",
-                            return_type.value,
-                            first_item.type_.stringify(),
-                            items_stringified,
-                            items.len()
-                        )),
-                        *inner_type,
+                        IrValue::new(
+                        IrValueData::Slice {
+                                type_: *inner_type.clone(),
+                                items: output_items
+                            },
+                            *inner_type
+                        ),
                         true
                     )
                 } else {
@@ -2281,10 +2339,10 @@ impl CodeGen {
                 };
 
                 let (type_, is_type) = {
-                    if let SkyeType::Type(inner) = item.type_ {
+                    if let SkyeType::Type(inner) = item.ir_value.type_ {
                         (*inner, true)
                     } else {
-                        (item.type_, false)
+                        (item.ir_value.type_, false)
                     }
                 };
 
@@ -2293,130 +2351,102 @@ impl CodeGen {
                     return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
                 }
 
-                let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
-                let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
-                self.prepare_array_struct(array_specifier, &type_name, &type_, size);
-
                 if is_type {
-                    SkyeValue::new(type_name, SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))), true)
-                } else {
-                    let value = self.get_temporary_var();
+                    return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
+                } 
 
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push(&type_.stringify());
-                    self.definitions[index].push(" ");
-                    self.definitions[index].push(&value);
-                    self.definitions[index].push(" = ");
-                    self.definitions[index].push(&item.value);
-                    self.definitions[index].push(";\n");
+                let value: Rc<str> = self.get_temporary_var().into();
 
-                    let mut buf = String::new();
-                    buf.push('(');
-                    buf.push_str(&type_name);
-                    buf.push_str(") { .SKYE_ARRAY = { ");
+                self.definitions[index].push_indent();
+                self.definitions[index].push(&type_.stringify());
+                self.definitions[index].push(" ");
+                self.definitions[index].push(&value);
+                self.definitions[index].push(" = ");
+                self.definitions[index].push(&item.ir_value);
+                self.definitions[index].push(";\n");
 
-                    for i in 0 .. size {
-                        buf.push_str(&value);
-
-                        if i + 1 != size {
-                            buf.push_str(", ");
-                        }
-                    }
-
-                    buf.push_str(" } }");
-                    SkyeValue::new(buf.into(), SkyeType::Array(Box::new(type_), size), false)
+                let mut items = Vec::new();
+                for _ in 0 .. size {
+                    items.push(IrValue::new(
+                        IrValueData::Variable { name: Rc::clone(&value) },
+                        item.ir_value.type_.clone()
+                    ));
                 }
+
+                SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Array { items },
+                        SkyeType::Array(Box::new(type_), size)
+                    ),
+                    false
+                )
             }
             Expression::ArrayLiteral { items, .. } => {
                 let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
-                
-                let size = items.len();
-                let type_ = first_item.type_;
-                let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
-                let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
-                self.prepare_array_struct(array_specifier, &type_name, &type_, size);
-
-                let mut buf = String::new();
-                buf.push('(');
-                buf.push_str(&type_name);
-                buf.push_str(") { .SKYE_ARRAY = { ");
-
-                buf.push_str(&first_item.value);
-
-                if items.len() != 1 {
-                    buf.push_str(", ");
-                }
-
+                let mut output_items = vec![first_item.ir_value];
+               
                 for i in 1 .. items.len() {
                     let evaluated = ctx.run(|ctx| self.evaluate(&items[i], index, allow_unknown, ctx)).await;
 
-                    if !evaluated.type_.equals(&type_, EqualsLevel::Typewise) {
+                    if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
                         ast_error!(
                             self, items[i],
                             format!(
                                 "Items inside array do not have matching types (expecting {} but got {})",
-                                type_.stringify_native(), evaluated.type_.stringify_native()
+                                output_items[0].type_.stringify_native(), evaluated.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                         ast_note!(items[0], "First item defined here");
                     }
 
-                    buf.push_str(&evaluated.value);
-
-                    if i != items.len() - 1 {
-                        buf.push_str(", ");
-                    }
+                    output_items.push(evaluated.ir_value);
                 }
 
-                buf.push_str(" } }");
-                SkyeValue::new(buf.into(), SkyeType::Array(Box::new(type_), size), false)
+                SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Array { items: output_items },
+                        SkyeType::Array(Box::new(output_items[0].type_), items.len())
+                    ), 
+                    false
+                )
             }
             Expression::VoidLiteral(_) => SkyeValue::special(SkyeType::Void),
             Expression::SignedIntLiteral { value, bits, .. } => {
+                let data = IrValueData::Literal { value: expr.clone() };
                 match bits {
-                    Bits::B8  => SkyeValue::new(Rc::from(format!("INT8_C({})",  value)), SkyeType::I8,  true),
-                    Bits::B16 => SkyeValue::new(Rc::from(format!("INT16_C({})", value)), SkyeType::I16, true),
-                    Bits::B32 => SkyeValue::new(Rc::from(format!("INT32_C({})", value)), SkyeType::I32, true),
-                    Bits::B64 => SkyeValue::new(Rc::from(format!("INT64_C({})", value)), SkyeType::I64, true),
-                    Bits::Any => SkyeValue::new(value.to_string().into(), SkyeType::AnyInt, true),
+                    Bits::B8  => SkyeValue::new(IrValue::new(data, SkyeType::I8),     true),
+                    Bits::B16 => SkyeValue::new(IrValue::new(data, SkyeType::I16),    true),
+                    Bits::B32 => SkyeValue::new(IrValue::new(data, SkyeType::I32),    true),
+                    Bits::B64 => SkyeValue::new(IrValue::new(data, SkyeType::I64),    true),
+                    Bits::Any => SkyeValue::new(IrValue::new(data, SkyeType::AnyInt), true),
                     Bits::Bsz => unreachable!()
                 }
             }
             Expression::UnsignedIntLiteral { value, bits, .. } => {
+                let data = IrValueData::Literal { value: expr.clone() };
                 match bits {
-                    Bits::B8  => SkyeValue::new(Rc::from(format!("UINT8_C({})",  value)), SkyeType::U8,  true),
-                    Bits::B16 => SkyeValue::new(Rc::from(format!("UINT16_C({})", value)), SkyeType::U16, true),
-                    Bits::B32 => SkyeValue::new(Rc::from(format!("UINT32_C({})", value)), SkyeType::U32, true),
-                    Bits::B64 => SkyeValue::new(Rc::from(format!("UINT64_C({})", value)), SkyeType::U64, true),
-                    Bits::Bsz => SkyeValue::new(Rc::from(format!("SIZE_T_C({})", value)), SkyeType::Usz, true),
+                    Bits::B8  => SkyeValue::new(IrValue::new(data, SkyeType::U8),  true),
+                    Bits::B16 => SkyeValue::new(IrValue::new(data, SkyeType::U16), true),
+                    Bits::B32 => SkyeValue::new(IrValue::new(data, SkyeType::U32), true),
+                    Bits::B64 => SkyeValue::new(IrValue::new(data, SkyeType::U64), true),
+                    Bits::Bsz => SkyeValue::new(IrValue::new(data, SkyeType::Usz), true),
                     Bits::Any => unreachable!()
                 }
             }
             Expression::FloatLiteral { value, bits, .. } => {
+                let data = IrValueData::Literal { value: expr.clone() };
                 match bits {
-                    Bits::B32 => SkyeValue::new(format!("(float){:?}",  value).into(), SkyeType::F32, true),
-                    Bits::B64 => SkyeValue::new(format!("(double){:?}", value).into(), SkyeType::F64, true),
-                    Bits::Any => SkyeValue::new(format!("{:?}",         value).into(), SkyeType::AnyFloat, true),
+                    Bits::B32 => SkyeValue::new(IrValue::new(data, SkyeType::F32),      true),
+                    Bits::B64 => SkyeValue::new(IrValue::new(data, SkyeType::F64),      true),
+                    Bits::Any => SkyeValue::new(IrValue::new(data, SkyeType::AnyFloat), true),
                     _ => unreachable!()
                 }
             }
             Expression::StringLiteral { value, kind, .. } => {
+                let data = IrValueData::Literal { value: expr.clone() };
                 match kind {
-                    StringKind::Char => SkyeValue::new(Rc::from(format!("'{}'", value)), SkyeType::Char, true),
-                    StringKind::Raw => {
-                        if let Some(string_const) = self.strings.get(value) {
-                            SkyeValue::new(Rc::from(format!("SKYE_STRING_{}", string_const)), SkyeType::Pointer(Box::new(SkyeType::Char), true, false), true)
-                        } else {
-                            let str_index = self.strings.len();
-                            self.strings_code.push(format!(
-                                "const char SKYE_STRING_{}[{}] = \"{}\";\n",
-                                str_index, get_real_string_length(value), fix_raw_string(value)
-                            ).as_ref());
-
-                            self.strings.insert(Rc::clone(value), str_index);
-                            SkyeValue::new(Rc::from(format!("SKYE_STRING_{}", str_index)), SkyeType::Pointer(Box::new(SkyeType::Char), true, false), true)
-                        }
-                    }
+                    StringKind::Char => SkyeValue::new(IrValue::new(data, SkyeType::Char), true),
+                    StringKind::Raw  => SkyeValue::new(IrValue::new(data, SkyeType::Pointer(Box::new(SkyeType::Char), true, false)), true),
                     StringKind::Slice => {
                         if self.string_type.is_none() {
                             if let SkyeType::Type(inner_type) = &self.globals.borrow().get(
@@ -2429,34 +2459,13 @@ impl CodeGen {
                             }
                         }
 
-                        if let Some(string_const) = self.strings.get(value) {
-                            SkyeValue::new(
-                                Rc::from(format!(
-                                    "(String) {{ .ptr = SKYE_STRING_{}, .length = sizeof(SKYE_STRING_{}) }}",
-                                    string_const, string_const
-                                )),
-                                self.string_type.as_ref().unwrap().clone(),
-                                true
-                            )
-                        } else {
-                            let str_index = self.strings.len();
-                            let string_len = get_real_string_length(value);
-                            self.strings_code.push(format!(
-                                "const char SKYE_STRING_{}[{}] = \"{}\";\n",
-                                str_index, string_len, value
-                            ).as_ref());
-
-                            self.strings.insert(Rc::clone(value), str_index);
-
-                            SkyeValue::new(
-                                Rc::from(format!(
-                                    "(String) {{ .ptr = SKYE_STRING_{}, .length = {} }}",
-                                    str_index, string_len
-                                )),
-                                self.string_type.as_ref().unwrap().clone(),
-                                true
-                            )
-                        }
+                        SkyeValue::new(
+                            IrValue::new(
+                                data,
+                                self.string_type.as_ref().unwrap().clone()
+                            ),
+                            true
+                        )
                     }
                 }
             }
@@ -2508,16 +2517,16 @@ impl CodeGen {
                             )).await
                         }
                         TokenType::Bang => {
-                            if matches!(inner.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_)) {
+                            if matches!(inner.ir_value.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_)) {
                                 // !type syntax for void!type (result operator)
 
-                                if !inner.type_.check_completeness() {
+                                if !inner.ir_value.type_.check_completeness() {
                                     ast_error!(self, inner_expr, "Cannot use incomplete type directly");
                                     ast_note!(inner_expr, "Define this type or reference it through a pointer");
                                 }
 
-                                if !inner.type_.can_be_instantiated(true) {
-                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.type_.stringify_native()).as_ref());
+                                if !inner.ir_value.type_.can_be_instantiated(true) {
+                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify_native()).as_ref());
                                 }
 
                                 let mut custom_token = op.clone();
@@ -2540,16 +2549,16 @@ impl CodeGen {
                             }
                         }
                         TokenType::Question => {
-                            if matches!(inner.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_)) {
+                            if matches!(inner.ir_value.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_)) {
                                 // option operator
 
-                                if !inner.type_.check_completeness() {
+                                if !inner.ir_value.type_.check_completeness() {
                                     ast_error!(self, inner_expr, "Cannot use incomplete type directly");
                                     ast_note!(inner_expr, "Define this type or reference it through a pointer");
                                 }
 
-                                if !inner.type_.can_be_instantiated(true) {
-                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.type_.stringify_native()).as_ref());
+                                if !inner.ir_value.type_.can_be_instantiated(true) {
+                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify_native()).as_ref());
                                 }
 
                                 let mut custom_token = op.clone();
@@ -2563,7 +2572,7 @@ impl CodeGen {
                                     self, inner_expr,
                                     format!(
                                         "Invalid operand for option operator (expecting type but got {})",
-                                        inner.type_.stringify_native()
+                                        inner.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
 
@@ -2576,48 +2585,53 @@ impl CodeGen {
                             )).await
                         }
                         TokenType::BitwiseAnd => {
-                            match inner.type_ {
+                            match inner.ir_value.type_ {
                                 SkyeType::Type(type_type) => {
-                                    SkyeValue::new(
-                                        Rc::from(format!("{}*", inner.value)),
-                                        SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, true))),
-                                        true
-                                    )
+                                    SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, true))))
                                 }
                                 SkyeType::Unknown(_) => {
-                                    SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(inner.type_), false, true))))
+                                    SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(inner.ir_value.type_), false, true))))
                                 }
                                 _ => {
                                     let new_inner = inner.follow_reference(self.external_zero_check(op, index));
 
-                                    match new_inner.type_.implements_op(Operator::Ref) {
+                                    match new_inner.ir_value.type_.implements_op(Operator::Ref) {
                                         ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
                                             let value = {
                                                 if inner_expr.is_valid_assignment_target() {
-                                                    new_inner.value
+                                                    new_inner.ir_value
                                                 } else {
-                                                    let tmp_var = self.get_temporary_var();
+                                                    let tmp_var: Rc<str> = self.get_temporary_var().into();
 
                                                     self.definitions[index].push_indent();
-                                                    self.definitions[index].push(&new_inner.type_.stringify());
+                                                    self.definitions[index].push(&new_inner.ir_value.type_.stringify());
                                                     self.definitions[index].push(" ");
                                                     self.definitions[index].push(&tmp_var);
                                                     self.definitions[index].push(" = ");
-                                                    self.definitions[index].push(&new_inner.value);
+                                                    self.definitions[index].push(&new_inner.ir_value);
                                                     self.definitions[index].push(";\n");
 
-                                                    Rc::from(tmp_var)
+                                                    IrValue::new(
+                                                        IrValueData::Variable { name: tmp_var },
+                                                        new_inner.ir_value.type_
+                                                    )
                                                 }
                                             };
 
-                                            SkyeValue::new(Rc::from(format!("&{}", value)), SkyeType::Pointer(Box::new(new_inner.type_), new_inner.is_const, true), true)
+                                            SkyeValue::new(
+                                                IrValue::new(
+                                                    IrValueData::Reference { value: Box::new(value) },
+                                                    SkyeType::Pointer(Box::new(new_inner.ir_value.type_), new_inner.is_const, true)
+                                                ),
+                                                true
+                                            )
                                         }
                                         ImplementsHow::No => {
                                             token_error!(
                                                 self, op,
                                                 format!(
                                                     "Type {} cannot use '&' operator",
-                                                    inner.type_.stringify_native()
+                                                    inner.ir_value.type_.stringify_native()
                                                 ).as_ref()
                                             );
 
@@ -2631,7 +2645,7 @@ impl CodeGen {
                             match inner.type_ {
                                 SkyeType::Type(type_type) => {
                                     SkyeValue::new(
-                                        Rc::from(format!("{}*", inner.value)),
+                                        Rc::from(format!("{}*", inner.ir_value)),
                                         SkyeType::Type(Box::new(SkyeType::Pointer(type_type, true, true))),
                                         true
                                     )
@@ -2646,7 +2660,7 @@ impl CodeGen {
                                         ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
                                             let value = {
                                                 if inner_expr.is_valid_assignment_target() {
-                                                    new_inner.value
+                                                    new_inner.ir_value
                                                 } else {
                                                     let tmp_var = self.get_temporary_var();
 
@@ -2655,7 +2669,7 @@ impl CodeGen {
                                                     self.definitions[index].push(" ");
                                                     self.definitions[index].push(&tmp_var);
                                                     self.definitions[index].push(" = ");
-                                                    self.definitions[index].push(&new_inner.value);
+                                                    self.definitions[index].push(&new_inner.ir_value);
                                                     self.definitions[index].push(";\n");
 
                                                     Rc::from(tmp_var)
@@ -2696,7 +2710,7 @@ impl CodeGen {
                                     }
 
                                     SkyeValue::new(
-                                        Rc::from(format!("{}*", inner.value)),
+                                        Rc::from(format!("{}*", inner.ir_value)),
                                         SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, false))),
                                         true
                                     )
@@ -2708,7 +2722,7 @@ impl CodeGen {
                                     match inner.type_.implements_op(Operator::Deref) {
                                         ImplementsHow::Native(_) => {
                                             // never happens as far as i know, but i'll keep it here in case i decide to make it do something else
-                                            return SkyeValue::new(Rc::from(format!("*{}", inner.value)), inner.type_, false);
+                                            return SkyeValue::new(Rc::from(format!("*{}", inner.ir_value)), inner.type_, false);
                                         }
                                         ImplementsHow::ThirdParty => {
                                             let mut search_tok = Token::dummy(Rc::from(""));
@@ -2781,7 +2795,7 @@ impl CodeGen {
                                     }
 
                                     SkyeValue::new(
-                                        Rc::from(format!("{}*", inner.value)),
+                                        Rc::from(format!("{}*", inner.ir_value)),
                                         SkyeType::Type(Box::new(SkyeType::Pointer(type_type, true, false))),
                                         true
                                     )
@@ -2804,7 +2818,7 @@ impl CodeGen {
 
                             if let SkyeType::Enum(full_name, variants, name) = &inner.type_ {
                                 let (return_type, return_expr) = {
-                                    if let CurrentFn::Some(return_type, return_type_expr) = &self.curr_function {
+                                    if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
                                         if let SkyeType::Enum(_, return_variants, return_type_name) = return_type {
                                             if return_variants.is_some() && name.as_ref() == return_type_name.as_ref() {
                                                 (return_type.clone(), return_type_expr.clone())
@@ -2844,7 +2858,7 @@ impl CodeGen {
                                 self.definitions[index].push(" ");
                                 self.definitions[index].push(&tmp_var_name);
                                 self.definitions[index].push(" = ");
-                                self.definitions[index].push(&inner.value);
+                                self.definitions[index].push(&inner.ir_value);
                                 self.definitions[index].push(";\n");
 
                                 self.definitions[index].push_indent();
@@ -3159,7 +3173,7 @@ impl CodeGen {
 
                                 self.definitions[index].push_indent();
                                 self.definitions[index].push("if (");
-                                self.definitions[index].push(&new_left.value);
+                                self.definitions[index].push(&new_left.ir_value);
                                 self.definitions[index].push(") {\n");
                                 self.definitions[index].inc_indent();
 
@@ -3192,7 +3206,7 @@ impl CodeGen {
                                 self.definitions[index].push_indent();
                                 self.definitions[index].push(&tmp_var);
                                 self.definitions[index].push(" = ");
-                                self.definitions[index].push(&right.value);
+                                self.definitions[index].push(&right.ir_value);
                                 self.definitions[index].push(";\n");
                                 self.definitions[index].dec_indent();
 
@@ -3246,7 +3260,7 @@ impl CodeGen {
 
                                 self.definitions[index].push_indent();
                                 self.definitions[index].push("if (");
-                                self.definitions[index].push(&new_left.value);
+                                self.definitions[index].push(&new_left.ir_value);
                                 self.definitions[index].push(") {\n");
                                 self.definitions[index].inc_indent();
 
@@ -3270,7 +3284,7 @@ impl CodeGen {
                                 self.definitions[index].push_indent();
                                 self.definitions[index].push(&tmp_var);
                                 self.definitions[index].push(" = ");
-                                self.definitions[index].push(&right.value);
+                                self.definitions[index].push(&right.ir_value);
                                 self.definitions[index].push(";\n");
                                 self.definitions[index].dec_indent();
 
@@ -3526,7 +3540,7 @@ impl CodeGen {
                                 }
                             };
 
-                            SkyeValue::new(Rc::from(format!("{} = {}", target.value, output_value.value)), output_value.type_, true)
+                            SkyeValue::new(Rc::from(format!("{} = {}", target.ir_value, output_value.ir_value)), output_value.type_, true)
                         } else {
                             ast_error!(
                                 self, value_expr,
@@ -3661,7 +3675,7 @@ impl CodeGen {
                     self.definitions[tmp_index].push("(");
                 }
 
-                self.definitions[tmp_index].push(&cond.value);
+                self.definitions[tmp_index].push(&cond.ir_value);
 
                 if not_grouping {
                     self.definitions[tmp_index].push(")");
@@ -3673,7 +3687,7 @@ impl CodeGen {
                 let then_branch = ctx.run(|ctx| self.evaluate(&then_branch_expr, tmp_index, allow_unknown, ctx)).await;
 
                 let is_not_void = !matches!(then_branch.type_, SkyeType::Void);
-                let value_is_not_empty = then_branch.value.as_ref() != "";
+                let value_is_not_empty = then_branch.ir_value.as_ref() != "";
 
                 if is_not_void || value_is_not_empty {
                     self.definitions[tmp_index].push_indent();
@@ -3685,7 +3699,7 @@ impl CodeGen {
                 }
 
                 if value_is_not_empty {
-                    self.definitions[tmp_index].push(&then_branch.value);
+                    self.definitions[tmp_index].push(&then_branch.ir_value);
                     self.definitions[tmp_index].push(";\n");
                 }
 
@@ -3698,7 +3712,7 @@ impl CodeGen {
                 let else_branch = ctx.run(|ctx| self.evaluate(&else_branch_expr, tmp_index, allow_unknown, ctx)).await;
 
                 let is_not_void = !matches!(then_branch.type_, SkyeType::Void);
-                let value_is_not_empty = else_branch.value.as_ref() != "";
+                let value_is_not_empty = else_branch.ir_value.as_ref() != "";
 
                 if is_not_void || value_is_not_empty {
                     self.definitions[tmp_index].push_indent();
@@ -3710,7 +3724,7 @@ impl CodeGen {
                 }
 
                 if value_is_not_empty {
-                    self.definitions[tmp_index].push(&else_branch.value);
+                    self.definitions[tmp_index].push(&else_branch.ir_value);
                     self.definitions[tmp_index].push(";\n");
                 }
 
@@ -3786,11 +3800,11 @@ impl CodeGen {
                                             if let Some(value) = self.get_method(&field_evaluated, &search_tok, true, index) {
                                                 let v = Vec::new();
                                                 let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &field.expr, &v, index, allow_unknown, ctx)).await;
-                                                fields_output.push_str(&copy_constructor.value);
+                                                fields_output.push_str(&copy_constructor.ir_value);
 
                                                 ast_info!(field.expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
                                             } else {
-                                                fields_output.push_str(&field_evaluated.value);
+                                                fields_output.push_str(&field_evaluated.ir_value);
                                             }
 
                                             if i != fields.len() - 1 {
@@ -3836,11 +3850,11 @@ impl CodeGen {
                                         if let Some(value) = self.get_method(&field_evaluated, &search_tok, true, index) {
                                             let v = Vec::new();
                                             let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &fields[0].expr, &v, index, allow_unknown, ctx)).await;
-                                            buf.push_str(&copy_constructor.value);
+                                            buf.push_str(&copy_constructor.ir_value);
 
                                             ast_info!(fields[0].expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
                                         } else {
-                                            buf.push_str(&field_evaluated.value);
+                                            buf.push_str(&field_evaluated.ir_value);
                                         }
                                     } else {
                                         token_error!(self, fields[0].name, "Unknown union field");
@@ -4001,7 +4015,7 @@ impl CodeGen {
                                     fields_output.push('.');
                                     fields_output.push_str(&field.name.lexeme);
                                     fields_output.push_str(" = ");
-                                    fields_output.push_str(&literal_evaluated.value);
+                                    fields_output.push_str(&literal_evaluated.ir_value);
 
                                     if i != fields.len() - 1 {
                                         fields_output.push_str(", ");
@@ -4221,7 +4235,7 @@ impl CodeGen {
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                             SkyeType::Usz | SkyeType::AnyInt => {
                                 let subscripted_value = ctx.run(|ctx| self.zero_check(&subscripted, paren, "Null pointer dereference", index, ctx)).await;
-                                return SkyeValue::new(Rc::from(format!("{}[{}]", subscripted_value, arg.value)), *inner_type.clone(), is_const);
+                                return SkyeValue::new(Rc::from(format!("{}[{}]", subscripted_value, arg.ir_value)), *inner_type.clone(), is_const);
                             }
                             _ => {
                                 ast_error!(
@@ -4275,7 +4289,7 @@ impl CodeGen {
                                     // TODO: this check should be deferred at runtime (in debug mode)
                                 }
 
-                                return SkyeValue::new(Rc::from(format!("({}).SKYE_ARRAY[{}]", subscripted.value, arg.value)), *inner_type.clone(), false);
+                                return SkyeValue::new(Rc::from(format!("({}).SKYE_ARRAY[{}]", subscripted.ir_value, arg.ir_value)), *inner_type.clone(), false);
                             }
                             _ => {
                                 ast_error!(
@@ -4567,7 +4581,7 @@ impl CodeGen {
             Expression::Get(object_expr, name) => {
                 let object = ctx.run(|ctx| self.evaluate(&object_expr, index, allow_unknown, ctx)).await;
 
-                match object.type_.get(&object.value, name, object.is_const, self.external_zero_check(name, index)) {
+                match object.type_.get(&object.ir_value, name, object.is_const, self.external_zero_check(name, index)) {
                     GetResult::Ok(value, type_, is_const) => {
                         return SkyeValue::new(value, type_, is_const)
                     }
@@ -4676,7 +4690,7 @@ impl CodeGen {
                         ast_info!(ast_item, format!("Skye inserted a destructor call for \"{}\" {}", name, msg).as_ref()); // +I-destructors
 
                         self.definitions[index].push_indent();
-                        self.definitions[index].push(&call.value);
+                        self.definitions[index].push(&call.ir_value);
                         self.definitions[index].push(";\n");
                     }
                 }
@@ -4786,9 +4800,9 @@ impl CodeGen {
                     }
                 }
 
-                if value.value.as_ref() != "" { // can happen with expressions returning void
+                if value.ir_value.as_ref() != "" { // can happen with expressions returning void
                     self.definitions[index].push_indent();
-                    self.definitions[index].push(&value.value);
+                    self.definitions[index].push(&value.ir_value);
                     self.definitions[index].push(";\n");
                 }
             }
@@ -4913,7 +4927,7 @@ impl CodeGen {
                     }
 
                     self.definitions[index].push_indent();
-                    self.definitions[index].push(&value.as_ref().unwrap().value);
+                    self.definitions[index].push(&value.as_ref().unwrap().ir_value);
                     self.definitions[index].push(";\n");
                 } else {
                     let full_name = {
@@ -4937,7 +4951,7 @@ impl CodeGen {
 
                     if value.is_some() {
                         buf.push_str(" = ");
-                        buf.push_str(&value.as_ref().unwrap().value);
+                        buf.push_str(&value.as_ref().unwrap().ir_value);
                     }
 
                     buf.push_str(";\n");
@@ -5217,7 +5231,7 @@ impl CodeGen {
 
                 if has_body {
                     let enclosing_level = self.curr_function.clone();
-                    self.curr_function = CurrentFn::Some(return_type, return_type_expr.clone());
+                    self.curr_function = CurrentFn::Some { return_type, return_type_expr: return_type_expr.clone() };
 
                     let enclosing_deferred = Rc::clone(&self.deferred);
                     self.deferred = Rc::new(RefCell::new(Vec::new()));
@@ -5277,7 +5291,7 @@ impl CodeGen {
                     self.definitions[index].push("(");
                 }
 
-                self.definitions[index].push(&cond.value);
+                self.definitions[index].push(&cond.ir_value);
 
                 if not_grouping {
                     self.definitions[index].push(")");
@@ -5375,7 +5389,7 @@ impl CodeGen {
                     self.definitions[index].push("(");
                 }
 
-                self.definitions[index].push(&cond.value);
+                self.definitions[index].push(&cond.ir_value);
 
                 if not_grouping {
                     self.definitions[index].push(")");
@@ -5464,7 +5478,7 @@ impl CodeGen {
                     self.definitions[index].push("(");
                 }
 
-                self.definitions[index].push(&cond.value);
+                self.definitions[index].push(&cond.ir_value);
 
                 if not_grouping {
                     self.definitions[index].push(")");
@@ -5578,7 +5592,7 @@ impl CodeGen {
                     self.definitions[index].push("(");
                 }
 
-                self.definitions[index].push(&cond.value);
+                self.definitions[index].push(&cond.ir_value);
 
                 if not_grouping {
                     self.definitions[index].push(")");
@@ -5606,32 +5620,32 @@ impl CodeGen {
                     let value = ctx.run(|ctx| self.evaluate(expr, index, false, ctx)).await;
 
                     let is_void;
-                    if let CurrentFn::Some(type_, orig_ret_type) = &self.curr_function {
-                        is_void = matches!(type_, SkyeType::Void);
+                    if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
+                        is_void = matches!(return_type, SkyeType::Void);
 
                         if is_void && !matches!(value.type_, SkyeType::Void) {
                             ast_error!(self, expr, "Cannot return value in a function that returns void");
                             ast_note!(expr, "Remove this expression");
-                            ast_note!(orig_ret_type, "Return type defined here");
-                        } else if !type_.equals(&value.type_, EqualsLevel::Typewise) {
+                            ast_note!(return_type_expr, "Return type defined here");
+                        } else if !return_type.equals(&value.type_, EqualsLevel::Typewise) {
                             ast_error!(
                                 self, expr,
                                 format!(
                                     "Returned value type ({}) does not match function return type ({})",
-                                    value.type_.stringify_native(), type_.stringify_native()
+                                    value.type_.stringify_native(), return_type.stringify_native()
                                 ).as_ref()
                             );
 
-                            ast_note!(orig_ret_type, "Return type defined here");
+                            ast_note!(return_type_expr, "Return type defined here");
                         }
                     } else {
                         unreachable!();
                     }
 
                     if is_void {
-                        if value.value.as_ref() != "" {
+                        if value.ir_value.as_ref() != "" {
                             self.definitions[index].push_indent();
-                            self.definitions[index].push(&value.value);
+                            self.definitions[index].push(&value.ir_value);
                             self.definitions[index].push(";\n");
                         }
 
@@ -5658,7 +5672,7 @@ impl CodeGen {
                         self.definitions[index].push(" ");
                         self.definitions[index].push(&tmp_var_name);
                         self.definitions[index].push(" = ");
-                        self.definitions[index].push(&final_value.value);
+                        self.definitions[index].push(&final_value.ir_value);
                         self.definitions[index].push(";\n");
 
                         buf.push_str("return ");
@@ -5667,11 +5681,11 @@ impl CodeGen {
                     }
 
                 } else {
-                    if let CurrentFn::Some(type_, expr) = &self.curr_function {
-                        if !matches!(type_, SkyeType::Void) {
+                    if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
+                        if !matches!(return_type, SkyeType::Void) {
                             token_error!(self, kw, "Cannot return no value in this function");
                             token_note!(kw, "Add a return value");
-                            ast_note!(expr, "Return type defined here");
+                            ast_note!(return_type_expr, "Return type defined here");
                         }
                     } else {
                         unreachable!();
@@ -5900,7 +5914,7 @@ impl CodeGen {
                                 drop(env);
 
                                 let previous_name = self.curr_name.clone();
-                                self.curr_name = struct_name.value.to_string();
+                                self.curr_name = struct_name.ir_value.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), index, true, ctx
@@ -5937,7 +5951,7 @@ impl CodeGen {
                                 drop(env);
 
                                 let previous_name = self.curr_name.clone();
-                                self.curr_name = struct_name.value.to_string();
+                                self.curr_name = struct_name.ir_value.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), index, true, ctx
@@ -5971,7 +5985,7 @@ impl CodeGen {
                 }
             }
             Statement::Namespace { name, body: statements } => {
-                if matches!(self.curr_function, CurrentFn::Some(..)) {
+                if matches!(self.curr_function, CurrentFn::Some { .. }) {
                     token_error!(self, name, "Namespaces are only allowed in the global scope");
                 }
 
@@ -6018,12 +6032,12 @@ impl CodeGen {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, index, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
-                    if use_value.value.len() != 0 && !*bind {
+                    if use_value.ir_value.len() != 0 && !*bind {
                         let mut buf = String::new();
 
                         if *typedef {
                             buf.push_str("typedef ");
-                            buf.push_str(&use_value.value);
+                            buf.push_str(&use_value.ir_value);
                             buf.push(' ');
                             buf.push_str(&identifier.lexeme);
                             buf.push(';');
@@ -6031,7 +6045,7 @@ impl CodeGen {
                             buf.push_str("#define ");
                             buf.push_str(&identifier.lexeme);
                             buf.push(' ');
-                            buf.push_str(&use_value.value);
+                            buf.push_str(&use_value.ir_value);
                         }
 
                         buf.push('\n');
@@ -6190,7 +6204,7 @@ impl CodeGen {
 
                                         if matches!(default, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. }) {
                                             let value = ctx.run(|ctx| self.evaluate(default, index, false, ctx)).await;
-                                            self.declarations.last_mut().unwrap().push(&value.value);
+                                            self.declarations.last_mut().unwrap().push(&value.ir_value);
                                         } else {
                                             ast_error!(self, default, "Enum value must be a literal");
                                             ast_note!(default, "The value must be known at compile time");
@@ -6608,7 +6622,7 @@ impl CodeGen {
                         self.definitions[index].push("(");
                     }
 
-                    self.definitions[index].push(&switch.value);
+                    self.definitions[index].push(&switch.ir_value);
 
                     if is_not_grouping {
                         self.definitions[index].push(")");
@@ -6659,7 +6673,7 @@ impl CodeGen {
                                     }
                                 }
 
-                                self.definitions[index].push(&real_case_evaluated.value);
+                                self.definitions[index].push(&real_case_evaluated.ir_value);
                                 self.definitions[index].push(":");
 
                                 if i != real_cases.len() - 1 {
@@ -7060,7 +7074,7 @@ impl CodeGen {
                 self.definitions[index].push(" ");
                 self.definitions[index].push(&tmp_iter_var_name);
                 self.definitions[index].push(" = ");
-                self.definitions[index].push(&iterator_raw.value);
+                self.definitions[index].push(&iterator_raw.ir_value);
                 self.definitions[index].push(";\n");
 
                 let iterator = SkyeValue::new(Rc::from(tmp_iter_var_name.as_ref()), iterator_raw.type_.clone(), iterator_raw.is_const);
@@ -7089,7 +7103,7 @@ impl CodeGen {
                                 return Ok(None);
                             }
 
-                            let iterator_val = SkyeValue::new(Rc::clone(&iterator_call.value), iterator_call.type_, false);
+                            let iterator_val = SkyeValue::new(Rc::clone(&iterator_call.ir_value), iterator_call.type_, false);
 
                             search_tok.set_lexeme("next");
                             if let Some(final_method) = self.get_method(&iterator_val, &search_tok, false, index) {
@@ -7183,7 +7197,7 @@ impl CodeGen {
 
                 self.definitions[index].push_indent();
                 self.definitions[index].push("if (");
-                self.definitions[index].push(&next_call.value);
+                self.definitions[index].push(&next_call.ir_value);
                 self.definitions[index].push(".kind != core_DOT_Option_DOT_Kind_DOT_Some) break;\n");
 
                 self.definitions[index].push_indent();
@@ -7191,7 +7205,7 @@ impl CodeGen {
                 self.definitions[index].push(" ");
                 self.definitions[index].push(&var_name.lexeme);
                 self.definitions[index].push(" = ");
-                self.definitions[index].push(&next_call.value);
+                self.definitions[index].push(&next_call.ir_value);
                 self.definitions[index].push(".Some;\n");
 
                 let continue_label = Rc::from(self.get_temporary_var());

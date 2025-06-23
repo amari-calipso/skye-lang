@@ -11,11 +11,11 @@ macro_rules! signed_op_for_bits {
                 if let Some(value) = ($left_value as $op_type).$operator(right_value) {
                     value as i128
                 } else {
-                    ast_error!($slf, $expr, "Cannot perform overflowing addition");
+                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
                     0
                 }
             } else {
-                ast_error!($slf, $expr, "Cannot perform overflowing addition");
+                ast_error!($slf, $expr, "Cannot perform overflowing operation");
                 0
             }    
         }

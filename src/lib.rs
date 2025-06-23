@@ -15,6 +15,7 @@ mod utils;
 mod tokens;
 mod scanner;
 mod ast;
+mod ir;
 mod parser;
 mod skye_type;
 mod environment;
