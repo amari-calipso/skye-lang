@@ -888,9 +888,16 @@ impl SkyeType {
     pub fn is_castable_to(&self, cast_to: &SkyeType) -> CastableHow {
         match self {
             SkyeType::Void | SkyeType::Type(_) | SkyeType::Group(..) | SkyeType::Function(..) |
-            SkyeType::Struct(..) | SkyeType::Namespace(_) | SkyeType::Template(..) |
-            SkyeType::Union(..) | SkyeType::Macro(..) => CastableHow::No,
+            SkyeType::Namespace(_) | SkyeType::Template(..) | SkyeType::Macro(..) => CastableHow::No,
             SkyeType::Unknown(_) => CastableHow::Yes,
+
+            SkyeType::Struct(..) | SkyeType::Union(..) => {
+                if matches!(cast_to, SkyeType::Struct(..) | SkyeType::Union(..)) {
+                    CastableHow::Yes
+                } else {
+                    CastableHow::No
+                }
+            }
 
             SkyeType::AnyFloat | SkyeType::F32 | SkyeType::F64 | SkyeType::Char => {
                 if matches!(
