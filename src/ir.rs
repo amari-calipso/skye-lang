@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{AstPos, Expression}, skye_type::SkyeType};
+use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token};
 
 #[derive(Clone, Debug)]
 pub struct IrStatement {
@@ -52,6 +52,13 @@ impl IrValue {
 
     pub fn empty_with_type(type_: SkyeType) -> Self {
         IrValue { data: IrValueData::Empty, type_ }
+    }
+
+    pub fn uint(value: u64, type_: SkyeType, bits: Bits) -> Self {
+        IrValue { 
+            data: IrValueData::Literal { value: Expression::UnsignedIntLiteral { value, tok: Token::empty(), bits } }, 
+            type_
+        }
     }
 }
 
