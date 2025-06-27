@@ -4784,51 +4784,59 @@ impl CodeGen {
             Expression::StaticGet(object_expr, name, gets_macro) => {
                 let object = ctx.run(|ctx| self.evaluate(&object_expr, index, allow_unknown, ctx)).await;
 
-                match object.type_.static_get(name) {
-                    GetResult::Ok(value, ..) => {
-                        let mut search_tok = name.clone();
-                        search_tok.set_lexeme(&value);
+                if let Some(full_name) = object.ir_value.type_.static_get(name) {
+                    let mut search_tok = name.clone();
+                    search_tok.set_lexeme(&full_name);
 
-                        let env = self.globals.borrow();
+                    let env = self.globals.borrow();
 
-                        if let Some(var) = env.get(&search_tok) {
-                            if *gets_macro {
-                                drop(env);
+                    if let Some(var) = env.get(&search_tok) {
+                        if *gets_macro {
+                            drop(env);
 
-                                let mut operator_token = name.clone();
-                                operator_token.set_type(TokenType::At);
+                            let mut operator_token = name.clone();
+                            operator_token.set_type(TokenType::At);
 
-                                let output_expr = Expression::Unary { op: operator_token, expr: Box::new(Expression::Variable(search_tok)), is_prefix: true };
-                                return ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await;
-                            } else {
-                                return SkyeValue::new(value, var.type_, var.is_const);
-                            }
-                        } else if let SkyeType::Type(inner_type) = &object.type_ {
-                            if let SkyeType::Enum(enum_name, ..) = &**inner_type {
-                                search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
-
-                                if let Some(var) = env.get(&search_tok) {
-                                    return SkyeValue::new(search_tok.lexeme, var.type_, var.is_const)
-                                } else {
-                                    token_error!(self, name, "Undefined property");
-                                }
-                            } else {
-                                token_error!(self, name, "Undefined property");
-                            }
+                            let output_expr = Expression::Unary { 
+                                op: operator_token, 
+                                expr: Box::new(Expression::Variable(search_tok)), 
+                                is_prefix: true 
+                            };
+                            return ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await;
                         } else {
-                            token_error!(self, name, "Undefined property");
+                            return SkyeValue::new(
+                                IrValue::new(
+                                    IrValueData::Variable { name: full_name },
+                                    var.type_
+                                ),
+                                var.is_const
+                            );
                         }
-                    }
-                    GetResult::InvalidType => {
-                        ast_error!(
-                            self, object_expr,
-                            format!(
-                                "Can only statically access namespaces, structs, enums and instances (got {})",
-                                object.type_.stringify_native()
-                            ).as_ref()
-                        );
-                    }
-                    _ => unreachable!()
+                    } else if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
+                        if let SkyeType::Enum(enum_name, ..) = &**inner_type {
+                            search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
+
+                            if let Some(var) = env.get(&search_tok) {
+                                return SkyeValue::new(
+                                    IrValue::new(
+                                        IrValueData::Variable { name: search_tok.lexeme },
+                                        var.type_
+                                    ),
+                                    var.is_const
+                                );
+                            } 
+                        }
+                    } 
+
+                    token_error!(self, name, "Undefined property");
+                } else {
+                    ast_error!(
+                        self, object_expr,
+                        format!(
+                            "Can only statically access namespaces, structs, enums and instances (got {})",
+                            object.ir_value.type_.stringify_native()
+                        ).as_ref()
+                    );
                 }
 
                 SkyeValue::get_unknown()
