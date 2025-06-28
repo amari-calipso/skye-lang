@@ -238,10 +238,10 @@ impl CodeGen {
     fn add_statement(&mut self, statement: IrStatement) {
         if let Some(curr_definition) = &self.curr_definition {
             match &mut curr_definition.borrow_mut().data {
-                IrStatement::Scope { statements } => {
-                    statements.push(statement);
+                IrStatementData::Scope { statements } => {
+                    statements.borrow_mut().push(statement);
                 }
-                IrStatement::Function { body, .. } => {
+                IrStatementData::Function { body, .. } => {
                     if let Some(body) = body {
                         body.push(statement);
                     }
@@ -255,11 +255,11 @@ impl CodeGen {
 
     fn add_statement_at_idx(&mut self, index: usize, statement: IrStatement) {
         if let Some(definition) = self.definitions.get(index) {
-            match &mut *definition.borrow_mut() {
-                IrStatement::Scope { statements } => {
-                    statements.push(statement);
+            match &mut definition.borrow_mut().data {
+                IrStatementData::Scope { statements } => {
+                    statements.borrow_mut().push(statement);
                 }
-                IrStatement::Function { body, .. } => {
+                IrStatementData::Function { body, .. } => {
                     if let Some(body) = body {
                         body.push(statement);
                     }
@@ -268,6 +268,14 @@ impl CodeGen {
             }
         } else {
             panic!("cannot find definition at index {}", index);
+        }
+    }
+
+    fn add_statement_to_scope(scope: &IrStatementData, statement: IrStatement) {
+        if let IrStatementData::Scope { statements } = scope {
+            statements.borrow().push(statement);
+        } else {
+            panic!("add_statement_to_scope didn't get a scope")
         }
     }
 
@@ -581,10 +589,10 @@ impl CodeGen {
                     };
 
                     // this evaluation will be performed again later, so generate the code in a scratch buffer
-                    let tmp_index = self.definitions.len();
-                    self.definitions.push(CodeOutput::new());
-                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, tmp_index, allow_unknown, ctx)).await;
-                    self.definitions.swap_remove(tmp_index);
+                    let previous_definition = self.curr_definition.clone();
+                    self.curr_definition = Some(Rc::new(RefCell::new(IrStatement::empty_scope(callee_expr.get_pos()))));
+                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, 0, allow_unknown, ctx)).await;
+                    self.curr_definition = previous_definition;
 
                     let mut do_write = true;
                     let interpolated_expr = 'interpolated_expr_blk: {
@@ -845,16 +853,17 @@ impl CodeGen {
                                         if let SkyeType::Type(inner_option_type) = option_type.ir_value.type_ {
                                             let mangled_option_type = inner_option_type.mangle();
 
-                                            let tmp_var = self.get_temporary_var();
+                                            let tmp_var: Rc<str> = self.get_temporary_var().into();
 
-                                            self.definitions[index].push_indent();
-                                            self.definitions[index].push(&to_cast.ir_value.type_.stringify());
-                                            self.definitions[index].push(" ");
-                                            self.definitions[index].push(&tmp_var);
-                                            self.definitions[index].push(" = ");
-                                            self.definitions[index].push(&to_cast.ir_value);
-                                            self.definitions[index].push(";\n");
-                                            
+                                            self.add_statement(IrStatement {
+                                                pos: callee_expr.get_pos(),
+                                                data: IrStatementData::VarDecl { 
+                                                    name: Rc::clone(&tmp_var), 
+                                                    type_: to_cast.ir_value.type_.clone(), 
+                                                    initializer: Some(to_cast.ir_value.clone())
+                                                }
+                                            });
+
                                             // tmp.kind == kind_we_are_trying_to_cast_to ? Some(tmp.Variant) : None
                                             return Some(SkyeValue::new(
                                                 IrValue::new(
@@ -867,8 +876,8 @@ impl CodeGen {
                                                                         left: Box::new(IrValue::new(
                                                                             IrValueData::Get { 
                                                                                 from: Box::new(IrValue::new(
-                                                                                    IrValueData::Variable { name: tmp_var.into() },
-                                                                                    to_cast.ir_value.type_
+                                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                                                                    to_cast.ir_value.type_.clone()
                                                                                 )),
                                                                                 name: Rc::from("kind") 
                                                                             },
@@ -894,7 +903,7 @@ impl CodeGen {
                                                                         args: vec![IrValue::new(
                                                                             IrValueData::Get { 
                                                                                 from: Box::new(IrValue::new(
-                                                                                    IrValueData::Variable { name: tmp_var.into() },
+                                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var) },
                                                                                     to_cast.ir_value.type_
                                                                                 )), 
                                                                                 name: mangled.into() 
@@ -902,14 +911,14 @@ impl CodeGen {
                                                                             SkyeType::Void // TODO
                                                                         )]
                                                                     },
-                                                                    *inner_option_type
+                                                                    *inner_option_type.clone()
                                                                 )),
                                                                 else_branch: Box::new(IrValue::new(
                                                                     IrValueData::Variable { name: format!("{}_DOT_None", mangled_option_type).into() },
-                                                                    *inner_option_type
+                                                                    *inner_option_type.clone()
                                                                 ))
                                                             },
-                                                            *inner_option_type
+                                                            *inner_option_type.clone()
                                                         )
                                                     )),
                                                     *inner_option_type
@@ -2377,13 +2386,14 @@ impl CodeGen {
 
                 let value: Rc<str> = self.get_temporary_var().into();
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&type_.stringify());
-                self.definitions[index].push(" ");
-                self.definitions[index].push(&value);
-                self.definitions[index].push(" = ");
-                self.definitions[index].push(&item.ir_value);
-                self.definitions[index].push(";\n");
+                self.add_statement(IrStatement {
+                    pos: item_expr.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&value), 
+                        type_: type_.clone(), 
+                        initializer: Some(item.ir_value.clone()) 
+                    }
+                });
 
                 let mut items = Vec::new();
                 for _ in 0 .. size {
@@ -2584,7 +2594,11 @@ impl CodeGen {
                                 let mut custom_token = op.clone();
                                 custom_token.set_lexeme("core_DOT_Option");
 
-                                let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(custom_token)), paren: op.clone(), args: vec![*inner_expr.clone()] };
+                                let subscript_expr = Expression::Subscript { 
+                                    subscripted: Box::new(Expression::Variable(custom_token)), 
+                                    paren: op.clone(), 
+                                    args: vec![*inner_expr.clone()] 
+                                };
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
@@ -2623,13 +2637,14 @@ impl CodeGen {
                                                 } else {
                                                     let tmp_var: Rc<str> = self.get_temporary_var().into();
 
-                                                    self.definitions[index].push_indent();
-                                                    self.definitions[index].push(&new_inner.ir_value.type_.stringify());
-                                                    self.definitions[index].push(" ");
-                                                    self.definitions[index].push(&tmp_var);
-                                                    self.definitions[index].push(" = ");
-                                                    self.definitions[index].push(&new_inner.ir_value);
-                                                    self.definitions[index].push(";\n");
+                                                    self.add_statement(IrStatement { 
+                                                        pos: expr.get_pos(),
+                                                        data: IrStatementData::VarDecl { 
+                                                            name: Rc::clone(&tmp_var), 
+                                                            type_: new_inner.ir_value.type_.clone(), 
+                                                            initializer: Some(new_inner.ir_value.clone()) 
+                                                        }
+                                                    });
 
                                                     IrValue::new(
                                                         IrValueData::Variable { name: tmp_var },
@@ -2680,13 +2695,14 @@ impl CodeGen {
                                                 } else {
                                                     let tmp_var: Rc<str> = self.get_temporary_var().into();
 
-                                                    self.definitions[index].push_indent();
-                                                    self.definitions[index].push(&new_inner.ir_value.type_.stringify());
-                                                    self.definitions[index].push(" ");
-                                                    self.definitions[index].push(&tmp_var);
-                                                    self.definitions[index].push(" = ");
-                                                    self.definitions[index].push(&new_inner.ir_value);
-                                                    self.definitions[index].push(";\n");
+                                                    self.add_statement(IrStatement { 
+                                                        pos: expr.get_pos(),
+                                                        data: IrStatementData::VarDecl { 
+                                                            name: Rc::clone(&tmp_var), 
+                                                            type_: new_inner.ir_value.type_.clone(), 
+                                                            initializer: Some(new_inner.ir_value.clone()) 
+                                                        }
+                                                    });
 
                                                     IrValue::new(
                                                         IrValueData::Variable { name: tmp_var },
@@ -2897,42 +2913,76 @@ impl CodeGen {
 
                                 let tmp_var_name: Rc<str> = self.get_temporary_var().into();
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push(&full_name);
-                                self.definitions[index].push(" ");
-                                self.definitions[index].push(&tmp_var_name);
-                                self.definitions[index].push(" = ");
-                                self.definitions[index].push(&inner.ir_value);
-                                self.definitions[index].push(";\n");
+                                self.add_statement(IrStatement { 
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::VarDecl { 
+                                        name: Rc::clone(&tmp_var_name), 
+                                        type_: inner.ir_value.type_.clone(), 
+                                        initializer: Some(inner.ir_value.clone()) 
+                                    }
+                                });
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("if (");
-                                self.definitions[index].push(&tmp_var_name);
-                                self.definitions[index].push(".kind == ");
+                                let mut scope = IrStatement::empty_scope(expr.get_pos());
 
                                 match name.as_ref() {
                                     "core_DOT_Option" => {
-                                        self.definitions[index].push("core_DOT_Option_DOT_Kind_DOT_None) {\n");
-                                        self.definitions[index].inc_indent();
+                                        // if (tmp.kind == core_DOT_Option_DOT_Kind_DOT_None) ...
+                                        self.add_statement(IrStatement { 
+                                            pos: expr.get_pos(),
+                                            data: IrStatementData::If { 
+                                                condition: IrValue::new(
+                                                    IrValueData::Binary { 
+                                                        op: BinaryOp::Equal, 
+                                                        left: Box::new(IrValue::new(
+                                                            IrValueData::Get { 
+                                                                from: Box::new(IrValue::new(
+                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                    SkyeType::Void // TODO
+                                                                )), 
+                                                                name: Rc::from("kind") 
+                                                            },
+                                                            SkyeType::Void // TODO
+                                                        )), 
+                                                        right: Box::new(IrValue::new(
+                                                            IrValueData::Variable { name: Rc::from("core_DOT_Option_DOT_Kind_DOT_None") },
+                                                            SkyeType::Void // TODO
+                                                        ))
+                                                    },
+                                                    SkyeType::U8
+                                                ), 
+                                                then_branch: Box::new(scope.clone()), 
+                                                else_branch: None 
+                                            }
+                                        });
 
+                                        let previous_definition = self.curr_definition.clone();
+                                        self.curr_definition = Some(Rc::new(RefCell::new(scope)));
                                         ctx.run(|ctx| self.handle_all_deferred(index, false, expr, "in the propagation branch of this expression", ctx)).await;
-
-                                        self.definitions[index].push_indent();
-                                        self.definitions[index].push("return ");
+                                        self.curr_definition = previous_definition;
 
                                         if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
-                                            self.definitions[index].push(&tmp_var_name);
-                                            self.definitions[index].push(";\n");
+                                            Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                pos: expr.get_pos(),
+                                                data: IrStatementData::Return { 
+                                                    value: Some(IrValue::new(
+                                                        IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                        SkyeType::Void // TODO
+                                                    )) 
+                                                }
+                                            });
                                         } else if let SkyeType::Enum(full_name, ..) = &return_type {
-                                            self.definitions[index].push(&full_name);
-                                            self.definitions[index].push("_DOT_None;\n");
+                                            Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                pos: expr.get_pos(),
+                                                data: IrStatementData::Return { 
+                                                    value: Some(IrValue::new(
+                                                        IrValueData::Variable { name: format!("{}_DOT_None", full_name).into() },
+                                                        SkyeType::Void // TODO
+                                                    )) 
+                                                }
+                                            });
                                         } else {
                                             unreachable!();
                                         }
-
-                                        self.definitions[index].dec_indent();
-                                        self.definitions[index].push_indent();
-                                        self.definitions[index].push("}\n");
 
                                         if let Some(variant) = variants.as_ref().unwrap().get("Some") {
                                             SkyeValue::new(
@@ -2954,25 +3004,79 @@ impl CodeGen {
                                         }
                                     }
                                     "core_DOT_Result" => {
-                                        self.definitions[index].push("core_DOT_Result_DOT_Kind_DOT_Error) {\n");
-                                        self.definitions[index].inc_indent();
+                                        // if (tmp.kind == core_DOT_Result_DOT_Kind_DOT_Error) ...
+                                        self.add_statement(IrStatement { 
+                                            pos: expr.get_pos(),
+                                            data: IrStatementData::If { 
+                                                condition: IrValue::new(
+                                                    IrValueData::Binary { 
+                                                        op: BinaryOp::Equal, 
+                                                        left: Box::new(IrValue::new(
+                                                            IrValueData::Get { 
+                                                                from: Box::new(IrValue::new(
+                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                    SkyeType::Void // TODO
+                                                                )), 
+                                                                name: Rc::from("kind") 
+                                                            },
+                                                            SkyeType::Void // TODO
+                                                        )), 
+                                                        right: Box::new(IrValue::new(
+                                                            IrValueData::Variable { name: Rc::from("core_DOT_Result_DOT_Kind_DOT_Error") },
+                                                            SkyeType::Void // TODO
+                                                        ))
+                                                    },
+                                                    SkyeType::U8
+                                                ), 
+                                                then_branch: Box::new(scope.clone()), 
+                                                else_branch: None 
+                                            }
+                                        });
 
+                                        let previous_definition = self.curr_definition.clone();
+                                        self.curr_definition = Some(Rc::new(RefCell::new(scope)));
                                         ctx.run(|ctx| self.handle_all_deferred(index, false, expr, "in the propagation branch of this expression", ctx)).await;
-
-                                        self.definitions[index].push_indent();
-                                        self.definitions[index].push("return ");
+                                        self.curr_definition = previous_definition;
 
                                         if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
-                                            self.definitions[index].push(&tmp_var_name);
-                                            self.definitions[index].push(";\n");
+                                            Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                pos: expr.get_pos(),
+                                                data: IrStatementData::Return { 
+                                                    value: Some(IrValue::new(
+                                                        IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                        SkyeType::Void // TODO
+                                                    )) 
+                                                }
+                                            });
                                         } else if let SkyeType::Enum(full_name, return_variants, _) = &return_type {
                                             if let Some(return_variant) = return_variants.as_ref().unwrap().get("Error") {
                                                 if let Some(variant) = variants.as_ref().unwrap().get("Error") {
                                                     if variant.equals(return_variant, EqualsLevel::Typewise) {
-                                                        self.definitions[index].push(&full_name);
-                                                        self.definitions[index].push("_DOT_Error(");
-                                                        self.definitions[index].push(&tmp_var_name);
-                                                        self.definitions[index].push(".Error);\n");
+                                                        // return type::Error(tmp.Error)
+                                                        Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                            pos: expr.get_pos(),
+                                                            data: IrStatementData::Return { 
+                                                                value: Some(IrValue::new(
+                                                                    IrValueData::Call {
+                                                                        callee: Box::new(IrValue::new(
+                                                                            IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                            SkyeType::Void // TODO
+                                                                        )),
+                                                                        args: vec![IrValue::new(
+                                                                            IrValueData::Get { 
+                                                                                from: Box::new(IrValue::new(
+                                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                                    SkyeType::Void // TODO
+                                                                                )), 
+                                                                                name: Rc::from("Error")
+                                                                            },
+                                                                            SkyeType::Void // TODO
+                                                                        )]
+                                                                    },
+                                                                    SkyeType::Void // TODO
+                                                                )) 
+                                                            }
+                                                        });
                                                     } else {
                                                         ast_error!(
                                                             self, expr,
@@ -3006,16 +3110,19 @@ impl CodeGen {
 
                                                 ast_note!(return_expr, "Return type defined here");
                                             } else {
-                                                self.definitions[index].push(&full_name);
-                                                self.definitions[index].push("_DOT_Error;\n");
+                                                Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                    pos: expr.get_pos(),
+                                                    data: IrStatementData::Return { 
+                                                        value: Some(IrValue::new(
+                                                            IrValueData::Variable { name: format!("{}_DOT_Error", full_name).into() },
+                                                            SkyeType::Void // TODO
+                                                        )) 
+                                                    }
+                                                });
                                             }
                                         } else {
                                             unreachable!();
                                         }
-
-                                        self.definitions[index].dec_indent();
-                                        self.definitions[index].push_indent();
-                                        self.definitions[index].push("}\n");
 
                                         if let Some(variant) = variants.as_ref().unwrap().get("Ok") {
                                             SkyeValue::new(

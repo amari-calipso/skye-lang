@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token};
 
@@ -6,6 +6,15 @@ use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token}
 pub struct IrStatement {
     pub data: IrStatementData,
     pub pos: AstPos
+}
+
+impl IrStatement {
+    pub fn empty_scope(pos: AstPos) -> Self {
+        IrStatement { 
+            data: IrStatementData::Scope { statements: Rc::new(RefCell::new(Vec::new())) }, 
+            pos 
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -20,7 +29,7 @@ pub enum IrStatementData {
     Undefine { name: Rc<str> },
     VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue> }, // TODO: add qualifiers
     If { condition: IrValue, then_branch: Box<IrStatement>, else_branch: Option<Box<IrStatement>> },
-    Scope { statements: Vec<IrStatement> },
+    Scope { statements: Rc<RefCell<Vec<IrStatement>>> },
     Return { value: Option<IrValue> },
     Expression { value: IrValue },
     Goto { label: Rc<str> },
