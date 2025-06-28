@@ -25,7 +25,7 @@ pub enum IrStatementData {
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, type_: SkyeType }, // TODO: add qualifiers
+    Function { name: Rc<str>, body: Option<Vec<IrStatement>>, type_: SkyeType }, // TODO: add qualifiers
     Struct { name: Rc<str>, type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant> },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
@@ -82,7 +82,7 @@ pub enum IrValueData {
     Ternary { condition: Box<IrValue>, then_branch: Box<IrValue>, else_branch: Box<IrValue> },
     Get { from: Box<IrValue>, name: Rc<str> },
     DereferenceGet { from: Box<IrValue>, name: Rc<str> }, // arrow operator
-    // TODO: compound literal
+    CompoundLiteral { type_: SkyeType, items: HashMap<Rc<str>, IrValue> },
     Grouping(Box<IrValue>), // TODO: remove this and automatically figure out grouping in backend
     Binary { left: Box<IrValue>, op: BinaryOp, right: Box<IrValue> },
     Assign { target: Box<IrValue>, op: AssignOp, value: Box<IrValue> },

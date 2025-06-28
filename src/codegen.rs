@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrValue, IrValueData}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -109,11 +109,7 @@ const I32_MAIN_PLUS_ARGS: &str = concat!(
     "}\n\n"
 );
 
-const SKYE_INIT_DECL: &str = "void _SKYE_INIT();\n";
-const SKYE_INIT_DEF:  &str = "void _SKYE_INIT() {\n";
-
 const INIT_DEF_INDEX: usize = 0;
-const ANY_DEF_START_INDEX: usize = 1;
 
 #[derive(Clone, Debug)]
 enum CurrentFn {
@@ -173,14 +169,8 @@ pub struct CodeGen {
     source_path: Option<Box<PathBuf>>,
     skye_path:   PathBuf,
 
-    strings:            HashMap<Rc<str>, usize>,
-    arrays:             HashSet<Rc<str>>,
-    strings_code:       CodeOutput,
-    includes:           CodeOutput,
-    declarations:       Vec<CodeOutput>,
-    struct_definitions: HashMap<Rc<str>, CodeOutput>,
-    struct_defs_order:  Vec<Rc<str>>,
-    definitions:        Vec<CodeOutput>,
+    definitions: Vec<Rc<RefCell<IrStatement>>>,
+    curr_definition: Option<Rc<RefCell<IrStatement>>>,
 
     string_type: Option<SkyeType>,
     tmp_var_cnt: usize,
@@ -200,7 +190,6 @@ pub struct CodeGen {
 impl CodeGen {
     pub fn new(path: Option<&Path>, compile_mode: CompileMode, skye_path: PathBuf) -> Self {
         let globals = Rc::new(RefCell::new(Environment::new()));
-
         globals.borrow_mut().define(
             Rc::from("voidptr"),
             SkyeVariable::new(
@@ -214,23 +203,19 @@ impl CodeGen {
             )
         );
 
-        let mut declarations = Vec::new();
-        declarations.push(CodeOutput::new());
-        declarations.last_mut().unwrap().push(SKYE_INIT_DECL);
-
         let mut definitions = Vec::new();
-        definitions.push(CodeOutput::new());
-        definitions.last_mut().unwrap().push(SKYE_INIT_DEF);
-        definitions.last_mut().unwrap().inc_indent();
+        definitions.push(Rc::new(RefCell::new(IrStatement {
+            data: IrStatementData::Function { 
+                name: Rc::from("_SKYE_INIT"), 
+                body: Some(Vec::new()), 
+                type_: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true)
+            },
+            pos: AstPos::empty()
+        })));
 
         CodeGen {
-            struct_definitions: HashMap::new(),
-            struct_defs_order: Vec::new(),
-            declarations, definitions,
-            strings_code: CodeOutput::new(),
-            includes: CodeOutput::new(),
-            strings: HashMap::new(),
-            arrays: HashSet::new(),
+            definitions,
+            curr_definition: None,
             curr_name: String::new(),
             environment: Rc::clone(&globals),
             deferred: Rc::new(RefCell::new(Vec::new())),
@@ -247,6 +232,42 @@ impl CodeGen {
             Rc::clone(&name)
         } else {
             Rc::from(format!("{}_DOT_{}", self.curr_name, name))
+        }
+    }
+
+    fn add_statement(&mut self, statement: IrStatement) {
+        if let Some(curr_definition) = &self.curr_definition {
+            match &mut curr_definition.borrow_mut().data {
+                IrStatement::Scope { statements } => {
+                    statements.push(statement);
+                }
+                IrStatement::Function { body, .. } => {
+                    if let Some(body) = body {
+                        body.push(statement);
+                    }
+                }
+                t => panic!("cannot add definition to {:?}", t)
+            }
+        } else {
+            self.definitions.push(Rc::new(RefCell::new(statement)));
+        }
+    }
+
+    fn add_statement_at_idx(&mut self, index: usize, statement: IrStatement) {
+        if let Some(definition) = self.definitions.get(index) {
+            match &mut *definition.borrow_mut() {
+                IrStatement::Scope { statements } => {
+                    statements.push(statement);
+                }
+                IrStatement::Function { body, .. } => {
+                    if let Some(body) = body {
+                        body.push(statement);
+                    }
+                }
+                t => panic!("cannot add definition to {:?}", t)
+            }
+        } else {
+            panic!("cannot find definition at index {}", index);
         }
     }
 
@@ -5279,9 +5300,26 @@ impl CodeGen {
                         token_error!(self, name, "\"main\" function cannot be #init");
                     }
 
-                    self.definitions[INIT_DEF_INDEX].push_indent();
-                    self.definitions[INIT_DEF_INDEX].push(&full_name);
-                    self.definitions[INIT_DEF_INDEX].push("();\n");
+                    self.add_statement_at_idx(
+                        INIT_DEF_INDEX,
+                        IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Expression { 
+                                value: IrValue::new(
+                                    IrValueData::Call { 
+                                        callee: Box::new(IrValue::new(
+                                            IrValueData::Variable { 
+                                                name: Rc::clone(&full_name)
+                                            },
+                                            type_.clone()
+                                        )), 
+                                        args: Vec::new()
+                                    },
+                                    SkyeType::Void
+                                )
+                            }
+                        }
+                    );
                 }
 
                 // main function handling
