@@ -7836,7 +7836,7 @@ impl CodeGen {
         Ok(None)
     }
 
-    fn compile_internal(&mut self, statements: Vec<Statement>) {
+    pub fn compile(&mut self, statements: Vec<Statement>) {
         let mut stack = reblessive::Stack::new();
 
         for statement in statements {
