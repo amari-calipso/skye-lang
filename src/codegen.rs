@@ -169,7 +169,7 @@ pub struct CodeGen {
     source_path: Option<Box<PathBuf>>,
     skye_path:   PathBuf,
 
-    definitions: Vec<Rc<RefCell<IrStatement>>>,
+    definitions:     Vec<Rc<RefCell<IrStatement>>>,
     curr_definition: Option<Rc<RefCell<IrStatement>>>,
 
     string_type: Option<SkyeType>,
@@ -3339,63 +3339,107 @@ impl CodeGen {
                     }
                     TokenType::LogicOr => {
                         let new_left = left.follow_reference(self.external_zero_check(op, index));
+                        let result_type = new_left.ir_value.type_.clone();
 
                         match new_left.ir_value.type_.implements_op(Operator::Or) {
                             ImplementsHow::Native(compatible_types) => {
                                 // needed so short circuiting can work
-                                let tmp_var: Rc<str> = self.get_temporary_var().into();
+                                let result_tmp: Rc<str> = self.get_temporary_var().into();
+                                let left_tmp: Rc<str> = self.get_temporary_var().into();
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("u8 ");
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(";\n");
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::VarDecl { 
+                                        name: Rc::clone(&result_tmp), 
+                                        type_: result_type.clone(), 
+                                        initializer: None 
+                                    } 
+                                });
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("if (");
-                                self.definitions[index].push(&new_left.ir_value);
-                                self.definitions[index].push(") {\n");
-                                self.definitions[index].inc_indent();
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::VarDecl { 
+                                        name: Rc::clone(&left_tmp), 
+                                        type_: result_type.clone(), 
+                                        initializer: Some(new_left.ir_value)
+                                    } 
+                                });
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(" = 1;\n");
-                                self.definitions[index].dec_indent();
+                                let mut scope = IrStatement::empty_scope(expr.get_pos());
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("} else {\n");
-                                self.definitions[index].inc_indent();
+                                let left_tmp_ir_value = IrValue::new(
+                                    IrValueData::Variable { name: Rc::clone(&left_tmp) },
+                                    result_type.clone()
+                                );
 
+                                // if (tmp_left) tmp = tmp_left else tmp = right
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::If { 
+                                        condition: left_tmp_ir_value.clone(), 
+                                        then_branch: Box::new(IrStatement {
+                                            pos: expr.get_pos(),
+                                            data: IrStatementData::Expression { 
+                                                value: IrValue::new(
+                                                    IrValueData::Assign {
+                                                        op: AssignOp::None,  
+                                                        target: Box::new(IrValue::new(
+                                                            IrValueData::Variable { name: Rc::clone(&result_tmp) },
+                                                            result_type.clone()
+                                                        )), 
+                                                        value: Box::new(left_tmp_ir_value)
+                                                    },
+                                                    result_type.clone()
+                                                ) 
+                                            }
+                                        }), 
+                                        else_branch: Some(Box::new(scope.clone()))
+                                    }
+                                });
+
+                                let previous_definition = self.curr_definition.clone();
+                                self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
+                                
                                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
                                     .follow_reference(self.external_zero_check(op, index));
 
+                                self.curr_definition = previous_definition;
+
                                 if !(
-                                    matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
-                                    new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
+                                    matches!(result_type, SkyeType::Unknown(_)) ||
+                                    result_type.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                                     compatible_types.contains(&right.ir_value.type_)
                                 ) {
                                     ast_error!(
                                         self, right_expr,
                                         format!(
                                             "Left operand type ({}) does not match right operand type ({})",
-                                            new_left.ir_value.type_.stringify_native(), right.ir_value.type_.stringify_native()
+                                            result_type.stringify_native(), right.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
                                 }
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(" = ");
-                                self.definitions[index].push(&right.ir_value);
-                                self.definitions[index].push(";\n");
-                                self.definitions[index].dec_indent();
-
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("}\n");
+                                Self::add_statement_to_scope(&scope.data, IrStatement { 
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::Expression { 
+                                        value: IrValue::new(
+                                            IrValueData::Assign { 
+                                                op: AssignOp::None, 
+                                                target: Box::new(IrValue::new(
+                                                    IrValueData::Variable { name: Rc::clone(&result_tmp) },
+                                                    result_type.clone()
+                                                )),
+                                                value: Box::new(right.ir_value)
+                                            },
+                                            result_type.clone()
+                                        )
+                                    }, 
+                                });
 
                                 SkyeValue::new(
                                     IrValue::new(
-                                        IrValueData::Variable { name: tmp_var },
-                                        SkyeType::U8
+                                        IrValueData::Variable { name: result_tmp },
+                                        result_type.clone()
                                     ), 
                                     false
                                 )
@@ -5092,28 +5136,29 @@ impl CodeGen {
 
                 let value = ctx.run(|ctx| self.evaluate(&expr, index, false, ctx)).await;
 
-                if !value.type_.can_be_instantiated(true) {
+                if !value.ir_value.type_.can_be_instantiated(true) {
                     ast_error!(self, expr, "Cannot use compile-time type as a standalone expression");
                     ast_note!(
                         expr,
                         format!(
                             "This expression has type {}",
-                            value.type_.stringify_native()
+                            value.ir_value.type_.stringify_native()
                         ).as_str()
                     );
                 }
 
-                if let SkyeType::Enum(.., base_name) = value.type_ {
+                if let SkyeType::Enum(.., base_name) = value.ir_value.type_ {
                     if base_name.as_ref() == "core_DOT_Result" {
                         ast_warning!(expr, "Error is being ignored implictly");
                         ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
                     }
                 }
 
-                if value.ir_value.as_ref() != "" { // can happen with expressions returning void
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push(&value.ir_value);
-                    self.definitions[index].push(";\n");
+                if !matches!(value.ir_value.data, IrValueData::Empty) {
+                    self.add_statement(IrStatement {
+                        pos: expr.get_pos(),
+                        data: IrStatementData::Expression { value: value.ir_value }
+                    });
                 }
             }
             Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, qualifiers } => {
@@ -7791,56 +7836,15 @@ impl CodeGen {
         Ok(None)
     }
 
-    fn compile_internal(&mut self, statements: Vec<Statement>, index: usize) {
+    fn compile_internal(&mut self, statements: Vec<Statement>) {
         let mut stack = reblessive::Stack::new();
 
         for statement in statements {
-            let _ = stack.enter(|ctx| self.execute(&statement, index, ctx)).finish();
+            let _ = stack.enter(|ctx| self.execute(&statement, 0, ctx)).finish();
         }
-    }
-
-    pub fn compile(&mut self, statements: Vec<Statement>) {
-        self.compile_internal(statements, ANY_DEF_START_INDEX);
-        self.definitions[INIT_DEF_INDEX].push("}\n\n"); // closes _SKYE_INIT block
     }
 
     pub fn get_output(&self) -> Option<String> {
-        if self.errors == 0 {
-            let mut output = String::from("// Hello from Skye!! ^_^\n\n");
-
-            if self.includes.code.len() != 0 {
-                output.push_str(&self.includes.code);
-                output.push('\n');
-            }
-
-            if self.strings_code.code.len() != 0 {
-                output.push_str(&self.strings_code.code);
-                output.push('\n');
-            }
-
-            if self.declarations.len() != 0 {
-                for declaration in &self.declarations {
-                    if !declaration.code.contains("_UNKNOWN_") {
-                        output.push_str(&declaration.code);
-                    }
-                }
-
-                output.push('\n');
-            }
-
-            for definition in &self.struct_defs_order {
-                if !definition.contains("_UNKNOWN_") {
-                    output.push_str(&self.struct_definitions.get(definition).unwrap().code);
-                }
-            }
-
-            for definition in &self.definitions {
-                output.push_str(&definition.code);
-            }
-
-            Some(output)
-        } else {
-            None
-        }
+        todo!("remove")
     }
 }
