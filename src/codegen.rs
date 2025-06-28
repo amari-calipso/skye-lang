@@ -422,27 +422,25 @@ impl CodeGen {
     }
 
     fn get_method(&mut self, object: &SkyeValue, name: &Token, strict: bool, index: usize) -> Option<SkyeValue> {
-        match object.type_.get_method(name, strict) {
-            GetResult::Ok(value, ..) => {
-                let search_tok = Token::dummy(Rc::clone(&value));
-
-                let result = self.globals.borrow().get(&search_tok);
-
-                if let Some(var) = result {
-                    return Some(SkyeValue::with_self_info(
-                        value, var.type_, true,
-                        object.type_.get_self(
-                            &object.ir_value,
-                            object.is_const,
-                            self.external_zero_check(name, index)
-                        ).expect("get_self failed")
-                    ))
-                } else {
-                    None
-                }
+        if let Some(full_name) = object.ir_value.type_.get_method(name, strict) {
+            let search_tok = Token::dummy(Rc::clone(&full_name));
+            if let Some(var) = self.globals.borrow().get(&search_tok) {
+                return Some(SkyeValue::with_self_info(
+                    IrValue::new(
+                        IrValueData::Variable { name: full_name },
+                        var.type_
+                    ),
+                    true,
+                    object.ir_value.type_.get_self(
+                        &object.ir_value,
+                        object.is_const,
+                        self.external_zero_check(name, index)
+                    ).expect("get_self failed")
+                ));
             }
-            _ => None
         }
+        
+        None
     }
 
     fn split_interpolated_string(&mut self, str: &Rc<str>) -> Vec<InterpolatedStringPortion> {
