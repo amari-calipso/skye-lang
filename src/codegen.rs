@@ -463,7 +463,7 @@ impl CodeGen {
                     object.ir_value.type_.get_self(
                         &object.ir_value,
                         object.is_const,
-                        self.external_zero_check(name, index)
+                        self.external_zero_check(name)
                     ).expect("get_self failed")
                 ));
             }
@@ -2033,23 +2033,40 @@ impl CodeGen {
         }
     }
 
-    async fn zero_check(&mut self, value: &SkyeValue, tok: &Token, msg: &str, index: usize, ctx: &mut reblessive::Stk) -> Rc<str> {
+    async fn zero_check(&mut self, value: &SkyeValue, tok: &Token, msg: &str, ctx: &mut reblessive::Stk) -> IrValue {
         if matches!(self.compile_mode, CompileMode::Debug) {
-            let tmp_var = self.get_temporary_var();
+            let tmp_var: Rc<str> = self.get_temporary_var().into();
+            let type_ = value.ir_value.type_.clone();
 
-            self.definitions[index].push_indent();
-            self.definitions[index].push(&value.ir_value.type_.stringify());
-            self.definitions[index].push(" ");
-            self.definitions[index].push(&tmp_var);
-            self.definitions[index].push(" = ");
-            self.definitions[index].push(&value.ir_value);
-            self.definitions[index].push(";\n");
+            self.add_statement(IrStatement { 
+                pos: tok.get_pos(),
+                data: IrStatementData::VarDecl { 
+                    name: Rc::clone(&tmp_var), 
+                    type_: type_.clone(), 
+                    initializer: Some(value.ir_value)
+                }
+            });
 
-            self.definitions[index].push_indent();
-            self.definitions[index].push("if (");
-            self.definitions[index].push(&tmp_var);
-            self.definitions[index].push(" == 0) {\n");
-            self.definitions[index].inc_indent();
+            let mut scope = IrStatement::empty_scope(tok.get_pos());
+
+            self.add_statement(IrStatement { 
+                pos: tok.get_pos(),
+                data: IrStatementData::If { 
+                    condition: IrValue::new(
+                        IrValueData::Binary { 
+                            op: BinaryOp::Equal,
+                            left: Box::new(IrValue::new(
+                                IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                type_.clone()
+                            )),
+                            right: Box::new(IrValue::any_int(0))
+                        },
+                        SkyeType::U8
+                    ), 
+                    then_branch: Box::new(scope.clone()), 
+                    else_branch: None
+                }
+            });
 
             let mut at_tok = tok.clone();
             at_tok.set_type(TokenType::At);
@@ -2064,11 +2081,10 @@ impl CodeGen {
                 false
             ));
 
-            let _ = ctx.run(|ctx| self.execute(&panic_stmt, index, ctx)).await;
-
-            self.definitions[index].dec_indent();
-            self.definitions[index].push_indent();
-            self.definitions[index].push("}\n");
+            let previous_definition = self.curr_definition.clone();
+            self.curr_definition = Some(Rc::new(RefCell::new(scope)));
+            let _ = ctx.run(|ctx| self.execute(&panic_stmt, 0, ctx)).await;
+            self.curr_definition = previous_definition;
 
             Rc::from(tmp_var.as_ref())
         } else {
@@ -2076,10 +2092,10 @@ impl CodeGen {
         }
     }
 
-    fn external_zero_check<'a>(&'a mut self, tok: &'a Token, index: usize) -> Box<impl FnMut(SkyeValue) -> Rc<str> + 'a> {
+    fn external_zero_check<'a>(&'a mut self, tok: &'a Token) -> Box<impl FnMut(SkyeValue) -> IrValue + 'a> {
         Box::new(move |value| {
             let mut stack = reblessive::Stack::new();
-            stack.enter(|ctx| self.zero_check(&value, tok, "Null pointer dereference", index, ctx)).finish()
+            stack.enter(|ctx| self.zero_check(&value, tok, "Null pointer dereference", ctx)).finish()
         })
     }
 
@@ -2100,7 +2116,7 @@ impl CodeGen {
                     new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                     compatible_types.contains(&right.ir_value.type_)
                 {
-                    let right_value = ctx.run(|ctx| self.zero_check(&right, op, "Division by zero", index, ctx)).await;
+                    let right_value = ctx.run(|ctx| self.zero_check(&right, op, "Division by zero", ctx)).await;
 
                     if let Some(type_) = forced_return_type {
                         SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right_value)), type_, false)
@@ -2505,7 +2521,7 @@ impl CodeGen {
                 if *is_prefix {
                     match op.type_ {
                         TokenType::PlusPlus => {
-                            let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                            let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
                                 ast_error!(self, inner_expr, "Cannot apply '++' operator on const value");
@@ -2521,7 +2537,7 @@ impl CodeGen {
                             }
                         }
                         TokenType::MinusMinus => {
-                            let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                            let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
                                 ast_error!(self, inner_expr, "Cannot apply '--' operator on const value");
@@ -2627,7 +2643,7 @@ impl CodeGen {
                                     SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(inner.ir_value.type_), false, true))))
                                 }
                                 _ => {
-                                    let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                                    let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                                     match new_inner.ir_value.type_.implements_op(Operator::Ref) {
                                         ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
@@ -2685,7 +2701,7 @@ impl CodeGen {
                                     SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(inner.ir_value.type_), true, true))))
                                 }
                                 _ => {
-                                    let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                                    let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                                     match new_inner.ir_value.type_.implements_op(Operator::ConstRef) {
                                         ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
@@ -2741,7 +2757,7 @@ impl CodeGen {
                                         ast_error!(self, inner_expr, "Cannot dereference a voidptr");
                                         SkyeValue::get_unknown()
                                     } else {
-                                        let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", index, ctx)).await;
+                                        let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", ctx)).await;
 
                                         SkyeValue::new(
                                             IrValue::new(
@@ -2809,7 +2825,7 @@ impl CodeGen {
                                                         }
                                                     };
 
-                                                    let value_value = ctx.run(|ctx| self.zero_check(&value, op, "Null pointer dereference", index, ctx)).await;
+                                                    let value_value = ctx.run(|ctx| self.zero_check(&value, op, "Null pointer dereference", ctx)).await;
                                                     return SkyeValue::new(
                                                         IrValue::new(
                                                             IrValueData::Dereference { value: Box::new(value_value) },
@@ -2842,7 +2858,7 @@ impl CodeGen {
                                         ast_error!(self, inner_expr, "Cannot dereference a voidptr");
                                         SkyeValue::get_unknown()
                                     } else {
-                                        let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", index, ctx)).await;
+                                        let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", ctx)).await;
                                         
                                         SkyeValue::new(
                                             IrValue::new(
@@ -3249,7 +3265,7 @@ impl CodeGen {
                 } else {
                     match op.type_ {
                         TokenType::PlusPlus => {
-                            let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                            let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
                                 ast_error!(self, inner_expr, "Cannot apply '++' operator on const value");
@@ -3265,7 +3281,7 @@ impl CodeGen {
                             }
                         }
                         TokenType::MinusMinus => {
-                            let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+                            let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
                                 ast_error!(self, inner_expr, "Cannot apply '--' operator on const value");
@@ -3338,7 +3354,7 @@ impl CodeGen {
                         )).await
                     }
                     TokenType::LogicOr => {
-                        let new_left = left.follow_reference(self.external_zero_check(op, index));
+                        let new_left = left.follow_reference(self.external_zero_check(op));
                         let result_type = new_left.ir_value.type_.clone();
 
                         match new_left.ir_value.type_.implements_op(Operator::Or) {
@@ -3401,7 +3417,7 @@ impl CodeGen {
                                 self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
                                 
                                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
-                                    .follow_reference(self.external_zero_check(op, index));
+                                    .follow_reference(self.external_zero_check(op));
 
                                 self.curr_definition = previous_definition;
 
@@ -3475,7 +3491,7 @@ impl CodeGen {
                         }
                     }
                     TokenType::LogicAnd => {
-                        let new_left = left.follow_reference(self.external_zero_check(op, index));
+                        let new_left = left.follow_reference(self.external_zero_check(op));
 
                         match new_left.ir_value.type_.implements_op(Operator::And) {
                             ImplementsHow::Native(compatible_types) => {
@@ -3494,7 +3510,7 @@ impl CodeGen {
                                 self.definitions[index].inc_indent();
 
                                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
-                                    .follow_reference(self.external_zero_check(op, index));
+                                    .follow_reference(self.external_zero_check(op));
 
                                 if !(
                                     matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
@@ -3769,7 +3785,7 @@ impl CodeGen {
                         ast_error!(self, target_expr, "Assignment target is const");
                     }
                 } else {
-                    if target.follow_reference(self.external_zero_check(op, index)).is_const {
+                    if target.follow_reference(self.external_zero_check(op)).is_const {
                         ast_error!(self, target_expr, "Assignment target is const");
                     }
                 }
@@ -4483,7 +4499,7 @@ impl CodeGen {
             Expression::Subscript { subscripted: subscripted_expr, paren, args: arguments } => {
                 let subscripted = ctx.run(|ctx| self.evaluate(&subscripted_expr, index, allow_unknown, ctx)).await;
 
-                let new_subscripted = subscripted.follow_reference(self.external_zero_check(paren, index));
+                let new_subscripted = subscripted.follow_reference(self.external_zero_check(paren));
 
                 match new_subscripted.ir_value.type_ {
                     SkyeType::Pointer(inner_type, is_const, is_reference) => {
@@ -4500,7 +4516,7 @@ impl CodeGen {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                             SkyeType::Usz | SkyeType::AnyInt => {
-                                let subscripted_value = ctx.run(|ctx| self.zero_check(&subscripted, paren, "Null pointer dereference", index, ctx)).await;
+                                let subscripted_value = ctx.run(|ctx| self.zero_check(&subscripted, paren, "Null pointer dereference", ctx)).await;
                                 
                                 return SkyeValue::new(
                                     IrValue::new(
@@ -4835,7 +4851,7 @@ impl CodeGen {
                                     let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
 
                                     if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
-                                        let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
+                                        let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", ctx)).await;
                                         SkyeValue::new(
                                             IrValue::new(
                                                 IrValueData::Grouping(Box::new(
@@ -4872,7 +4888,7 @@ impl CodeGen {
                                         let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
 
                                         if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
-                                            let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", index, ctx)).await;
+                                            let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", ctx)).await;
                                             SkyeValue::new(
                                                 IrValue::new(
                                                     IrValueData::Grouping(Box::new(
@@ -4927,7 +4943,7 @@ impl CodeGen {
             Expression::Get(object_expr, name) => {
                 let object = ctx.run(|ctx| self.evaluate(&object_expr, index, allow_unknown, ctx)).await;
 
-                match object.ir_value.type_.get(&object.ir_value, name, object.is_const, self.external_zero_check(name, index)) {
+                match object.ir_value.type_.get(&object.ir_value, name, object.is_const, self.external_zero_check(name)) {
                     GetResult::Ok(value, is_const) => {
                         return SkyeValue::new(value, is_const)
                     }

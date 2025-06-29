@@ -63,6 +63,13 @@ impl IrValue {
         IrValue { data: IrValueData::Empty, type_ }
     }
 
+    pub fn any_int(value: i128) -> Self {
+        IrValue { 
+            data: IrValueData::Literal { value: Expression::SignedIntLiteral { value, tok: Token::empty(), bits: Bits::Any } }, 
+            type_: SkyeType::AnyInt
+        }
+    }
+
     pub fn uint(value: u64, type_: SkyeType, bits: Bits) -> Self {
         IrValue { 
             data: IrValueData::Literal { value: Expression::UnsignedIntLiteral { value, tok: Token::empty(), bits } }, 
