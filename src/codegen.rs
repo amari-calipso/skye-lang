@@ -3492,62 +3492,89 @@ impl CodeGen {
                     }
                     TokenType::LogicAnd => {
                         let new_left = left.follow_reference(self.external_zero_check(op));
+                        let result_type = new_left.ir_value.type_.clone();
 
                         match new_left.ir_value.type_.implements_op(Operator::And) {
                             ImplementsHow::Native(compatible_types) => {
                                 // needed so short circuiting can work
-                                let tmp_var: Rc<str> = self.get_temporary_var().into();
+                                let result_tmp: Rc<str> = self.get_temporary_var().into();
+                                let left_tmp: Rc<str> = self.get_temporary_var().into();
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("u8 ");
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(";\n");
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::VarDecl { 
+                                        name: Rc::clone(&result_tmp), 
+                                        type_: result_type.clone(), 
+                                        initializer: None 
+                                    } 
+                                });
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("if (");
-                                self.definitions[index].push(&new_left.ir_value);
-                                self.definitions[index].push(") {\n");
-                                self.definitions[index].inc_indent();
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::VarDecl { 
+                                        name: Rc::clone(&left_tmp), 
+                                        type_: result_type.clone(), 
+                                        initializer: Some(new_left.ir_value)
+                                    } 
+                                });
+
+                                let mut scope = IrStatement::empty_scope(expr.get_pos());
+
+                                let left_tmp_ir_value = IrValue::new(
+                                    IrValueData::Variable { name: Rc::clone(&left_tmp) },
+                                    result_type.clone()
+                                );
+
+                                // if (tmp_left) tmp = right else tmp = 0
+                                self.add_statement(IrStatement {
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::If { 
+                                        condition: left_tmp_ir_value.clone(), 
+                                        then_branch: Box::new(scope.clone()), 
+                                        else_branch: Some(Box::new(IrStatement {
+                                            pos: expr.get_pos(),
+                                            data: IrStatementData::Expression { 
+                                                value: IrValue::new(
+                                                    IrValueData::Assign {
+                                                        op: AssignOp::None,  
+                                                        target: Box::new(IrValue::new(
+                                                            IrValueData::Variable { name: Rc::clone(&result_tmp) },
+                                                            result_type.clone()
+                                                        )), 
+                                                        value: Box::new(left_tmp_ir_value)
+                                                    },
+                                                    result_type.clone()
+                                                ) 
+                                            }
+                                        }))
+                                    }
+                                });
+
+                                let previous_definition = self.curr_definition.clone();
+                                self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
 
                                 let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
                                     .follow_reference(self.external_zero_check(op));
 
+                                self.curr_definition = previous_definition;
+
                                 if !(
-                                    matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
-                                    new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
+                                    matches!(result_type, SkyeType::Unknown(_)) ||
+                                    result_type.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                                     compatible_types.contains(&right.ir_value.type_)
                                 ) {
                                     ast_error!(
                                         self, right_expr,
                                         format!(
                                             "Left operand type ({}) does not match right operand type ({})",
-                                            new_left.ir_value.type_.stringify_native(), right.ir_value.type_.stringify_native()
+                                            result_type.stringify_native(), right.ir_value.type_.stringify_native()
                                         ).as_ref()
                                     );
                                 }
 
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(" = ");
-                                self.definitions[index].push(&right.ir_value);
-                                self.definitions[index].push(";\n");
-                                self.definitions[index].dec_indent();
-
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("} else {\n");
-                                self.definitions[index].inc_indent();
-
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push(&tmp_var);
-                                self.definitions[index].push(" = 0;\n");
-                                self.definitions[index].dec_indent();
-
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("}\n");
-
                                 SkyeValue::new(
                                     IrValue::new(
-                                        IrValueData::Variable { name: tmp_var },
+                                        IrValueData::Variable { name: result_tmp },
                                         SkyeType::U8
                                     ), 
                                     false
@@ -3935,79 +3962,18 @@ impl CodeGen {
                     }
                 }
 
-                let tmp_var: Rc<str> = self.get_temporary_var().into();
+                let mut then_scope = IrStatement::empty_scope(then_branch_expr.get_pos());
+                let mut else_scope = IrStatement::empty_scope(else_branch_expr.get_pos());
 
-                let tmp_index = self.definitions.len();
-                self.definitions.push(CodeOutput::new());
+                let previous_definition = self.curr_definition.clone();
+                
+                self.curr_definition = Some(Rc::new(RefCell::new(then_scope.clone())));
+                let then_branch = ctx.run(|ctx| self.evaluate(&then_branch_expr, 0, allow_unknown, ctx)).await;
 
-                let indent = self.definitions[index].indent;
-                self.definitions[tmp_index].set_indent(indent);
-                self.definitions[tmp_index].push_indent();
-                self.definitions[tmp_index].push("if ");
-
-                let not_grouping = !matches!(**cond_expr, Expression::Grouping(_));
-
-                if not_grouping {
-                    self.definitions[tmp_index].push("(");
-                }
-
-                self.definitions[tmp_index].push(&cond.ir_value);
-
-                if not_grouping {
-                    self.definitions[tmp_index].push(")");
-                }
-
-                self.definitions[tmp_index].push(" {\n");
-                self.definitions[tmp_index].inc_indent();
-
-                let then_branch = ctx.run(|ctx| self.evaluate(&then_branch_expr, tmp_index, allow_unknown, ctx)).await;
-
-                let is_not_void = !matches!(then_branch.ir_value.type_, SkyeType::Void);
-                let value_is_not_empty = then_branch.ir_value.as_ref() != "";
-
-                if is_not_void || value_is_not_empty {
-                    self.definitions[tmp_index].push_indent();
-                }
-
-                if is_not_void {
-                    self.definitions[tmp_index].push(&tmp_var);
-                    self.definitions[tmp_index].push(" = ");
-                }
-
-                if value_is_not_empty {
-                    self.definitions[tmp_index].push(&then_branch.ir_value);
-                    self.definitions[tmp_index].push(";\n");
-                }
-
-                self.definitions[tmp_index].dec_indent();
-
-                self.definitions[tmp_index].push_indent();
-                self.definitions[tmp_index].push("} else {\n");
-                self.definitions[tmp_index].inc_indent();
-
-                let else_branch = ctx.run(|ctx| self.evaluate(&else_branch_expr, tmp_index, allow_unknown, ctx)).await;
-
-                let is_not_void = !matches!(then_branch.ir_value.type_, SkyeType::Void);
-                let value_is_not_empty = else_branch.ir_value.as_ref() != "";
-
-                if is_not_void || value_is_not_empty {
-                    self.definitions[tmp_index].push_indent();
-                }
-
-                if is_not_void {
-                    self.definitions[tmp_index].push(&tmp_var);
-                    self.definitions[tmp_index].push(" = ");
-                }
-
-                if value_is_not_empty {
-                    self.definitions[tmp_index].push(&else_branch.ir_value);
-                    self.definitions[tmp_index].push(";\n");
-                }
-
-                self.definitions[tmp_index].dec_indent();
-
-                self.definitions[tmp_index].push_indent();
-                self.definitions[tmp_index].push("}\n");
+                self.curr_definition = Some(Rc::new(RefCell::new(else_scope.clone())));
+                let else_branch = ctx.run(|ctx| self.evaluate(&else_branch_expr, 0, allow_unknown, ctx)).await;
+                
+                self.curr_definition = previous_definition;
 
                 if !then_branch.ir_value.type_.equals(&else_branch.ir_value.type_, EqualsLevel::Typewise) {
                     ast_error!(
@@ -4019,17 +3985,62 @@ impl CodeGen {
                     );
                 }
 
-                if is_not_void {
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push(&then_branch.ir_value.type_.stringify());
-                    self.definitions[index].push(" ");
-                    self.definitions[index].push(&tmp_var);
-                    self.definitions[index].push(";\n");
+                let tmp_var: Rc<str> = self.get_temporary_var().into();
+
+                self.add_statement(IrStatement {
+                    pos: expr.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&tmp_var), 
+                        type_: then_branch.ir_value.type_.clone(), 
+                        initializer: None 
+                    } 
+                });
+
+                self.add_statement(IrStatement {
+                    pos: expr.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: cond.ir_value, 
+                        then_branch: Box::new(then_scope.clone()), 
+                        else_branch: Some(Box::new(else_scope.clone()))
+                    }
+                });
+
+                if !matches!(then_branch.ir_value.type_, SkyeType::Void) {
+                    Self::add_statement_to_scope(&then_scope.data, IrStatement { 
+                        pos: then_branch_expr.get_pos(),
+                        data: IrStatementData::Expression { 
+                            value: IrValue {
+                                type_: then_branch.ir_value.type_.clone(),
+                                data: IrValueData::Assign { 
+                                    op: AssignOp::None, 
+                                    target: Box::new(IrValue::new(
+                                        IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                        then_branch.ir_value.type_.clone()
+                                    )),
+                                    value: Box::new(then_branch.ir_value)
+                                }
+                            }
+                        }, 
+                    });
+
+                    Self::add_statement_to_scope(&else_scope.data, IrStatement { 
+                        pos: then_branch_expr.get_pos(),
+                        data: IrStatementData::Expression { 
+                            value: IrValue {
+                                type_: then_branch.ir_value.type_.clone(),
+                                data: IrValueData::Assign { 
+                                    op: AssignOp::None, 
+                                    target: Box::new(IrValue::new(
+                                        IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                        then_branch.ir_value.type_.clone()
+                                    )),
+                                    value: Box::new(else_branch.ir_value)
+                                }
+                            }
+                        }, 
+                    });
                 }
-
-                let tmp_code = self.definitions.swap_remove(tmp_index);
-                self.definitions[index].push(&tmp_code.code);
-
+                
                 SkyeValue::new(
                     IrValue::new(
                         IrValueData::Variable { name: tmp_var },
