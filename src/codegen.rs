@@ -5663,7 +5663,7 @@ impl CodeGen {
 
                 let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
 
-                match cond.type_ {
+                match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
@@ -5672,82 +5672,35 @@ impl CodeGen {
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for if condition (got {})",
-                                cond.type_.stringify_native()
+                                cond.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
 
-                let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
-                let not_block    = !matches!(**then_branch, Statement::Block(..));
+                let then_scope = IrStatement::empty_scope(then_branch.get_pos());
+                let else_scope = else_branch.map(|x| Box::new(IrStatement::empty_scope(x.get_pos())));
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("if ");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: cond.ir_value, 
+                        then_branch: Box::new(then_scope.clone()), 
+                        else_branch: else_scope.clone()
+                    }
+                });
 
-                if not_grouping {
-                    self.definitions[index].push("(");
-                }
+                let previous_definition = self.curr_definition.clone();
 
-                self.definitions[index].push(&cond.ir_value);
-
-                if not_grouping {
-                    self.definitions[index].push(")");
-                }
-
-                self.definitions[index].push("\n");
-
-                if not_block {
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push("{\n");
-                    self.definitions[index].inc_indent();
-
-                    let stmts = vec![*then_branch.clone()];
-                    ctx.run(|ctx| self.execute_block(
-                        &stmts,
-                        Rc::new(RefCell::new(Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        ))),
-                        index, false, ctx
-                    )).await;
-                } else {
-                    let _ = ctx.run(|ctx| self.execute(&then_branch, index, ctx)).await;
-                }
-
-                if not_block {
-                    self.definitions[index].dec_indent();
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push("}\n");
-                }
+                self.curr_definition = Some(Rc::new(RefCell::new(then_scope)));
+                let _ = ctx.run(|ctx| self.execute(&then_branch, 0, ctx)).await;
 
                 if let Some(else_branch_statement) = else_branch {
-                    let not_block = !matches!(**else_branch_statement, Statement::Block(..));
-
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push("else\n");
-
-                    if not_block {
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push("{\n");
-                        self.definitions[index].inc_indent();
-
-                        let stmts = vec![*else_branch_statement.clone()];
-                        ctx.run(|ctx| self.execute_block(
-                            &stmts,
-                            Rc::new(RefCell::new(Environment::with_enclosing(
-                                Rc::clone(&self.environment)
-                            ))),
-                            index, false, ctx
-                        )).await;
-                    } else {
-                        let _ = ctx.run(|ctx| self.execute(&else_branch_statement, index, ctx)).await;
-                    }
-
-                    if not_block {
-                        self.definitions[index].dec_indent();
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push("}\n");
-                    }
+                    self.curr_definition = Some(Rc::new(RefCell::new(*else_scope.unwrap())));
+                    let _ = ctx.run(|ctx| self.execute(&else_branch_statement, index, ctx)).await;
                 }
+
+                self.curr_definition = previous_definition;
             }
             Statement::While { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
@@ -5755,16 +5708,19 @@ impl CodeGen {
                     token_note!(kw, "Place this while loop inside a function");
                 }
 
-                let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
-                let not_block    = !matches!(**body, Statement::Block(..));
+                let body_scope = IrStatement::empty_scope(kw.get_pos());
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("while (1) {\n");
-                self.definitions[index].inc_indent();
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Loop { body: Box::new(body_scope.clone()) }
+                });
+
+                let previous_definition = self.curr_definition.clone();
+                self.curr_definition = Some(Rc::new(RefCell::new(body_scope.clone())));
 
                 let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
 
-                match cond.type_ {
+                match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
@@ -5773,26 +5729,31 @@ impl CodeGen {
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for while condition (got {})",
-                                cond.type_.stringify_native()
+                                cond.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("if (!");
-
-                if not_grouping {
-                    self.definitions[index].push("(");
-                }
-
-                self.definitions[index].push(&cond.ir_value);
-
-                if not_grouping {
-                    self.definitions[index].push(")");
-                }
-
-                self.definitions[index].push(") break;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: IrValue::new(
+                            IrValueData::Negate { 
+                                value: Box::new(IrValue::new(
+                                    IrValueData::Grouping(Box::new(cond.ir_value.clone())),
+                                    cond.ir_value.type_.clone()
+                                ))
+                            },
+                            cond.ir_value.type_.clone()
+                        ), 
+                        then_branch: Box::new(IrStatement { 
+                            pos: kw.get_pos(),
+                            data: IrStatementData::Break 
+                        }), 
+                        else_branch: None 
+                    }
+                });
 
                 let continue_label = self.get_temporary_var();
                 let break_label = self.get_temporary_var();
@@ -5800,32 +5761,21 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                if not_block {
-                    let stmts = vec![*body.clone()];
-                    ctx.run(|ctx| self.execute_block(
-                        &stmts,
-                        Rc::new(RefCell::new(Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        ))),
-                        index, false, ctx
-                    )).await;
-                } else {
-                    let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
-                }
+                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
 
                 self.curr_loop = previous_loop;
+                
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: continue_label }
+                });
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&continue_label);
-                self.definitions[index].push(":;\n");
+                self.curr_definition = previous_definition;
 
-                self.definitions[index].dec_indent();
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&break_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: break_label }
+                });
             }
             Statement::For { kw, initializer, condition: cond_expr, increments, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
@@ -5833,27 +5783,30 @@ impl CodeGen {
                     token_note!(kw, "Place this for loop inside a function");
                 }
 
-                let not_block    = !matches!(**body, Statement::Block(..));
-                let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
-
                 let previous = Rc::clone(&self.environment);
                 self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("{\n");
-                self.definitions[index].inc_indent();
+                let toplevel_scope = IrStatement::empty_scope(kw.get_pos());
+
+                let previous_definition = self.curr_definition.clone();
+                self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
 
                 if let Some(init) = initializer {
                     let _ = ctx.run(|ctx| self.execute(&init, index, ctx)).await;
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("while (1) {\n");
-                self.definitions[index].inc_indent();
+                let body_scope = IrStatement::empty_scope(kw.get_pos());
+
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Loop { body: Box::new(body_scope.clone()) }
+                });
+
+                self.curr_definition = Some(Rc::new(RefCell::new(body_scope.clone())));
 
                 let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
 
-                match cond.type_ {
+                match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
@@ -5862,26 +5815,31 @@ impl CodeGen {
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for for condition (got {})",
-                                cond.type_.stringify_native()
+                                cond.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("if (!");
-
-                if not_grouping {
-                    self.definitions[index].push("(");
-                }
-
-                self.definitions[index].push(&cond.ir_value);
-
-                if not_grouping {
-                    self.definitions[index].push(")");
-                }
-
-                self.definitions[index].push(") break;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: IrValue::new(
+                            IrValueData::Negate { 
+                                value: Box::new(IrValue::new(
+                                    IrValueData::Grouping(Box::new(cond.ir_value.clone())),
+                                    cond.ir_value.type_.clone()
+                                ))
+                            },
+                            cond.ir_value.type_.clone()
+                        ), 
+                        then_branch: Box::new(IrStatement { 
+                            pos: kw.get_pos(),
+                            data: IrStatementData::Break 
+                        }), 
+                        else_branch: None 
+                    }
+                });
 
                 let continue_label = self.get_temporary_var();
                 let break_label = self.get_temporary_var();
@@ -5889,43 +5847,29 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                if not_block {
-                    let stmts = vec![*body.clone()];
-                    ctx.run(|ctx| self.execute_block(
-                        &stmts,
-                        Rc::new(RefCell::new(Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        ))),
-                        index, false, ctx
-                    )).await;
-                } else {
-                    let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
-                }
+                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
 
                 self.curr_loop = previous_loop;
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&continue_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: continue_label }
+                });
 
                 for increment in increments {
                     let stmt = Statement::Expression(increment.clone());
                     let _ = ctx.run(|ctx| self.execute(&stmt, index, ctx)).await;
                 }
 
-                self.definitions[index].dec_indent();
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
+                self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&break_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: break_label }
+                });
 
                 self.environment = previous;
-
-                self.definitions[index].dec_indent();
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
+                self.curr_definition = previous_definition;
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
@@ -5933,12 +5877,15 @@ impl CodeGen {
                     token_note!(kw, "Place this do-while loop inside a function");
                 }
 
-                let not_grouping = !matches!(cond_expr, Expression::Grouping(_));
-                let not_block    = !matches!(**body, Statement::Block(..));
+                let body_scope = IrStatement::empty_scope(kw.get_pos());
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("while (1) {\n");
-                self.definitions[index].inc_indent();
+                self.add_statement(IrStatement { 
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Loop { body: Box::new(body_scope.clone()) }
+                });
+
+                let previous_definition = self.curr_definition.clone();
+                self.curr_definition = Some(Rc::new(RefCell::new(body_scope.clone())));
 
                 let continue_label = self.get_temporary_var();
                 let break_label = self.get_temporary_var();
@@ -5946,24 +5893,13 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                if not_block {
-                    let stmts = vec![*body.clone()];
-                    ctx.run(|ctx| self.execute_block(
-                        &stmts,
-                        Rc::new(RefCell::new(Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        ))),
-                        index, false, ctx
-                    )).await;
-                } else {
-                    let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
-                }
+                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
 
                 self.curr_loop = previous_loop;
 
                 let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, false, ctx)).await;
 
-                match cond.type_ {
+                match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
@@ -5972,38 +5908,43 @@ impl CodeGen {
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for while condition (got {})",
-                                cond.type_.stringify_native()
+                                cond.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&continue_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: continue_label }
+                });
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("if (!");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: IrValue::new(
+                            IrValueData::Negate { 
+                                value: Box::new(IrValue::new(
+                                    IrValueData::Grouping(Box::new(cond.ir_value.clone())),
+                                    cond.ir_value.type_.clone()
+                                ))
+                            },
+                            cond.ir_value.type_.clone()
+                        ), 
+                        then_branch: Box::new(IrStatement { 
+                            pos: kw.get_pos(),
+                            data: IrStatementData::Break 
+                        }), 
+                        else_branch: None 
+                    }
+                });
 
-                if not_grouping {
-                    self.definitions[index].push("(");
-                }
+                self.curr_definition = previous_definition;
 
-                self.definitions[index].push(&cond.ir_value);
-
-                if not_grouping {
-                    self.definitions[index].push(")");
-                }
-
-                self.definitions[index].push(") break;\n");
-                self.definitions[index].dec_indent();
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&break_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: break_label }
+                });
             }
             Statement::Return { kw, value: ret_expr } => {
                 if matches!(self.curr_function, CurrentFn::None) {
@@ -6295,23 +6236,23 @@ impl CodeGen {
             Statement::Impl { object: struct_expr, declarations: statements } => {
                 let struct_name = ctx.run(|ctx| self.evaluate(&struct_expr, index, false, ctx)).await;
 
-                match &struct_name.type_ {
+                match &struct_name.ir_value.type_ {
                     SkyeType::Type(inner_type) => {
                         match inner_type.as_ref() {
-                            SkyeType::Struct(..) |
-                            SkyeType::Enum(..) => {
+                            SkyeType::Struct(.., base_name) |
+                            SkyeType::Enum(.., base_name) => {
                                 let mut env = self.globals.borrow_mut();
                                 env.define(
                                     Rc::from("Self"),
                                     SkyeVariable::new(
-                                        struct_name.type_.clone(),
+                                        struct_name.ir_value.type_.clone(),
                                         true, None
                                     )
                                 );
                                 drop(env);
 
                                 let previous_name = self.curr_name.clone();
-                                self.curr_name = struct_name.ir_value.to_string();
+                                self.curr_name = base_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), index, true, ctx
@@ -6327,7 +6268,7 @@ impl CodeGen {
                                     self, struct_expr,
                                     format!(
                                         "Can only implement structs and enums or their templates (got {})",
-                                        struct_name.type_.stringify_native()
+                                        struct_name.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
                             }
@@ -6341,14 +6282,14 @@ impl CodeGen {
                                 env.define(
                                     Rc::from("Self"),
                                     SkyeVariable::new(
-                                        struct_name.type_.clone(),
+                                        struct_name.ir_value.type_.clone(),
                                         true, None
                                     )
                                 );
                                 drop(env);
 
                                 let previous_name = self.curr_name.clone();
-                                self.curr_name = struct_name.ir_value.to_string();
+                                self.curr_name = struct_name.ir_value.to_string(); // TODO
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), index, true, ctx
@@ -6364,7 +6305,7 @@ impl CodeGen {
                                     self, struct_expr,
                                     format!(
                                         "Can only implement structs and enums or their templates (got {})",
-                                        struct_name.type_.stringify_native()
+                                        struct_name.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
                             }
@@ -6375,13 +6316,13 @@ impl CodeGen {
                             self, struct_expr,
                             format!(
                                 "Can only implement structs and enums or their templates (got {})",
-                                struct_name.type_.stringify_native()
+                                struct_name.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
             }
-            Statement::Namespace { name, body: statements } => {
+            Statement::Namespace { name, body } => {
                 if matches!(self.curr_function, CurrentFn::Some { .. }) {
                     token_error!(self, name, "Namespaces are only allowed in the global scope");
                 }
@@ -6412,14 +6353,14 @@ impl CodeGen {
 
                 drop(env);
 
-                if statements.len() == 0 {
+                if body.len() == 0 {
                     token_error!(self, name, "Cannot create an empty namespace");
                 } else {
                     let previous_name = self.curr_name.clone();
                     self.curr_name = full_name.to_string();
 
                     ctx.run(|ctx| self.execute_block(
-                        statements, Rc::clone(&self.globals), index, true, ctx
+                        body, Rc::clone(&self.globals), index, true, ctx
                     )).await;
 
                     self.curr_name = previous_name;
@@ -6429,30 +6370,20 @@ impl CodeGen {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, index, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
-                    if use_value.ir_value.len() != 0 && !*bind {
-                        let mut buf = String::new();
-
-                        if *typedef {
-                            buf.push_str("typedef ");
-                            buf.push_str(&use_value.ir_value);
-                            buf.push(' ');
-                            buf.push_str(&identifier.lexeme);
-                            buf.push(';');
-                        } else {
-                            buf.push_str("#define ");
-                            buf.push_str(&identifier.lexeme);
-                            buf.push(' ');
-                            buf.push_str(&use_value.ir_value);
-                        }
-
-                        buf.push('\n');
+                    if !*bind && !matches!(use_value.ir_value.data, IrValueData::Empty) {
+                        let statement = IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&identifier.lexeme), 
+                                value: use_value.ir_value, 
+                                typedef: *typedef 
+                            }
+                        };
 
                         if matches!(self.curr_function, CurrentFn::None) {
-                            self.declarations.push(CodeOutput::new());
-                            self.declarations.last_mut().unwrap().push(&buf);
+                            self.definitions.push(Rc::new(RefCell::new(statement)));
                         } else {
-                            self.definitions[index].push_indent();
-                            self.definitions[index].push(&buf);
+                            self.add_statement(statement);
 
                             if !*typedef {
                                 self.deferred.borrow_mut().last_mut().unwrap()
@@ -6474,17 +6405,17 @@ impl CodeGen {
                     env.define(
                         Rc::clone(&identifier.lexeme),
                         SkyeVariable::new(
-                            use_value.type_, use_value.is_const,
+                            use_value.ir_value.type_, use_value.is_const,
                             Some(Box::new(identifier.clone()))
                         )
                     );
                 }
             }
             Statement::Undef(name) => {
-                self.definitions[index].push_indent();
-                self.definitions[index].push("#undef ");
-                self.definitions[index].push(&name);
-                self.definitions[index].push("\n");
+                self.add_statement(IrStatement { 
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Undefine { name: Rc::clone(&name) }    
+                });
 
                 let mut env = self.environment.borrow_mut();
                 env.undef(Rc::clone(name));
@@ -7653,14 +7584,14 @@ impl CodeGen {
 
                         for bound_type in bound_types {
                             let evaluated = ctx.run(|ctx| self.evaluate(&bound_type, index, false, ctx)).await;
-                            if matches!(evaluated.type_, SkyeType::Void) || !evaluated.type_.can_be_instantiated(true) {
-                                ast_error!(self, bound_type, format!("Cannot instantiate type {}", evaluated.type_.stringify_native()).as_ref());
+                            if matches!(evaluated.ir_value.type_, SkyeType::Void) || !evaluated.ir_value.type_.can_be_instantiated(true) {
+                                ast_error!(self, bound_type, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify_native()).as_ref());
                             }
 
                             let mut name_tok = name.clone();
-                            name_tok.set_lexeme(evaluated.type_.mangle().as_ref());
+                            name_tok.set_lexeme(evaluated.ir_value.type_.mangle().as_ref());
                             variants.push(EnumVariant::new(name_tok.clone(), bound_type.clone(), None));
-                            evaluated_types.push(evaluated.type_);
+                            evaluated_types.push(evaluated.ir_value.type_);
                         }
 
                         let mut functions = Vec::new();
@@ -7697,7 +7628,7 @@ impl CodeGen {
                                     let mut name_tok = name.clone();
                                     name_tok.set_lexeme(type_name.as_ref());
 
-                                    if let GetResult::Ok(obj_name, ..) = type_.static_get(&fn_name) {
+                                    if let Some(obj_name) = type_.static_get(&fn_name) {
                                         let mut search_tok = fn_name.clone();
                                         search_tok.set_lexeme(&obj_name);
 

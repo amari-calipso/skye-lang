@@ -25,6 +25,7 @@ pub struct IrEnumVariant {
 
 #[derive(Clone, Debug)]
 pub enum IrStatementData {
+    Break,
     Define { name: Rc<str>, value: IrValue, typedef: bool },
     Undefine { name: Rc<str> },
     VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue> }, // TODO: add qualifiers
