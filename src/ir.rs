@@ -76,6 +76,40 @@ impl IrValue {
             type_
         }
     }
+
+    pub fn keep_side_effects(&self) -> Self {
+        match &self.data {
+            // expressions that have side effects
+            IrValueData::Call { .. } | 
+            IrValueData::Increment { .. } | 
+            IrValueData::Assign { .. } |
+            IrValueData::Decrement { .. } => self.clone(),
+            // expressions that might contain something that has side effects
+            IrValueData::Grouping(value) |
+            IrValueData::Cast { from: value, .. } |
+            IrValueData::Negative { value } | 
+            IrValueData::Invert { value } |
+            IrValueData::Reference { value } |
+            IrValueData::Dereference { value } |
+            IrValueData::Get { from: value, .. } |
+            IrValueData::DereferenceGet { from: value, .. } | 
+            IrValueData::Negate { value } => value.keep_side_effects(),
+            // expressions that might contain multiple things that have side effects
+            // TODO if one of the items has side effects, keep that item. 
+            //      if more than one has side effects, keep whole expression.
+            //      if none of the items have side effects, return empty
+            IrValueData::Ternary { .. } |
+            IrValueData::CompoundLiteral { .. } | 
+            IrValueData::Binary { .. } |
+            IrValueData::Subscript { .. } => self.clone(),
+            // expressions with no side effects
+            _ => {
+                let mut output = self.clone();
+                output.data = IrValueData::Empty;
+                output
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

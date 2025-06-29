@@ -5102,11 +5102,13 @@ impl CodeGen {
 
                         ast_info!(ast_item, format!("Skye inserted a destructor call for \"{}\" {}", name, msg).as_ref()); // +I-destructors
 
-                        // TODO apply output filtering like expression statement
-                        self.add_statement(IrStatement { 
-                            pos: ast_item.get_pos(), 
-                            data: IrStatementData::Expression { value: call.ir_value }, 
-                        });
+                        let filtered = call.ir_value.keep_side_effects();
+                        if !matches!(filtered.data, IrValueData::Empty) {
+                            self.add_statement(IrStatement { 
+                                pos: ast_item.get_pos(), 
+                                data: IrStatementData::Expression { value: filtered }, 
+                            });
+                        }
                     }
                 }
             }
@@ -5316,11 +5318,13 @@ impl CodeGen {
                         token_note!(name, "Rename this variable");
                     }
 
-                    // TODO apply output filtering like expression statement
-                    self.add_statement(IrStatement { 
-                        pos: stmt.get_pos(), 
-                        data: IrStatementData::Expression { value: value.unwrap().ir_value }
-                    });
+                    let filtered = value.unwrap().ir_value.keep_side_effects();
+                    if !matches!(filtered.data, IrValueData::Empty) {
+                        self.add_statement(IrStatement { 
+                            pos: stmt.get_pos(), 
+                            data: IrStatementData::Expression { value: filtered }, 
+                        });
+                    }
                 } else {
                     let full_name = {
                         if is_global {
