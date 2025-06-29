@@ -7380,6 +7380,10 @@ impl CodeGen {
                     token_note!(kw, "Place this for loop inside a function");
                 }
 
+                self.definitions[index].push_indent();
+                self.definitions[index].push("{\n");
+                self.definitions[index].inc_indent();
+
                 let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, index, false, ctx)).await;
 
                 let tmp_iter_var_name = self.get_temporary_var();
@@ -7395,10 +7399,6 @@ impl CodeGen {
 
                     return Ok(None);
                 }
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push("{\n");
-                self.definitions[index].inc_indent();
 
                 self.definitions[index].push_indent();
                 self.definitions[index].push(&iterator_raw.type_.stringify());
