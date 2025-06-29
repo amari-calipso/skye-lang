@@ -79,6 +79,7 @@ impl IrValue {
 
     pub fn keep_side_effects(&self) -> Self {
         match &self.data {
+            IrValueData::Empty => self.clone(),
             // expressions that have side effects
             IrValueData::Call { .. } | 
             IrValueData::Increment { .. } | 
