@@ -273,7 +273,7 @@ impl CodeGen {
 
     fn add_statement_to_scope(scope: &IrStatementData, statement: IrStatement) {
         if let IrStatementData::Scope { statements } = scope {
-            statements.borrow().push(statement);
+            statements.borrow_mut().push(statement);
         } else {
             panic!("add_statement_to_scope didn't get a scope")
         }
@@ -450,10 +450,13 @@ impl CodeGen {
         res.into()
     }
 
-    fn get_method(&mut self, object: &SkyeValue, name: &Token, strict: bool, index: usize) -> Option<SkyeValue> {
+    fn get_method(&mut self, object: &SkyeValue, name: &Token, strict: bool) -> Option<SkyeValue> {
         if let Some(full_name) = object.ir_value.type_.get_method(name, strict) {
             let search_tok = Token::dummy(Rc::clone(&full_name));
-            if let Some(var) = self.globals.borrow().get(&search_tok) {
+            let env = self.globals.borrow();
+            if let Some(var) = env.get(&search_tok) {
+                drop(env);
+
                 return Some(SkyeValue::with_self_info(
                     IrValue::new(
                         IrValueData::Variable { name: full_name },
@@ -648,7 +651,7 @@ impl CodeGen {
                             }
 
                             let mut search_tok = Token::dummy(Rc::from("asString"));
-                            if self.get_method(&evaluated, &search_tok, false, index).is_some() {
+                            if self.get_method(&evaluated, &search_tok, false).is_some() {
                                 Expression::Call(
                                     Box::new(Expression::Get(
                                         Box::new(Expression::Grouping(
@@ -662,7 +665,7 @@ impl CodeGen {
                                 )
                             } else {
                                 search_tok = Token::dummy(Rc::from("toString"));
-                                if self.get_method(&evaluated, &search_tok, false, index).is_some() {
+                                if self.get_method(&evaluated, &search_tok, false).is_some() {
                                     Expression::Call(
                                         Box::new(Expression::Get(
                                             Box::new(Expression::Grouping(
@@ -695,7 +698,7 @@ impl CodeGen {
 
                     if is_format {
                         let search_tok = Token::dummy(Rc::from("pushString"));
-                        if self.get_method(&first, &search_tok, false, index).is_some() {
+                        if self.get_method(&first, &search_tok, false).is_some() {
                             if do_write {
                                 statements.push(Statement::Expression(
                                     Expression::Call(
@@ -726,7 +729,7 @@ impl CodeGen {
                         }
                     } else {
                         let search_tok = Token::dummy(Rc::from("write"));
-                        if self.get_method(&first, &search_tok, false, index).is_some() {
+                        if self.get_method(&first, &search_tok, false).is_some() {
                             if do_write {
                                 statements.push(Statement::Expression(
                                     Expression::Call(
@@ -1151,7 +1154,7 @@ impl CodeGen {
                     }
 
                     let search_tok = Token::dummy(Rc::from("__copy__"));
-                    if let Some(value) = self.get_method(&new_arg, &search_tok, true, index) {
+                    if let Some(value) = self.get_method(&new_arg, &search_tok, true) {
                         let v = Vec::new();
                         let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &arguments[i - arguments_mod], &v, index, allow_unknown, ctx)).await;
                         
@@ -1366,7 +1369,7 @@ impl CodeGen {
                         }
 
                         let search_tok = Token::dummy(Rc::from("__copy__"));
-                        if let Some(value) = self.get_method(&new_call_evaluated, &search_tok, true, index) {
+                        if let Some(value) = self.get_method(&new_call_evaluated, &search_tok, true) {
                             let loc_callee_expr = {
                                 if i != 0 || arguments_mod != 1 {
                                     &arguments[i - arguments_mod]
@@ -1802,7 +1805,7 @@ impl CodeGen {
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
                     let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
                     inner
@@ -1859,7 +1862,7 @@ impl CodeGen {
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
                     let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
                     SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
@@ -1901,7 +1904,7 @@ impl CodeGen {
             ImplementsHow::Native(_) => SkyeValue::new(Rc::from(format!("{}{}", op_stringified, new_inner.ir_value)), new_inner.ir_value.type_, false),
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&new_inner, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&new_inner, &search_tok, true) {
                     let v = Vec::new();
                     ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await
                 } else {
@@ -1965,7 +1968,7 @@ impl CodeGen {
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
                 } else {
@@ -2023,7 +2026,7 @@ impl CodeGen {
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
                 } else {
@@ -2203,7 +2206,7 @@ impl CodeGen {
                 }
 
                 let search_tok = Token::dummy(Rc::from(op_method));
-                if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
+                if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
                 } else {
@@ -2824,7 +2827,7 @@ impl CodeGen {
                                             for method in methods {
                                                 search_tok.set_lexeme(method);
 
-                                                if let Some(value) = self.get_method(&inner, &search_tok, true, index) {
+                                                if let Some(value) = self.get_method(&inner, &search_tok, true) {
                                                     let v = Vec::new();
                                                     let value = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
 
@@ -3481,7 +3484,7 @@ impl CodeGen {
                             }
                             ImplementsHow::ThirdParty => {
                                 let search_tok = Token::dummy(Rc::from("__or__"));
-                                if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
+                                if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                                     let args = vec![*right_expr.clone()];
                                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
                                 } else {
@@ -3601,7 +3604,7 @@ impl CodeGen {
                             }
                             ImplementsHow::ThirdParty => {
                                 let search_tok = Token::dummy(Rc::from("__and__"));
-                                if let Some(value) = self.get_method(&new_left, &search_tok, true, index) {
+                                if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                                     let args = vec![*right_expr.clone()];
                                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
                                 } else {
@@ -3843,7 +3846,7 @@ impl CodeGen {
                         if target_type.equals(&value.ir_value.type_, EqualsLevel::Strict) {
                             let search_tok = Token::dummy(Rc::from("__copy__"));
                             let output_value = {
-                                if let Some(value) = self.get_method(&value, &search_tok, true, index) {
+                                if let Some(value) = self.get_method(&value, &search_tok, true) {
                                     let v = Vec::new();
                                     let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &value_expr, &v, index, allow_unknown, ctx)).await;
                                     ast_info!(value_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
@@ -4105,7 +4108,7 @@ impl CodeGen {
                                             }
 
                                             let search_tok = Token::dummy(Rc::from("__copy__"));
-                                            if let Some(value) = self.get_method(&field_evaluated, &search_tok, true, index) {
+                                            if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
                                                 let v = Vec::new();
                                                 let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &field.expr, &v, index, allow_unknown, ctx)).await;
                                                 
@@ -4153,7 +4156,7 @@ impl CodeGen {
                                         }
 
                                         let search_tok = Token::dummy(Rc::from("__copy__"));
-                                        if let Some(value) = self.get_method(&field_evaluated, &search_tok, true, index) {
+                                        if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
                                             let v = Vec::new();
                                             let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &fields[0].expr, &v, index, allow_unknown, ctx)).await;
                                             
@@ -4883,7 +4886,7 @@ impl CodeGen {
                                     }
                                 };
 
-                                if let Some(value) = self.get_method(&new_subscripted, &search_tok, true, index) {
+                                if let Some(value) = self.get_method(&new_subscripted, &search_tok, true) {
                                     let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
 
                                     if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
@@ -4920,7 +4923,7 @@ impl CodeGen {
                                         }
                                     };
 
-                                    if let Some(value) = self.get_method(&new_subscripted, &search_tok, true, index) {
+                                    if let Some(value) = self.get_method(&new_subscripted, &search_tok, true) {
                                         let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
 
                                         if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
@@ -4993,7 +4996,7 @@ impl CodeGen {
                         );
                     }
                     GetResult::FieldNotFound => {
-                        if let Some(value) = self.get_method(&object, name, false, index) {
+                        if let Some(value) = self.get_method(&object, name, false) {
                             return value;
                         } else {
                             token_error!(self, name, format!("Undefined property \"{}\"", name.lexeme).as_ref());
@@ -5094,7 +5097,7 @@ impl CodeGen {
                         var.is_const
                     );
 
-                    if let Some(value) = self.get_method(&var_value, &search_tok, true, index) {
+                    if let Some(value) = self.get_method(&var_value, &search_tok, true) {
                         let fake_expr = Expression::Variable(search_tok);
                         let v = Vec::new();
 
@@ -5991,7 +5994,7 @@ impl CodeGen {
                     } else {
                         let final_value = {
                             let search_tok = Token::dummy(Rc::from("__copy__"));
-                            if let Some(method_value) = self.get_method(&value, &search_tok, true, index) {
+                            if let Some(method_value) = self.get_method(&value, &search_tok, true) {
                                 let v = Vec::new();
                                 let copy_constructor = ctx.run(|ctx| self.call(&method_value, expr, &expr, &v, index, false, ctx)).await;
 
@@ -7409,12 +7412,12 @@ impl CodeGen {
 
                 let mut search_tok = Token::dummy(Rc::from("next"));
                 let method = {
-                    if let Some(method) = self.get_method(&iterator, &search_tok, false, index) {
+                    if let Some(method) = self.get_method(&iterator, &search_tok, false) {
                         method
                     } else {
                         search_tok.set_lexeme("iter");
 
-                        if let Some(method) = self.get_method(&iterator, &search_tok, false, index) {
+                        if let Some(method) = self.get_method(&iterator, &search_tok, false) {
                             let v = Vec::new();
                             let iterator_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, index, false, ctx)).await;
 
@@ -7434,7 +7437,7 @@ impl CodeGen {
                             let iterator_val = SkyeValue::new(Rc::clone(&iterator_call.ir_value), iterator_call.type_, false);
 
                             search_tok.set_lexeme("next");
-                            if let Some(final_method) = self.get_method(&iterator_val, &search_tok, false, index) {
+                            if let Some(final_method) = self.get_method(&iterator_val, &search_tok, false) {
                                 final_method
                             } else {
                                 ast_error!(
