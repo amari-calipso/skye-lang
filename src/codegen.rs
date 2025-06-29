@@ -155,8 +155,8 @@ impl CodeOutput {
 }
 
 pub enum ExecutionInterrupt {
-    Interrupt(Rc<str>),
-    Return(Rc<str>)
+    Interrupt(IrStatement),
+    Return(IrStatement)
 }
 
 #[derive(Debug)]
@@ -5147,8 +5147,7 @@ impl CodeGen {
                         let _ = ctx.run(|ctx| self.handle_destructors(index, global, statement, "before this statement", ctx)).await;
                         destructors_called = true;
 
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push(&output);
+                        self.add_statement(output);
 
                         if i != statements.len() - 1 {
                             ast_warning!(statements[i + 1], "Unreachable code");
@@ -5159,8 +5158,7 @@ impl CodeGen {
                         ctx.run(|ctx| self.handle_all_deferred(index, global, statement, "before this statement", ctx)).await;
                         destructors_called = true;
 
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push(&output);
+                        self.add_statement(output);
 
                         if i != statements.len() - 1 {
                             ast_warning!(statements[i + 1], "Unreachable code");
@@ -5955,8 +5953,6 @@ impl CodeGen {
                     token_note!(kw, "Remove this return statement");
                 }
 
-                let mut buf = String::new();
-
                 if let Some(expr) = ret_expr {
                     let value = ctx.run(|ctx| self.evaluate(expr, index, false, ctx)).await;
 
@@ -5964,16 +5960,16 @@ impl CodeGen {
                     if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
                         is_void = matches!(return_type, SkyeType::Void);
 
-                        if is_void && !matches!(value.type_, SkyeType::Void) {
+                        if is_void && !matches!(value.ir_value.type_, SkyeType::Void) {
                             ast_error!(self, expr, "Cannot return value in a function that returns void");
                             ast_note!(expr, "Remove this expression");
                             ast_note!(return_type_expr, "Return type defined here");
-                        } else if !return_type.equals(&value.type_, EqualsLevel::Typewise) {
+                        } else if !return_type.equals(&value.ir_value.type_, EqualsLevel::Typewise) {
                             ast_error!(
                                 self, expr,
                                 format!(
                                     "Returned value type ({}) does not match function return type ({})",
-                                    value.type_.stringify_native(), return_type.stringify_native()
+                                    value.ir_value.type_.stringify_native(), return_type.stringify_native()
                                 ).as_ref()
                             );
 
@@ -5984,13 +5980,18 @@ impl CodeGen {
                     }
 
                     if is_void {
-                        if value.ir_value.as_ref() != "" {
-                            self.definitions[index].push_indent();
-                            self.definitions[index].push(&value.ir_value);
-                            self.definitions[index].push(";\n");
+                        let filtered = value.ir_value.keep_side_effects();
+                        if !matches!(filtered.data, IrValueData::Empty) {
+                            self.add_statement(IrStatement { 
+                                pos: kw.get_pos(),
+                                data: IrStatementData::Expression { value: filtered }, 
+                            });
                         }
 
-                        buf.push_str("return;\n");
+                        return Err(ExecutionInterrupt::Return(IrStatement { 
+                            pos: kw.get_pos(),
+                            data: IrStatementData::Return { value: None } 
+                        }));
                     } else {
                         let final_value = {
                             let search_tok = Token::dummy(Rc::from("__copy__"));
@@ -6008,19 +6009,27 @@ impl CodeGen {
                         // return value is saved in a temporary variable so deferred statements get executed after evaluation
                         let tmp_var_name = self.get_temporary_var();
 
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push(&final_value.type_.stringify());
-                        self.definitions[index].push(" ");
-                        self.definitions[index].push(&tmp_var_name);
-                        self.definitions[index].push(" = ");
-                        self.definitions[index].push(&final_value.ir_value);
-                        self.definitions[index].push(";\n");
+                        let type_ = final_value.ir_value.type_.clone();
 
-                        buf.push_str("return ");
-                        buf.push_str(&tmp_var_name);
-                        buf.push_str(";\n");
+                        self.add_statement(IrStatement {
+                            pos: kw.get_pos(),
+                            data: IrStatementData::VarDecl { 
+                                name: Rc::clone(&tmp_var_name), 
+                                type_: type_.clone(), 
+                                initializer: Some(final_value.ir_value)
+                            }
+                        });
+
+                        return Err(ExecutionInterrupt::Return(IrStatement { 
+                            pos: kw.get_pos(),
+                            data: IrStatementData::Return { 
+                                value: Some(IrValue::new(
+                                    IrValueData::Variable { name: tmp_var_name },
+                                    type_
+                                ))
+                            } 
+                        }));
                     }
-
                 } else {
                     if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
                         if !matches!(return_type, SkyeType::Void) {
@@ -6032,10 +6041,11 @@ impl CodeGen {
                         unreachable!();
                     }
 
-                    buf.push_str("return;\n");
+                    return Err(ExecutionInterrupt::Return(IrStatement { 
+                        pos: kw.get_pos(),
+                        data: IrStatementData::Return { value: None } 
+                    }));
                 }
-
-                return Err(ExecutionInterrupt::Return(Rc::from(buf.as_ref())))
             }
             Statement::Struct { name, fields, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
@@ -7107,14 +7117,20 @@ impl CodeGen {
             }
             Statement::Break(kw) => {
                 if let Some((break_label, _)) = &self.curr_loop {
-                    return Err(ExecutionInterrupt::Interrupt(Rc::from(format!("goto {};\n", break_label))));
+                    return Err(ExecutionInterrupt::Interrupt(IrStatement {
+                        pos: kw.get_pos(),
+                        data: IrStatementData::Goto { label: Rc::clone(&break_label) }
+                    }));
                 } else {
                     token_error!(self, kw, "Can only use break inside loops");
                 }
             }
             Statement::Continue(kw) => {
                 if let Some((_, continue_label)) = &self.curr_loop {
-                    return Err(ExecutionInterrupt::Interrupt(Rc::from(format!("goto {};\n", continue_label))));
+                    return Err(ExecutionInterrupt::Interrupt(IrStatement {
+                        pos: kw.get_pos(),
+                        data: IrStatementData::Goto { label: Rc::clone(&continue_label) }
+                    }));
                 } else {
                     token_error!(self, kw, "Can only use continue inside loops");
                 }
