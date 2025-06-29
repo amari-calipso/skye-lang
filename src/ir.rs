@@ -93,12 +93,12 @@ pub enum IrValueData {
     Negate { value: Box<IrValue> },
     Reference { value: Box<IrValue> },
     Dereference { value: Box<IrValue> },
-    Slice { type_: SkyeType, items: Vec<IrValue> },
+    Slice { items: Vec<IrValue> },
     Array { items: Vec<IrValue> },
     Ternary { condition: Box<IrValue>, then_branch: Box<IrValue>, else_branch: Box<IrValue> },
     Get { from: Box<IrValue>, name: Rc<str> },
     DereferenceGet { from: Box<IrValue>, name: Rc<str> }, // arrow operator
-    CompoundLiteral { type_: SkyeType, items: HashMap<Rc<str>, IrValue> },
+    CompoundLiteral { items: HashMap<Rc<str>, IrValue> },
     Grouping(Box<IrValue>), // TODO: remove this and automatically figure out grouping in backend
     Binary { left: Box<IrValue>, op: BinaryOp, right: Box<IrValue> },
     Assign { target: Box<IrValue>, op: AssignOp, value: Box<IrValue> },
