@@ -403,47 +403,6 @@ impl CodeGen {
         (params_string, params_output)
     }
 
-    fn generate_fn_signature(&mut self, tok: &Token, inner_type: &SkyeType, return_stringified: &String, params_string: &String) -> (String, SkyeType) {
-        let mangled = inner_type.mangle();
-        let type_ = SkyeType::Type(Box::new(inner_type.clone()));
-
-        let env = self.globals.borrow();
-
-        let existing = env.get(&Token::dummy(mangled.clone().into()));
-        if let Some(fnptr) = existing {
-            if !fnptr.type_.equals(&type_, EqualsLevel::Typewise) {
-                if let Some(orig_tok) = fnptr.tok {
-                    token_error!(self, tok, "This function pointer's mangled type resolves to a different type");
-                    token_note!(orig_tok, "This definition is invalid. Change the name of this symbol");
-                } else {
-                    token_error!(self, tok, "This function pointer's mangled type resolves to a different type. An invalid symbol definition is present in the code");
-                }
-            }
-        } else {
-            drop(env);
-
-            self.declarations.push(CodeOutput::new());
-            self.declarations.last_mut().unwrap().push("typedef ");
-            self.declarations.last_mut().unwrap().push(return_stringified);
-            self.declarations.last_mut().unwrap().push(" (*");
-            self.declarations.last_mut().unwrap().push(&mangled);
-            self.declarations.last_mut().unwrap().push(")(");
-            self.declarations.last_mut().unwrap().push(&params_string);
-            self.declarations.last_mut().unwrap().push(");\n");
-
-            let mut env = self.globals.borrow_mut();
-            env.define(
-                mangled.clone().into(),
-                SkyeVariable::new(
-                    type_.clone(), true,
-                    Some(Box::new(tok.clone()))
-                )
-            );
-        }
-
-        (mangled, type_)
-    }
-
     fn get_temporary_var(&mut self) -> Rc<str> {
         let res = format!("SKYE_TMP_{}", self.tmp_var_cnt);
         self.tmp_var_cnt += 1;
@@ -1785,29 +1744,39 @@ impl CodeGen {
     async fn pre_eval_unary_operator(
         &mut self, inner: SkyeValue, inner_expr: &Expression,
         expr: &Expression, op_stringified: &str, op_method: &str,
-        op_type: Operator, op: &Token, index: usize, allow_unknown: bool,
-        ctx: &mut reblessive::Stk
+        op_type: Operator, apply_op: impl FnOnce(IrValue) -> IrValueData, 
+        op: &Token, allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
                 let tmp_var = self.get_temporary_var();
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&inner.type_.stringify());
-                self.definitions[index].push(" ");
-                self.definitions[index].push(&tmp_var);
-                self.definitions[index].push(" = ");
-                self.definitions[index].push(op_stringified);
-                self.definitions[index].push(&inner.ir_value);
-                self.definitions[index].push(";\n");
+                let type_ = inner.ir_value.type_.clone();
+                self.add_statement(IrStatement { 
+                    pos: expr.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&tmp_var), 
+                        type_: type_.clone(), 
+                        initializer: Some(IrValue::new(
+                            apply_op(inner.ir_value),
+                            type_.clone()
+                        ))
+                    }
+                });
 
-                SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
+                SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Variable { name: tmp_var },
+                        type_
+                    ), 
+                    false
+                )
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
-                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
+                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await;
                     inner
                 } else {
                     token_error!(
@@ -1838,39 +1807,59 @@ impl CodeGen {
     async fn post_eval_unary_operator(
         &mut self, inner: SkyeValue, inner_expr: &Expression,
         expr: &Expression, op_stringified: &str, op_method: &str,
-        op_type: Operator, op: &Token, index: usize, allow_unknown: bool,
-        ctx: &mut reblessive::Stk
+        op_type: Operator, apply_op: impl FnOnce(IrValue) -> IrValueData, 
+        op: &Token, allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
         let tmp_var = self.get_temporary_var();
 
-        self.definitions[index].push_indent();
-        self.definitions[index].push(&inner.ir_value.type_.stringify());
-        self.definitions[index].push(" ");
-        self.definitions[index].push(&tmp_var);
-        self.definitions[index].push(" = ");
-        self.definitions[index].push(&inner.ir_value);
-        self.definitions[index].push(";\n");
+        self.add_statement(IrStatement { 
+            pos: expr.get_pos(),
+            data: IrStatementData::VarDecl { 
+                name: Rc::clone(&tmp_var), 
+                type_: inner.ir_value.type_.clone(), 
+                initializer: Some(inner.ir_value.clone())
+            }
+        });
 
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&inner.ir_value);
-                self.definitions[index].push(op_stringified);
-                self.definitions[index].push(";\n");
+                let type_ = inner.ir_value.type_.clone();
+                self.add_statement(IrStatement { 
+                    pos: expr.get_pos(),
+                    data: IrStatementData::Expression { 
+                        value: IrValue::new(
+                            apply_op(inner.ir_value),
+                            type_.clone()
+                        )
+                    }
+                });
 
-                SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
+                SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Variable { name: tmp_var },
+                        type_
+                    ), 
+                    false
+                )
             }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
-                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
-                    SkyeValue::new(Rc::from(tmp_var), inner.ir_value.type_, false)
+                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await;
+                    
+                    SkyeValue::new(
+                        IrValue::new(
+                            IrValueData::Variable { name: tmp_var },
+                            inner.ir_value.type_
+                        ), 
+                        false
+                    )
                 } else {
                     token_error!(
                         self, op,
                         format!(
-                            "postfix unary '{}' operator is not implemented for type {}",
+                            "Postfix unary '{}' operator is not implemented for type {}",
                             op_stringified, inner.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
@@ -1895,18 +1884,26 @@ impl CodeGen {
     async fn unary_operator(
         &mut self, inner: SkyeValue, inner_expr: &Expression,
         expr: &Expression, op_stringified: &str, op_method: &str,
-        op_type: Operator, op: &Token, index: usize, allow_unknown: bool,
-        ctx: &mut reblessive::Stk
+        op_type: Operator, apply_op: impl FnOnce(IrValue) -> IrValueData, 
+        op: &Token, allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let new_inner = inner.follow_reference(self.external_zero_check(op, index));
+        let new_inner = inner.follow_reference(self.external_zero_check(op));
 
         match new_inner.ir_value.type_.implements_op(op_type) {
-            ImplementsHow::Native(_) => SkyeValue::new(Rc::from(format!("{}{}", op_stringified, new_inner.ir_value)), new_inner.ir_value.type_, false),
+            ImplementsHow::Native(_) => {
+                SkyeValue::new(
+                    IrValue {
+                        type_: new_inner.ir_value.type_.clone(),
+                        data: apply_op(new_inner.ir_value)
+                    },
+                    false
+                )
+            }
             ImplementsHow::ThirdParty => {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_inner, &search_tok, true) {
                     let v = Vec::new();
-                    ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await
                 } else {
                     token_error!(
                         self, op,
@@ -1933,26 +1930,39 @@ impl CodeGen {
         }
     }
 
-    async fn binary_operator(
+    async fn binary_operator_inner(
         &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
         left_expr: &Expression, right_expr: &Expression, expr: &Expression,
         op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
-        index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk
+        allow_unknown: bool, apply_ir_node: impl FnOnce(IrValue, IrValue) -> IrValueData,
+        ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let new_left = left.follow_reference(self.external_zero_check(op, index));
+        let new_left = left.follow_reference(self.external_zero_check(op));
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await.follow_reference(self.external_zero_check(op, index));
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await.follow_reference(self.external_zero_check(op));
 
                 if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
                     new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                     compatible_types.contains(&right.ir_value.type_)
                 {
                     if let Some(type_) = forced_return_type {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), type_, false)
+                        SkyeValue::new(
+                            IrValue::new(
+                                apply_ir_node(new_left.ir_value, right.ir_value),
+                                type_
+                            ),
+                            false
+                        )
                     } else {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), new_left.ir_value.type_, false)
+                        SkyeValue::new(
+                            IrValue {
+                                type_: new_left.ir_value.type_.clone(),
+                                data: apply_ir_node(new_left.ir_value, right.ir_value)
+                            },
+                            false
+                        )
                     }
                 } else {
                     ast_error!(
@@ -1970,7 +1980,7 @@ impl CodeGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -1997,21 +2007,65 @@ impl CodeGen {
         }
     }
 
+    async fn binary_operator(
+        &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
+        left_expr: &Expression, right_expr: &Expression, expr: &Expression,
+        op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
+        binary_op: BinaryOp, allow_unknown: bool, ctx: &mut reblessive::Stk
+    ) -> SkyeValue {
+        let apply_ir_node = move |l, r| IrValueData::Binary { 
+            op: binary_op, left: Box::new(l), right: Box::new(r) 
+        };
+
+        ctx.run(|ctx| self.binary_operator_inner(
+            left, forced_return_type, left_expr, right_expr, expr, 
+            op_stringified, op, op_method, op_type, allow_unknown, 
+            apply_ir_node, ctx
+        )).await
+    }
+
+    async fn assign_operator(
+        &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
+        left_expr: &Expression, right_expr: &Expression, expr: &Expression,
+        op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
+        assign_op: AssignOp, allow_unknown: bool, ctx: &mut reblessive::Stk
+    ) -> SkyeValue {
+        let apply_ir_node = move |t, v| IrValueData::Assign { 
+            op: assign_op, target: Box::new(t), value: Box::new(v) 
+        }; 
+
+        ctx.run(|ctx| self.binary_operator_inner(
+            left, forced_return_type, left_expr, right_expr, expr, 
+            op_stringified, op, op_method, op_type, allow_unknown, 
+            apply_ir_node, ctx
+        )).await
+    }
+
     async fn binary_operator_int_on_right(
         &mut self, left: SkyeValue, left_expr: &Expression,
         right_expr: &Expression, expr: &Expression, op_stringified: &str,
-        op: &Token, op_method: &str, op_type: Operator,
-        index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk
+        op: &Token, op_method: &str, op_type: Operator, binary_op: BinaryOp, 
+        allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let new_left = left.follow_reference(self.external_zero_check(op, index));
+        let new_left = left.follow_reference(self.external_zero_check(op));
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
-                    .follow_reference(self.external_zero_check(op, index));
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await
+                    .follow_reference(self.external_zero_check(op));
 
                 if right.ir_value.type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) {
-                    SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right.ir_value)), new_left.ir_value.type_, false)
+                    SkyeValue::new(
+                        IrValue {
+                            type_: new_left.ir_value.type_.clone(),
+                            data: IrValueData::Binary { 
+                                op: binary_op, 
+                                left: Box::new(new_left.ir_value), 
+                                right: Box::new(right.ir_value) 
+                            }
+                        },
+                        false
+                    )
                 } else {
                     ast_error!(
                         self, right_expr,
@@ -2028,7 +2082,7 @@ impl CodeGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -2121,18 +2175,19 @@ impl CodeGen {
         })
     }
 
-    async fn binary_operator_with_zero_check(
+    async fn binary_operator_with_zero_check_inner(
         &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
         left_expr: &Expression, right_expr: &Expression, expr: &Expression,
         op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
-        index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk
+        allow_unknown: bool, apply_ir_node: impl FnOnce(IrValue, IrValue) -> IrValueData,
+        ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let new_left = left.follow_reference(self.external_zero_check(op, index));
+        let new_left = left.follow_reference(self.external_zero_check(op));
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
-                    .follow_reference(self.external_zero_check(op, index));
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await
+                    .follow_reference(self.external_zero_check(op));
 
                 if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
                     new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
@@ -2141,9 +2196,21 @@ impl CodeGen {
                     let right_value = ctx.run(|ctx| self.zero_check(&right, op, "Division by zero", ctx)).await;
 
                     if let Some(type_) = forced_return_type {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right_value)), type_, false)
+                        SkyeValue::new(
+                            IrValue::new(
+                                apply_ir_node(new_left.ir_value, right_value),
+                                type_
+                            ),
+                            false
+                        )
                     } else {
-                        SkyeValue::new(Rc::from(format!("{} {} {}", new_left.ir_value, op_stringified, right_value)), new_left.ir_value.type_, false)
+                        SkyeValue::new(
+                            IrValue {
+                                type_: new_left.ir_value.type_.clone(),
+                                data: apply_ir_node(new_left.ir_value, right_value)
+                            },
+                            false
+                        )
                     }
                 } else {
                     ast_error!(
@@ -2179,36 +2246,45 @@ impl CodeGen {
                         }
                     };
 
+                    let tmp_var = self.get_temporary_var();
                     let left_expr_pos = left_expr.get_pos();
 
-                    let tmp_var = self.get_temporary_var();
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push(&left.ir_value.type_.stringify());
-                    self.definitions[index].push(" ");
-                    self.definitions[index].push(&tmp_var);
-                    self.definitions[index].push(" = ");
-                    self.definitions[index].push(&left.ir_value);
-                    self.definitions[index].push(";\n");
+                    let left_type = left.ir_value.type_.clone();
+                    self.add_statement(IrStatement { 
+                        pos: expr.get_pos(),
+                        data: IrStatementData::VarDecl { 
+                            name: Rc::clone(&tmp_var), 
+                            type_: left_type.clone(), 
+                            initializer: Some(left.ir_value) 
+                        }
+                    });
 
-                    let tmp_var_rc = tmp_var.into();
                     let tmp_var_tok = Token::new(
                         left_expr_pos.source, left_expr_pos.filename, 
-                        TokenType::Identifier, Rc::clone(&tmp_var_rc), 
+                        TokenType::Identifier, Rc::clone(&tmp_var), 
                         left_expr_pos.start, left_expr_pos.end, left_expr_pos.line
                     );
 
-                    self.environment.borrow_mut().define(Rc::clone(&tmp_var_rc), SkyeVariable::new(left.ir_value.type_, false, None));
+                    self.environment.borrow_mut().define(Rc::clone(&tmp_var), SkyeVariable::new(left_type, false, None));
                     let args = vec![Expression::Variable(tmp_var_tok), right_expr.clone()];
-                    let fmod_value = SkyeValue::new(fmod_tok.lexeme, fmod_function.type_, true);
-                    let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, index, allow_unknown, ctx)).await;
-                    self.environment.borrow_mut().undef(tmp_var_rc);
+                    
+                    let fmod_value = SkyeValue::new(
+                        IrValue::new(
+                            IrValueData::Variable { name: fmod_tok.lexeme }, 
+                            fmod_function.type_
+                        ), 
+                        true
+                    );
+
+                    let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, 0, allow_unknown, ctx)).await;
+                    self.environment.borrow_mut().undef(tmp_var);
                     return result;
                 }
 
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -2235,6 +2311,38 @@ impl CodeGen {
         }
     }
 
+    async fn binary_operator_with_zero_check(
+        &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
+        left_expr: &Expression, right_expr: &Expression, expr: &Expression,
+        op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
+        binary_op: BinaryOp, allow_unknown: bool, ctx: &mut reblessive::Stk
+    ) -> SkyeValue {
+        let apply_ir_node = move |l, r| IrValueData::Binary { 
+            op: binary_op, left: Box::new(l), right: Box::new(r) 
+        };
+
+        ctx.run(|ctx| self.binary_operator_with_zero_check_inner(
+            left, forced_return_type, left_expr, right_expr, expr, op_stringified, 
+            op, op_method, op_type, allow_unknown, apply_ir_node, ctx
+        )).await
+    }
+
+    async fn assign_operator_with_zero_check(
+        &mut self, left: SkyeValue, forced_return_type: Option<SkyeType>,
+        left_expr: &Expression, right_expr: &Expression, expr: &Expression,
+        op_stringified: &str, op: &Token, op_method: &str, op_type: Operator,
+        assign_op: AssignOp, allow_unknown: bool, ctx: &mut reblessive::Stk
+    ) -> SkyeValue {
+        let apply_ir_node = move |t, v| IrValueData::Assign { 
+            op: assign_op, target: Box::new(t), value: Box::new(v) 
+        };
+
+        ctx.run(|ctx| self.binary_operator_with_zero_check_inner(
+            left, forced_return_type, left_expr, right_expr, expr, op_stringified, 
+            op, op_method, op_type, allow_unknown, apply_ir_node, ctx
+        )).await
+    }
+
     async fn get_type_equality(&mut self, inner_left: &SkyeType, right_expr: &Expression, index: usize, allow_unknown: bool, reversed: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await;
 
@@ -2254,38 +2362,6 @@ impl CodeGen {
             );
 
             SkyeValue::get_unknown()
-        }
-    }
-
-    fn prepare_array_struct(&mut self, array_specifier: Rc<str>, type_name: &Rc<str>, type_: &SkyeType, size: usize) {
-        if !self.arrays.contains(&array_specifier) {
-            let mut buf = String::from("typedef struct SKYE_ARRAY_STRUCT_");
-            buf.push_str(&array_specifier);
-
-            self.arrays.insert(array_specifier);
-
-            self.declarations.push(CodeOutput::new());
-            self.declarations.last_mut().unwrap().push(&buf);
-            self.declarations.last_mut().unwrap().push(";\n");
-
-            let mut def_buf = CodeOutput::new();
-            def_buf.push(&buf);
-            def_buf.push(" {\n");
-            def_buf.inc_indent();
-
-            def_buf.push_indent();
-            def_buf.push(&type_.stringify());
-            def_buf.push(" SKYE_ARRAY[");
-            def_buf.push(&size.to_string());
-            def_buf.push("];\n");
-            def_buf.dec_indent();
-
-            def_buf.push("} ");
-            def_buf.push(&type_name);
-            def_buf.push(";\n\n");
-
-            self.struct_definitions.insert(Rc::clone(&type_name), def_buf);
-            self.struct_defs_order.push(Rc::clone(&type_name));
         }
     }
 
@@ -2554,7 +2630,9 @@ impl CodeGen {
                             } else {
                                 ctx.run(|ctx| self.pre_eval_unary_operator(
                                     new_inner, inner_expr, expr, "++",
-                                    "__inc__", Operator::Inc, op, index, allow_unknown, ctx
+                                    "__inc__", Operator::Inc, 
+                                    |x| IrValueData::Increment { value: Box::new(x) },
+                                    op, allow_unknown, ctx
                                 )).await
                             }
                         }
@@ -2570,18 +2648,17 @@ impl CodeGen {
                             } else {
                                 ctx.run(|ctx| self.pre_eval_unary_operator(
                                     new_inner, inner_expr, expr, "--",
-                                    "__dec__", Operator::Dec, op, index, allow_unknown, ctx
+                                    "__dec__", Operator::Dec, 
+                                    |x| IrValueData::Decrement { value: Box::new(x) },
+                                    op, allow_unknown, ctx
                                 )).await
                             }
                         }
-                        TokenType::Plus => {
-                            ctx.run(|ctx| self.unary_operator(
-                                inner, inner_expr, expr, "+", "__pos__", Operator::Pos, op, index, allow_unknown, ctx
-                            )).await
-                        }
                         TokenType::Minus => {
                             ctx.run(|ctx| self.unary_operator(
-                                inner, inner_expr, expr, "-", "__neg__", Operator::Neg, op, index, allow_unknown, ctx
+                                inner, inner_expr, expr, "-", "__neg__", Operator::Neg, 
+                                |x| IrValueData::Negative { value: Box::new(x) },
+                                op, allow_unknown, ctx
                             )).await
                         }
                         TokenType::Bang => {
@@ -2612,7 +2689,9 @@ impl CodeGen {
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
                             } else {
                                 ctx.run(|ctx| self.unary_operator(
-                                    inner, inner_expr, expr, "!", "__not__", Operator::Not, op, index, allow_unknown, ctx
+                                    inner, inner_expr, expr, "!", "__not__", Operator::Not, 
+                                    |x| IrValueData::Negate { value: Box::new(x) },
+                                    op, allow_unknown, ctx
                                 )).await
                             }
                         }
@@ -2653,7 +2732,9 @@ impl CodeGen {
                         }
                         TokenType::Tilde => {
                             ctx.run(|ctx| self.unary_operator(
-                                inner, inner_expr, expr, "~", "__inv__", Operator::Inv, op, index, allow_unknown, ctx
+                                inner, inner_expr, expr, "~", "__inv__", Operator::Inv, 
+                                |x| IrValueData::Invert { value: Box::new(x) },
+                                op, allow_unknown, ctx
                             )).await
                         }
                         TokenType::BitwiseAnd => {
@@ -2903,7 +2984,9 @@ impl CodeGen {
                                 }
                                 _ => {
                                     ctx.run(|ctx| self.unary_operator(
-                                        inner, inner_expr, expr, "*", "__constderef__", Operator::ConstDeref, op, index, allow_unknown, ctx
+                                        inner, inner_expr, expr, "*", "__constderef__", Operator::ConstDeref, 
+                                        |x| IrValueData::Dereference { value: Box::new(x) },
+                                        op, allow_unknown, ctx
                                     )).await
                                 }
                             }
@@ -3298,7 +3381,9 @@ impl CodeGen {
                             } else {
                                 ctx.run(|ctx| self.post_eval_unary_operator(
                                     new_inner, inner_expr, expr, "++",
-                                    "__inc__", Operator::Inc, op, index, allow_unknown, ctx
+                                    "__inc__", Operator::Inc, 
+                                    |x| IrValueData::Increment { value: Box::new(x) },
+                                    op, allow_unknown, ctx
                                 )).await
                             }
                         }
@@ -3314,7 +3399,9 @@ impl CodeGen {
                             } else {
                                 ctx.run(|ctx| self.post_eval_unary_operator(
                                     new_inner, inner_expr, expr, "--",
-                                    "__dec__", Operator::Dec, op, index, allow_unknown, ctx
+                                    "__dec__", Operator::Dec, 
+                                    |x| IrValueData::Decrement { value: Box::new(x) },
+                                    op, allow_unknown, ctx
                                 )).await
                             }
                         }
@@ -3330,49 +3417,49 @@ impl CodeGen {
                         ctx.run(|ctx| self.binary_operator(
                             left, None, &left_expr, &right_expr,
                             expr, "+", op, "__add__", Operator::Add,
-                            index, allow_unknown, ctx
+                            BinaryOp::Add, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Minus => {
                         ctx.run(|ctx| self.binary_operator(
                             left, None, &left_expr, &right_expr,
                             expr, "-", op, "__sub__", Operator::Sub,
-                            index, allow_unknown, ctx
+                            BinaryOp::Subtract, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Slash => {
                         ctx.run(|ctx| self.binary_operator_with_zero_check(
                             left, None, &left_expr, &right_expr,
                             expr, "/", op, "__div__", Operator::Div,
-                            index, allow_unknown, ctx
+                            BinaryOp::Divide, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Star => {
                         ctx.run(|ctx| self.binary_operator(
                             left, None, &left_expr, &right_expr,
                             expr, "*", op, "__mul__", Operator::Mul,
-                            index, allow_unknown, ctx
+                            BinaryOp::Multiply, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Mod => {
                         ctx.run(|ctx| self.binary_operator_with_zero_check(
                             left, None, &left_expr, &right_expr,
                             expr, "%", op, "__mod__", Operator::Mod,
-                            index, allow_unknown, ctx
+                            BinaryOp::Modulo, allow_unknown, ctx
                         )).await
                     }
                     TokenType::ShiftLeft => {
                         ctx.run(|ctx| self.binary_operator_int_on_right(
                             left, &left_expr, &right_expr,
                             expr, "<<", op, "__shl__", Operator::Shl,
-                            index, allow_unknown, ctx
+                            BinaryOp::ShiftLeft, allow_unknown, ctx
                         )).await
                     }
                     TokenType::ShiftRight => {
                         ctx.run(|ctx| self.binary_operator_int_on_right(
                             left, &left_expr, &right_expr,
                             expr, ">>", op, "__shr__", Operator::Shr,
-                            index, allow_unknown, ctx
+                            BinaryOp::ShiftRight, allow_unknown, ctx
                         )).await
                     }
                     TokenType::LogicOr => {
@@ -3636,7 +3723,7 @@ impl CodeGen {
                         ctx.run(|ctx| self.binary_operator(
                             left, None, &left_expr, &right_expr,
                             expr, "^", op, "__xor__", Operator::Xor,
-                            index, allow_unknown, ctx
+                            BinaryOp::BitwiseXor, allow_unknown, ctx
                         )).await
                     }
                     TokenType::BitwiseOr => {
@@ -3660,7 +3747,7 @@ impl CodeGen {
                             ctx.run(|ctx| self.binary_operator(
                                 left, None, &left_expr, &right_expr,
                                 expr, "|", op, "__bitor__", Operator::BitOr,
-                                index, allow_unknown, ctx
+                                BinaryOp::BitwiseOr, allow_unknown, ctx
                             )).await
                         }
                     }
@@ -3668,35 +3755,35 @@ impl CodeGen {
                         ctx.run(|ctx| self.binary_operator(
                             left, None, &left_expr, &right_expr,
                             expr, "&", op, "__bitand__", Operator::BitAnd,
-                            index, allow_unknown, ctx
+                            BinaryOp::BitwiseAnd, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Greater => {
                         ctx.run(|ctx| self.binary_operator(
                             left, Some(SkyeType::U8), &left_expr, &right_expr,
                             expr, ">", op, "__gt__", Operator::Gt,
-                            index, allow_unknown, ctx
+                            BinaryOp::Greater, allow_unknown, ctx
                         )).await
                     }
                     TokenType::GreaterEqual => {
                         ctx.run(|ctx| self.binary_operator(
                             left, Some(SkyeType::U8), &left_expr, &right_expr,
                             expr, ">=", op, "__ge__", Operator::Ge,
-                            index, allow_unknown, ctx
+                            BinaryOp::GreaterEqual, allow_unknown, ctx
                         )).await
                     }
                     TokenType::Less => {
                         ctx.run(|ctx| self.binary_operator(
                             left, Some(SkyeType::U8), &left_expr, &right_expr,
                             expr, "<", op, "__lt__", Operator::Lt,
-                            index, allow_unknown, ctx
+                            BinaryOp::Less, allow_unknown, ctx
                         )).await
                     }
                     TokenType::LessEqual => {
                         ctx.run(|ctx| self.binary_operator(
                             left, Some(SkyeType::U8), &left_expr, &right_expr,
                             expr, "<=", op, "__le__", Operator::Le,
-                            index, allow_unknown, ctx
+                            BinaryOp::LessEqual, allow_unknown, ctx
                         )).await
                     }
                     TokenType::EqualEqual => {
@@ -3708,7 +3795,7 @@ impl CodeGen {
                             ctx.run(|ctx| self.binary_operator(
                                 left, Some(SkyeType::U8), &left_expr, &right_expr,
                                 expr, "==", op, "__eq__", Operator::Eq,
-                                index, allow_unknown, ctx
+                                BinaryOp::Equal, allow_unknown, ctx
                             )).await
                         }
                     }
@@ -3721,7 +3808,7 @@ impl CodeGen {
                             ctx.run(|ctx| self.binary_operator(
                                 left, Some(SkyeType::U8), &left_expr, &right_expr,
                                 expr, "!=", op, "__ne__", Operator::Ne,
-                                index, allow_unknown, ctx
+                                BinaryOp::NotEqual, allow_unknown, ctx
                             )).await
                         }
                     }
@@ -3880,73 +3967,73 @@ impl CodeGen {
                         }
                     }
                     TokenType::PlusEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "+=", op, "__setadd__", Operator::SetAdd,
-                            index, allow_unknown, ctx
+                            AssignOp::Add, allow_unknown, ctx
                         )).await
                     }
                     TokenType::MinusEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "-=", op, "__setsub__", Operator::SetSub,
-                            index, allow_unknown, ctx
+                            AssignOp::Subtract, allow_unknown, ctx
                         )).await
                     }
                     TokenType::StarEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "*=", op, "__setmul__", Operator::SetMul,
-                            index, allow_unknown, ctx
+                            AssignOp::Multiply, allow_unknown, ctx
                         )).await
                     }
                     TokenType::SlashEquals => {
-                        ctx.run(|ctx| self.binary_operator_with_zero_check(
+                        ctx.run(|ctx| self.assign_operator_with_zero_check(
                             target, None, &target_expr, &value_expr,
                             expr, "/=", op, "__setdiv__", Operator::SetDiv,
-                            index, allow_unknown, ctx
+                            AssignOp::Divide, allow_unknown, ctx
                         )).await
                     }
                     TokenType::ModEquals => {
-                        ctx.run(|ctx| self.binary_operator_with_zero_check(
+                        ctx.run(|ctx| self.assign_operator_with_zero_check(
                             target, None, &target_expr, &value_expr,
                             expr, "%=", op, "__setmod__", Operator::SetMod,
-                            index, allow_unknown, ctx
+                            AssignOp::Modulo, allow_unknown, ctx
                         )).await
                     }
                     TokenType::ShiftLeftEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "<<=", op, "__setshl__", Operator::SetShl,
-                            index, allow_unknown, ctx
+                            AssignOp::ShiftLeft, allow_unknown, ctx
                         )).await
                     }
                     TokenType::ShiftRightEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, ">>=", op, "__setshr__", Operator::SetShr,
-                            index, allow_unknown, ctx
+                            AssignOp::ShiftRight, allow_unknown, ctx
                         )).await
                     }
                     TokenType::AndEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "&=", op, "__setand__", Operator::SetAnd,
-                            index, allow_unknown, ctx
+                            AssignOp::BitwiseAnd, allow_unknown, ctx
                         )).await
                     }
                     TokenType::XorEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "^=", op, "__setxor__", Operator::SetXor,
-                            index, allow_unknown, ctx
+                            AssignOp::BitwiseXor, allow_unknown, ctx
                         )).await
                     }
                     TokenType::OrEquals => {
-                        ctx.run(|ctx| self.binary_operator(
+                        ctx.run(|ctx| self.assign_operator(
                             target, None, &target_expr, &value_expr,
                             expr, "|=", op, "__setor__", Operator::SetOr,
-                            index, allow_unknown, ctx
+                            AssignOp::BitwiseOr, allow_unknown, ctx
                         )).await
                     }
                     _ => unreachable!()
@@ -3959,12 +4046,7 @@ impl CodeGen {
             Expression::FnPtr { kw, return_type: return_type_expr, params } => {
                 let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, index, allow_unknown, ctx)).await;
                 let (params_string, params_output) = ctx.run(|ctx| self.get_params(params, None, false, index, allow_unknown, ctx)).await;
-
-                let return_stringified = return_type.stringify();
-                let inner_type = SkyeType::Function(params_output, Box::new(return_type), false);
-
-                let (mangled, type_) = self.generate_fn_signature(kw, &inner_type, &return_stringified, &params_string);
-                SkyeValue::special(type_)
+                SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Function(params_output, Box::new(return_type), false))))
             }
             Expression::Ternary { condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr, .. } => {
                 let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, allow_unknown, ctx)).await;
@@ -5461,7 +5543,6 @@ impl CodeGen {
                 let return_stringified = return_type.stringify();
                 let (params_string, params_output) = ctx.run(|ctx| self.get_params(params, existing, has_decl, index, false, ctx)).await;
                 let type_ = SkyeType::Function(params_output.clone(), Box::new(return_type.clone()), body.is_some());
-                self.generate_fn_signature(name, &type_, &return_stringified, &params_string);
 
                 let has_body = body.is_some();
 
@@ -5538,43 +5619,43 @@ impl CodeGen {
 
                     if (returns_void || returns_i32 || returns_i32_result || returns_void_result) && (no_args || has_args || has_stdargs) {
                         full_name = Rc::from("_SKYE_MAIN");
+                        // TODO
+                        // let real_main_idx = self.definitions.len();
+                        // self.definitions.push(CodeOutput::new());
 
-                        let real_main_idx = self.definitions.len();
-                        self.definitions.push(CodeOutput::new());
-
-                        if returns_void {
-                            if has_stdargs {
-                                self.definitions[real_main_idx].push(VOID_MAIN_PLUS_STD_ARGS);
-                            } else if has_args {
-                                self.definitions[real_main_idx].push(VOID_MAIN_PLUS_ARGS);
-                            } else {
-                                self.definitions[real_main_idx].push(VOID_MAIN);
-                            }
-                        } else if returns_i32 {
-                            if has_stdargs {
-                                self.definitions[real_main_idx].push(I32_MAIN_PLUS_STD_ARGS);
-                            } else if has_args {
-                                self.definitions[real_main_idx].push(I32_MAIN_PLUS_ARGS);
-                            } else {
-                                self.definitions[real_main_idx].push(I32_MAIN);
-                            }
-                        } else if returns_i32_result {
-                            if has_stdargs {
-                                self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_STD_ARGS);
-                            } else if has_args {
-                                self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_ARGS);
-                            } else {
-                                self.definitions[real_main_idx].push(RESULT_I32_MAIN);
-                            }
-                        } else if returns_void_result {
-                            if has_stdargs {
-                                self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_STD_ARGS);
-                            } else if has_args {
-                                self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_ARGS);
-                            } else {
-                                self.definitions[real_main_idx].push(RESULT_VOID_MAIN);
-                            }
-                        }
+                        // if returns_void {
+                        //     if has_stdargs {
+                        //         self.definitions[real_main_idx].push(VOID_MAIN_PLUS_STD_ARGS);
+                        //     } else if has_args {
+                        //         self.definitions[real_main_idx].push(VOID_MAIN_PLUS_ARGS);
+                        //     } else {
+                        //         self.definitions[real_main_idx].push(VOID_MAIN);
+                        //     }
+                        // } else if returns_i32 {
+                        //     if has_stdargs {
+                        //         self.definitions[real_main_idx].push(I32_MAIN_PLUS_STD_ARGS);
+                        //     } else if has_args {
+                        //         self.definitions[real_main_idx].push(I32_MAIN_PLUS_ARGS);
+                        //     } else {
+                        //         self.definitions[real_main_idx].push(I32_MAIN);
+                        //     }
+                        // } else if returns_i32_result {
+                        //     if has_stdargs {
+                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_STD_ARGS);
+                        //     } else if has_args {
+                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_ARGS);
+                        //     } else {
+                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN);
+                        //     }
+                        // } else if returns_void_result {
+                        //     if has_stdargs {
+                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_STD_ARGS);
+                        //     } else if has_args {
+                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_ARGS);
+                        //     } else {
+                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN);
+                        //     }
+                        // }
                     } else {
                         token_error!(self, name, "Invalid function signature for \"main\" function");
                     }
@@ -6794,14 +6875,6 @@ impl CodeGen {
                                             Some(Box::new(variant.name.clone()))
                                         )
                                     );
-
-                                    drop(env);
-
-                                    self.generate_fn_signature(
-                                        &variant.name, &type_,
-                                        &struct_output_type.stringify(),
-                                        &String::new()
-                                    );
                                 } else {
                                     let type_ = SkyeType::Function(
                                         vec![SkyeFunctionParam::new(variant.type_.clone(), true)],
@@ -6815,14 +6888,6 @@ impl CodeGen {
                                             type_.clone(), true,
                                             Some(Box::new(variant.name.clone()))
                                         )
-                                    );
-
-                                    drop(env);
-
-                                    self.generate_fn_signature(
-                                        &variant.name, &type_,
-                                        &struct_output_type.stringify(),
-                                        &variant.type_.stringify()
                                     );
                                 }
                             }
