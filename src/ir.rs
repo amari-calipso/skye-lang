@@ -35,7 +35,7 @@ pub enum IrStatementData {
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, body: Option<Vec<IrStatement>>, type_: SkyeType }, // TODO: add qualifiers
+    Function { name: Rc<str>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
     Struct { name: Rc<str>, type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant> },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },

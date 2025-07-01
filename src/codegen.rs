@@ -208,7 +208,7 @@ impl CodeGen {
             data: IrStatementData::Function { 
                 name: Rc::from("_SKYE_INIT"), 
                 body: Some(Vec::new()), 
-                type_: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true)
+                return_type: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true)
             },
             pos: AstPos::empty()
         })));
@@ -5260,6 +5260,21 @@ impl CodeGen {
         self.environment = previous;
     }
 
+    async fn scoped_execute(&mut self, stmt: &Statement, ctx: &mut reblessive::Stk) {
+        if !matches!(stmt, Statement::Block(..)) {
+            let stmts = vec![stmt.clone()];
+            ctx.run(|ctx| self.execute_block(
+                &stmts,
+                Rc::new(RefCell::new(Environment::with_enclosing(
+                    Rc::clone(&self.environment)
+                ))),
+                0, false, ctx
+            )).await;
+        } else {
+            let _ = ctx.run(|ctx| self.execute(stmt, 0, ctx)).await;
+        }
+    }
+
     pub async fn execute(&mut self, stmt: &Statement, index: usize, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
         match stmt {
             Statement::Empty => (),
@@ -5619,43 +5634,6 @@ impl CodeGen {
 
                     if (returns_void || returns_i32 || returns_i32_result || returns_void_result) && (no_args || has_args || has_stdargs) {
                         full_name = Rc::from("_SKYE_MAIN");
-                        // TODO
-                        // let real_main_idx = self.definitions.len();
-                        // self.definitions.push(CodeOutput::new());
-
-                        // if returns_void {
-                        //     if has_stdargs {
-                        //         self.definitions[real_main_idx].push(VOID_MAIN_PLUS_STD_ARGS);
-                        //     } else if has_args {
-                        //         self.definitions[real_main_idx].push(VOID_MAIN_PLUS_ARGS);
-                        //     } else {
-                        //         self.definitions[real_main_idx].push(VOID_MAIN);
-                        //     }
-                        // } else if returns_i32 {
-                        //     if has_stdargs {
-                        //         self.definitions[real_main_idx].push(I32_MAIN_PLUS_STD_ARGS);
-                        //     } else if has_args {
-                        //         self.definitions[real_main_idx].push(I32_MAIN_PLUS_ARGS);
-                        //     } else {
-                        //         self.definitions[real_main_idx].push(I32_MAIN);
-                        //     }
-                        // } else if returns_i32_result {
-                        //     if has_stdargs {
-                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_STD_ARGS);
-                        //     } else if has_args {
-                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN_PLUS_ARGS);
-                        //     } else {
-                        //         self.definitions[real_main_idx].push(RESULT_I32_MAIN);
-                        //     }
-                        // } else if returns_void_result {
-                        //     if has_stdargs {
-                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_STD_ARGS);
-                        //     } else if has_args {
-                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN_PLUS_ARGS);
-                        //     } else {
-                        //         self.definitions[real_main_idx].push(RESULT_VOID_MAIN);
-                        //     }
-                        // }
                     } else {
                         token_error!(self, name, "Invalid function signature for \"main\" function");
                     }
@@ -5663,77 +5641,74 @@ impl CodeGen {
 
                 let mut buf = String::new();
 
-                if !*bind {
-                    for qualifier in qualifiers {
-                        buf.push_str(&qualifier.lexeme);
-                        buf.push(' ');
-                    }
+                {
+                    let mut env = self.globals.borrow_mut();
+                    env.define(
+                        Rc::clone(&full_name), 
+                        SkyeVariable::new(
+                            type_.clone(), true,
+                            Some(Box::new(name.clone()))
+                        )
+                    );
+                }
+                
+                if !has_body {
+                    // TODO handle qualifiers
+                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                        pos: stmt.get_pos(),
+                        data: IrStatementData::Function { 
+                            name: full_name, 
+                            return_type,
+                            body: None, 
+                        }
+                    })));
 
-                    buf.push_str(&return_stringified);
-                    buf.push(' ');
-                    buf.push_str(&full_name);
-                    buf.push('(');
-                    buf.push_str(&params_string);
-                    buf.push(')');
-
-                    if (!has_decl) || (!has_body) {
-                        self.declarations.push(CodeOutput::new());
-                        self.declarations.last_mut().unwrap().push(&buf);
-                        self.declarations.last_mut().unwrap().push(";\n");
-                    }
+                    return Ok(Some(type_));
                 }
 
                 let mut fn_environment = None;
-                if has_body {
-                    fn_environment = Some(Environment::with_enclosing(Rc::clone(&self.environment)));
+                fn_environment = Some(Environment::with_enclosing(Rc::clone(&self.environment)));
 
-                    for i in 0 .. params.len() {
-                        fn_environment.as_mut().unwrap().define(
-                            Rc::clone(&params[i].name.as_ref().unwrap().lexeme),
-                            SkyeVariable::new(
-                                params_output[i].type_.clone(),
-                                params_output[i].is_const,
-                                Some(Box::new(params[i].name.as_ref().unwrap().clone()))
-                            )
-                        );
+                for i in 0 .. params.len() {
+                    fn_environment.as_mut().unwrap().define(
+                        Rc::clone(&params[i].name.as_ref().unwrap().lexeme),
+                        SkyeVariable::new(
+                            params_output[i].type_.clone(),
+                            params_output[i].is_const,
+                            Some(Box::new(params[i].name.as_ref().unwrap().clone()))
+                        )
+                    );
+                }
+
+                let enclosing_level = self.curr_function.clone();
+                self.curr_function = CurrentFn::Some { return_type, return_type_expr: return_type_expr.clone() };
+
+                let enclosing_deferred = Rc::clone(&self.deferred);
+                self.deferred = Rc::new(RefCell::new(Vec::new()));
+
+                let function_definition = Rc::new(RefCell::new(IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Function { 
+                        name: full_name, 
+                        body: Some(Vec::new()), 
+                        return_type 
                     }
-                }
+                }));
 
-                let mut env = self.globals.borrow_mut();
-                env.define(
-                    Rc::clone(&full_name), SkyeVariable::new(
-                        type_.clone(), true,
-                        Some(Box::new(name.clone()))
-                    )
-                );
-                drop(env);
+                self.definitions.push(Rc::clone(&function_definition));
+                
+                let previous_definition = self.curr_definition.clone();
+                self.curr_definition = Some(function_definition);
 
-                if has_body {
-                    let enclosing_level = self.curr_function.clone();
-                    self.curr_function = CurrentFn::Some { return_type, return_type_expr: return_type_expr.clone() };
+                ctx.run(|ctx| self.execute_block(
+                    body.as_ref().unwrap(),
+                    Rc::new(RefCell::new(fn_environment.unwrap())),
+                    0, false, ctx
+                )).await;
 
-                    let enclosing_deferred = Rc::clone(&self.deferred);
-                    self.deferred = Rc::new(RefCell::new(Vec::new()));
-
-                    let new_index = self.definitions.len();
-                    self.definitions.push(CodeOutput::new());
-                    self.definitions[new_index].push(&buf);
-                    self.definitions[new_index].push(" {\n");
-                    self.definitions[new_index].inc_indent();
-
-                    ctx.run(|ctx| self.execute_block(
-                        body.as_ref().unwrap(),
-                        Rc::new(RefCell::new(fn_environment.unwrap())),
-                        new_index, false, ctx
-                    )).await;
-
-                    self.curr_function = enclosing_level;
-                    self.deferred = enclosing_deferred;
-
-                    self.definitions[new_index].dec_indent();
-                    self.definitions[new_index].push_indent();
-                    self.definitions[new_index].push("}\n\n");
-                }
+                self.curr_definition = previous_definition;
+                self.curr_function = enclosing_level;
+                self.deferred = enclosing_deferred;
 
                 return Ok(Some(type_));
             }
@@ -5843,7 +5818,7 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.scoped_execute(&body, ctx)).await;
 
                 self.curr_loop = previous_loop;
                 
@@ -5929,7 +5904,7 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.scoped_execute(&body, ctx)).await;
 
                 self.curr_loop = previous_loop;
 
@@ -5975,7 +5950,7 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.scoped_execute(&body, ctx)).await;
 
                 self.curr_loop = previous_loop;
 
@@ -7461,35 +7436,43 @@ impl CodeGen {
                     token_note!(kw, "Place this for loop inside a function");
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("{\n");
-                self.definitions[index].inc_indent();
+                let toplevel_scope = IrStatement::empty_scope(kw.get_pos());
+
+                let previous_definition = self.curr_definition.clone();
+                self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
 
                 let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, index, false, ctx)).await;
 
                 let tmp_iter_var_name = self.get_temporary_var();
 
-                if !matches!(iterator_raw.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
+                if !matches!(iterator_raw.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
                     ast_error!(
                         self, iterator_expr,
                         format!(
                             "This type ({}) is not iterable",
-                            iterator_raw.type_.stringify_native()
+                            iterator_raw.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
                     return Ok(None);
                 }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&iterator_raw.type_.stringify());
-                self.definitions[index].push(" ");
-                self.definitions[index].push(&tmp_iter_var_name);
-                self.definitions[index].push(" = ");
-                self.definitions[index].push(&iterator_raw.ir_value);
-                self.definitions[index].push(";\n");
+                self.add_statement(IrStatement {
+                    pos: iterator_expr.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&tmp_iter_var_name), 
+                        type_: iterator_raw.ir_value.type_.clone(), 
+                        initializer: Some(iterator_raw.ir_value.clone()) 
+                    }
+                });
 
-                let iterator = SkyeValue::new(Rc::from(tmp_iter_var_name.as_ref()), iterator_raw.type_.clone(), iterator_raw.is_const);
+                let iterator = SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Variable { name: Rc::clone(&tmp_iter_var_name) },
+                        iterator_raw.ir_value.type_.clone()
+                    ), 
+                    iterator_raw.is_const
+                );
 
                 let mut search_tok = Token::dummy(Rc::from("next"));
                 let method = {
@@ -7502,20 +7485,20 @@ impl CodeGen {
                             let v = Vec::new();
                             let iterator_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, index, false, ctx)).await;
 
-                            let iterator_type_stringified = iterator_call.type_.stringify();
-                            if iterator_type_stringified.len() == 0 || !matches!(iterator.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
+                            let iterator_type_stringified = iterator_call.ir_value.type_.stringify();
+                            if iterator_type_stringified.len() == 0 || !matches!(iterator.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
                                 ast_error!(
                                     self, iterator_expr,
                                     format!(
                                         "The implementation of iter for this type ({}) returns an invalid type (expecting struct or enum type but got {})",
-                                        iterator.type_.stringify_native(), iterator_call.type_.stringify_native()
+                                        iterator.ir_value.type_.stringify_native(), iterator_call.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
 
                                 return Ok(None);
                             }
 
-                            let iterator_val = SkyeValue::new(Rc::clone(&iterator_call.ir_value), iterator_call.type_, false);
+                            let iterator_val = SkyeValue::new(iterator_call.ir_value, false);
 
                             search_tok.set_lexeme("next");
                             if let Some(final_method) = self.get_method(&iterator_val, &search_tok, false) {
@@ -7525,7 +7508,7 @@ impl CodeGen {
                                     self, iterator_expr,
                                     format!(
                                         "The iterator object (of type {}) returned by iter has no next method",
-                                        iterator_val.type_.stringify_native()
+                                        iterator_val.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
 
@@ -7536,7 +7519,7 @@ impl CodeGen {
                                 self, iterator_expr,
                                 format!(
                                     "Type {} is not iterable",
-                                    iterator_raw.type_.stringify_native()
+                                    iterator_raw.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
 
@@ -7548,21 +7531,26 @@ impl CodeGen {
                 let previous = Rc::clone(&self.environment);
                 self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))));
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("while (1) {\n");
-                self.definitions[index].inc_indent();
+                let body_scope = IrStatement::empty_scope(kw.get_pos());
+
+                self.add_statement(IrStatement {  
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Loop { body: Box::new(body_scope.clone()) }
+                });
+
+                self.curr_definition = Some(Rc::new(RefCell::new(body_scope)));
 
                 let v = Vec::new();
                 let next_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, index, false, ctx)).await;
 
                 let item_type = {
-                    if let SkyeType::Enum(_, variants, name) = &next_call.type_ {
+                    if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
                         if name.as_ref() != "core_DOT_Option" {
                             ast_error!(
                                 self, iterator_expr,
                                 format!(
                                     "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
-                                    next_call.type_.stringify_native()
+                                    next_call.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
 
@@ -7575,7 +7563,7 @@ impl CodeGen {
                             self, iterator_expr,
                             format!(
                                 "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
-                                next_call.type_.stringify_native()
+                                next_call.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
 
@@ -7583,42 +7571,74 @@ impl CodeGen {
                     }
                 };
 
-                let item_type_stringified = item_type.stringify();
-                if item_type_stringified.len() == 0 {
+                // TODO i don't think this is even possible
+                if !item_type.can_be_instantiated(false) {
                     ast_error!(
                         self, iterator_expr,
                         format!(
                             "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
-                            next_call.type_.stringify_native()
+                            next_call.ir_value.type_.stringify_native()
                         ).as_ref()
                     );
 
                     return Ok(None);
                 }
 
-                let mut env = self.environment.borrow_mut();
-                env.define(
-                    Rc::clone(&var_name.lexeme),
-                    SkyeVariable::new(
-                        item_type,
-                        true,
-                        Some(Box::new(var_name.clone()))
-                    )
-                );
-                drop(env);
+                {
+                    let mut env = self.environment.borrow_mut();
+                    env.define(
+                        Rc::clone(&var_name.lexeme),
+                        SkyeVariable::new(
+                            item_type,
+                            true,
+                            Some(Box::new(var_name.clone()))
+                        )
+                    );
+                }
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push("if (");
-                self.definitions[index].push(&next_call.ir_value);
-                self.definitions[index].push(".kind != core_DOT_Option_DOT_Kind_DOT_Some) break;\n");
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&item_type_stringified);
-                self.definitions[index].push(" ");
-                self.definitions[index].push(&var_name.lexeme);
-                self.definitions[index].push(" = ");
-                self.definitions[index].push(&next_call.ir_value);
-                self.definitions[index].push(".Some;\n");
+                // if (next_call_result.kind != Some) break
+                self.add_statement(IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::If { 
+                        condition: IrValue::new(
+                            IrValueData::Binary {
+                                op: BinaryOp::NotEqual,  
+                                left: Box::new(IrValue::new(
+                                    IrValueData::Get { 
+                                        from: Box::new(next_call.ir_value.clone()), 
+                                        name: Rc::from("kind")
+                                    },
+                                    SkyeType::Void // TODO
+                                )),
+                                right: Box::new(IrValue::new(
+                                    IrValueData::Variable { name: Rc::from("core_DOT_Option_DOT_Kind_DOT_Some") },
+                                    SkyeType::Void // TODO
+                                )) 
+                            },
+                            SkyeType::U8
+                        ), 
+                        then_branch: Box::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Break
+                        }), 
+                        else_branch: None 
+                    }
+                });
+                
+                self.add_statement(IrStatement {
+                    pos: var_name.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&var_name.lexeme), 
+                        type_: item_type, 
+                        initializer: Some(IrValue::new(
+                            IrValueData::Get { 
+                                from: Box::new(next_call.ir_value), 
+                                name: Rc::from("Some")
+                            },
+                            SkyeType::Void // TODO
+                        )) 
+                    }
+                });
 
                 let continue_label = self.get_temporary_var();
                 let break_label = self.get_temporary_var();
@@ -7626,37 +7646,22 @@ impl CodeGen {
                 let previous_loop = self.curr_loop.clone();
                 self.curr_loop = Some((Rc::clone(&break_label), Rc::clone(&continue_label)));
 
-                if matches!(**body, Statement::Block(..)) {
-                    let stmts = vec![*body.clone()];
-                    ctx.run(|ctx| self.execute_block(
-                        &stmts,
-                        Rc::new(RefCell::new(Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        ))),
-                        index, false, ctx
-                    )).await;
-                } else {
-                    let _ = ctx.run(|ctx| self.execute(&body, index, ctx)).await;
-                }
+                ctx.run(|ctx| self.scoped_execute(&body, ctx)).await;
 
                 self.curr_loop = previous_loop;
                 self.environment = previous;
 
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&continue_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: continue_label }
+                });
 
-                self.definitions[index].dec_indent();
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
+                self.curr_definition = previous_definition;
 
-                self.definitions[index].dec_indent();
-                self.definitions[index].push_indent();
-                self.definitions[index].push("}\n");
-
-                self.definitions[index].push_indent();
-                self.definitions[index].push(&break_label);
-                self.definitions[index].push(":;\n");
+                self.add_statement(IrStatement {
+                    pos: kw.get_pos(),
+                    data: IrStatementData::Label { name: break_label }
+                });
             }
             Statement::Interface { name, declarations, types } => {
                 let full_name = self.get_name(&name.lexeme);
