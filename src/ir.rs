@@ -36,13 +36,13 @@ pub enum IrStatementData {
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
     Function { name: Rc<str>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
-    Struct { name: Rc<str>, type_: SkyeType },
+    Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant> },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
-    Union { name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
-    Loop { body: Box<IrStatement> }
+    Union { type_: SkyeType },
+    Loop { body: Box<IrStatement> },
+    Include { path: Rc<str>, is_ang: bool }
     // TODO: switch
-    // TODO: native import
 }
 
 #[derive(Clone, Debug)]

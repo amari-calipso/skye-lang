@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -6156,50 +6156,43 @@ impl CodeGen {
 
                 drop(env);
 
-                let mut buf = String::from("typedef ");
-                let mut equal_binding = false;
-
                 if let Some(bound_name) = binding {
                     if !*bind_typedefed {
-                        buf.push_str("struct ");
-                    } else {
-                        equal_binding = bound_name.lexeme == full_name;
+                        self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&full_name), 
+                                value: IrValue::new(
+                                    IrValueData::TypeRef { 
+                                        kind: TypeKind::Struct, 
+                                        name: Rc::clone(&bound_name.lexeme) 
+                                    },
+                                    SkyeType::Void // TODO
+                                ), 
+                                typedef: true 
+                            }
+                        })));
+                    } else if bound_name.lexeme != full_name {
+                        self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&full_name), 
+                                value: IrValue::new(
+                                    IrValueData::Variable { name: Rc::clone(&bound_name.lexeme) },
+                                    SkyeType::Void // TODO
+                                ), 
+                                typedef: true 
+                            }
+                        })));
                     }
-
-                    buf.push_str(&bound_name.lexeme);
-                } else {
-                    let base_struct_name = self.get_generics(&name.lexeme, generics, &self.environment);
-                    let full_struct_name = self.get_name(&Rc::from(format!("SKYE_STRUCT_{}", base_struct_name)));
-                    buf.push_str("struct ");
-                    buf.push_str(&full_struct_name);
-                }
-
-                buf.push(' ');
-
-                if (!equal_binding) && ((!has_decl) || (!*has_body)) {
-                    self.declarations.push(CodeOutput::new());
-                    self.declarations.last_mut().unwrap().push(&buf);
-                    self.declarations.last_mut().unwrap().push(&full_name);
-                    self.declarations.last_mut().unwrap().push(";\n");
-                }
-
-                let mut def_buf = CodeOutput::new();
-
-                if *has_body && binding.is_none() {
-                    def_buf.push(&buf);
                 }
 
                 let type_ = {
                     if *has_body {
-                        if binding.is_none() {
-                            def_buf.push("{\n");
-                            def_buf.inc_indent();
-                        }
-
                         let mut output_fields = HashMap::new();
                         for field in fields {
                             let field_type = {
-                                let tmp = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.type_;
+                                let tmp = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.ir_value.type_;
 
                                 match tmp {
                                     SkyeType::Type(inner_type) => {
@@ -6255,38 +6248,19 @@ impl CodeGen {
                                         bits
                                     }
                                 );
-
-                                if binding.is_none() {
-                                    def_buf.push_indent();
-                                    def_buf.push(&field_type_stringified);
-                                    def_buf.push(" ");
-                                    def_buf.push(&field.name.lexeme);
-
-                                    if let Some(bits) = bits {
-                                        def_buf.push(": ");
-                                        def_buf.push(&bits.to_string());
-                                    }
-
-                                    def_buf.push(";\n");
-                                }
                             }
                         }
-
-                        if binding.is_none() {
-                            def_buf.dec_indent();
-                            def_buf.push("} ");
-                            def_buf.push(&full_name);
-                            def_buf.push(";\n\n");
-                        }
-
-                        self.struct_definitions.insert(Rc::clone(&full_name), def_buf);
-                        self.struct_defs_order.push(Rc::clone(&full_name));
 
                         SkyeType::Struct(Rc::clone(&full_name), Some(output_fields), base_name)
                     } else {
                         SkyeType::Struct(Rc::clone(&full_name), None, base_name)
                     }
                 };
+
+                self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Struct { type_: type_.clone() }
+                })));
 
                 let output_type = SkyeType::Type(Box::new(type_));
 
@@ -6494,7 +6468,7 @@ impl CodeGen {
                 let full_name = self.get_generics(&base_name, generics, &self.environment);
 
                 let type_ = {
-                    let enum_type = ctx.run(|ctx| self.evaluate(type_expr, index, false, ctx)).await.type_;
+                    let enum_type = ctx.run(|ctx| self.evaluate(type_expr, index, false, ctx)).await.ir_value.type_;
 
                     if let SkyeType::Type(inner_type) = &enum_type {
                         match **inner_type {
@@ -7190,29 +7164,18 @@ impl CodeGen {
                     path = path_tok.lexeme.split('/').collect();
                 }
 
-                let mut buf = String::from("#include ");
-
-                let is_ang = *import_type == ImportType::Ang;
-                if is_ang {
-                    buf.push('<');
-                } else {
-                    buf.push('"');
-                }
-
-                buf.push_str(&escape_string(&path.to_str().expect("Error converting to string")));
-
-                if is_ang {
-                    buf.push('>');
-                } else {
-                    buf.push('"');
-                }
-
-                buf.push('\n');
+                let statement = IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Include { 
+                        path: escape_string(&path.to_str().expect("Error converting to string")).into(), 
+                        is_ang: *import_type == ImportType::Ang 
+                    }
+                };
 
                 if matches!(self.curr_function, CurrentFn::None) {
-                    self.includes.push(&buf);
+                    self.definitions.push(Rc::new(RefCell::new(statement)));
                 } else {
-                    self.definitions[index].push(&buf);
+                    self.add_statement(statement);
                 }
             }
             Statement::Union { name, fields, has_body, binding, bind_typedefed } => {
@@ -7261,49 +7224,43 @@ impl CodeGen {
 
                 drop(env);
 
-                let mut buf = String::from("typedef ");
-                let mut equal_binding = false;
-
                 if let Some(bound_name) = binding {
                     if !*bind_typedefed {
-                        buf.push_str("union ");
-                    } else {
-                        equal_binding = bound_name.lexeme == full_name;
+                        self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&full_name), 
+                                value: IrValue::new(
+                                    IrValueData::TypeRef { 
+                                        kind: TypeKind::Union, 
+                                        name: Rc::clone(&bound_name.lexeme) 
+                                    },
+                                    SkyeType::Void // TODO
+                                ), 
+                                typedef: true 
+                            }
+                        })));
+                    } else if bound_name.lexeme != full_name {
+                        self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&full_name), 
+                                value: IrValue::new(
+                                    IrValueData::Variable { name: Rc::clone(&bound_name.lexeme) },
+                                    SkyeType::Void // TODO
+                                ), 
+                                typedef: true 
+                            }
+                        })));
                     }
-
-                    buf.push_str(&bound_name.lexeme);
-                } else {
-                    buf.push_str("union ");
-                    let full_union_name = self.get_name(&Rc::from(format!("SKYE_UNION_{}", name.lexeme)));
-                    buf.push_str(&full_union_name);
-                }
-
-                buf.push(' ');
-
-                if (!equal_binding) && ((!has_decl) || (!*has_body)) {
-                    self.declarations.push(CodeOutput::new());
-                    self.declarations.last_mut().unwrap().push(&buf);
-                    self.declarations.last_mut().unwrap().push(&full_name);
-                    self.declarations.last_mut().unwrap().push(";\n");
-                }
-
-                let mut def_buf = CodeOutput::new();
-
-                if *has_body && binding.is_none() {
-                    def_buf.push(&buf);
                 }
 
                 let type_ = {
                     if *has_body {
-                        if binding.is_none() {
-                            def_buf.push("{\n");
-                            def_buf.inc_indent();
-                        }
-
                         let mut output_fields = HashMap::new();
                         for field in fields {
                             let field_type = {
-                                let inner_field_type = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.type_;
+                                let inner_field_type = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.ir_value.type_;
 
                                 if let SkyeType::Type(inner_type) = inner_field_type {
                                     if inner_type.check_completeness() {
@@ -7356,38 +7313,19 @@ impl CodeGen {
                                         bits
                                     }
                                 );
-
-                                if binding.is_none() {
-                                    def_buf.push_indent();
-                                    def_buf.push(&field_type_stringified);
-                                    def_buf.push(" ");
-                                    def_buf.push(&field.name.lexeme);
-
-                                    if let Some(bits) = bits {
-                                        def_buf.push(": ");
-                                        def_buf.push(&bits.to_string());
-                                    }
-
-                                    def_buf.push(";\n");
-                                }
                             }
                         }
-
-                        if binding.is_none() {
-                            def_buf.dec_indent();
-                            def_buf.push("} ");
-                            def_buf.push(&full_name);
-                            def_buf.push(";\n\n");
-                        }
-
-                        self.struct_definitions.insert(Rc::clone(&full_name), def_buf);
-                        self.struct_defs_order.push(Rc::clone(&full_name));
 
                         SkyeType::Union(Rc::clone(&full_name), Some(output_fields))
                     } else {
                         SkyeType::Union(Rc::clone(&full_name), None)
                     }
                 };
+
+                self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Union { type_: type_.clone() }
+                })));
 
                 let output_type = SkyeType::Type(Box::new(type_));
 
