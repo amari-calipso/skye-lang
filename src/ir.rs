@@ -115,6 +115,11 @@ impl IrValue {
 }
 
 #[derive(Clone, Debug)]
+pub enum TypeKind {
+    Struct, Enum, Union
+}
+
+#[derive(Clone, Debug)]
 pub enum IrValueData {
     Empty,
     Literal { value: Expression },
@@ -138,6 +143,7 @@ pub enum IrValueData {
     Grouping(Box<IrValue>), // TODO: remove this and automatically figure out grouping in backend
     Binary { left: Box<IrValue>, op: BinaryOp, right: Box<IrValue> },
     Assign { target: Box<IrValue>, op: AssignOp, value: Box<IrValue> },
+    TypeRef { kind: TypeKind, name: Rc<str> } // struct Foo, enum Foo, union Foo...
 }
 
 #[derive(Clone, Debug)]

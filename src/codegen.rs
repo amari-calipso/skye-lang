@@ -6343,7 +6343,7 @@ impl CodeGen {
                             }
                         }
                     }
-                    SkyeType::Template(_, definition, ..) => {
+                    SkyeType::Template(template_name, definition, ..) => {
                         match definition {
                             Statement::Struct { .. } |
                             Statement::Enum { .. } => {
@@ -6358,7 +6358,7 @@ impl CodeGen {
                                 drop(env);
 
                                 let previous_name = self.curr_name.clone();
-                                self.curr_name = struct_name.ir_value.to_string(); // TODO
+                                self.curr_name = template_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), index, true, ctx
