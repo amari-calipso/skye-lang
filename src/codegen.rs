@@ -6257,10 +6257,12 @@ impl CodeGen {
                     }
                 };
 
-                self.definitions.push(Rc::new(RefCell::new(IrStatement {
-                    pos: stmt.get_pos(),
-                    data: IrStatementData::Struct { type_: type_.clone() }
-                })));
+                if binding.is_none() {
+                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                        pos: stmt.get_pos(),
+                        data: IrStatementData::Struct { type_: type_.clone() }
+                    })));
+                }
 
                 let output_type = SkyeType::Type(Box::new(type_));
 
@@ -7322,10 +7324,12 @@ impl CodeGen {
                     }
                 };
 
-                self.definitions.push(Rc::new(RefCell::new(IrStatement {
-                    pos: stmt.get_pos(),
-                    data: IrStatementData::Union { type_: type_.clone() }
-                })));
+                if binding.is_none() {
+                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                        pos: stmt.get_pos(),
+                        data: IrStatementData::Union { type_: type_.clone() }
+                    })));
+                }
 
                 let output_type = SkyeType::Type(Box::new(type_));
 
