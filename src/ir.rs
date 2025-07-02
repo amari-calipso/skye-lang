@@ -37,7 +37,7 @@ pub enum IrStatementData {
     Label { name: Rc<str> },
     Function { name: Rc<str>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
     Struct { type_: SkyeType },
-    Enum { name: Rc<str>, variants: Vec<IrEnumVariant> },
+    Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },
