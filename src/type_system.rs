@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, tokens::Token};
+use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, parser::tokens::Token};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeFunctionParam {

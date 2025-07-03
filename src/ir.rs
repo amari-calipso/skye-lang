@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token};
+use crate::{ast::{AstPos, Bits, Expression}, type_system::SkyeType, parser::tokens::Token};
 
 #[derive(Clone, Debug)]
 pub struct IrStatement {

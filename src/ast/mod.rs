@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
-use crate::tokens::{Token, TokenType};
+use crate::parser::tokens::{Token, TokenType};
+
+pub mod constant_folder;
+pub mod import_processor;
+pub mod macro_expander;
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub struct AstPos {

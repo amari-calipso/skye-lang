@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::tokens::{Token, TokenType};
+use crate::parser::tokens::{Token, TokenType};
 use crate::utils::{error, is_alpha, is_alphanumeric, is_beginning_digit, is_bin_digit, is_digit, is_hex_digit, is_oct_digit, substring};
 
 pub struct Scanner<'a> {

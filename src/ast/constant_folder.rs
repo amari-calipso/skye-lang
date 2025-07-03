@@ -1,4 +1,4 @@
-use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement}, ast_error, ast_note, astpos_note, tokens::TokenType};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement}, ast_error, ast_note, astpos_note, parser::tokens::TokenType};
 
 pub struct ConstantFolder {
     pub errors: usize

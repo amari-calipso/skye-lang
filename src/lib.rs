@@ -1,28 +1,23 @@
 use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, File}, io::{Error, Read, Write}, path::{Path, PathBuf}, process::Command, rc::Rc};
 
-use ast::{ImportType, Statement};
+use ast::{ImportType, Statement, constant_folder::ConstantFolder, import_processor::ImportProcessor, macro_expander::MacroExpander};
 use clap::ValueEnum;
 use codegen::CodeGen;
-use constant_folder::ConstantFolder;
-use import_processor::ImportProcessor;
-use macro_expander::MacroExpander;
-use parser::Parser;
-use scanner::Scanner;
-use tokens::{Token, TokenType};
+use parser::{Parser, scanner::Scanner, tokens::{Token, TokenType}};
 use zip::{write::SimpleFileOptions, ZipWriter};
 
+use backend::Backend;
+use ir::*;
+
 mod utils;
-mod tokens;
-mod scanner;
 mod ast;
 mod ir;
 mod parser;
-mod skye_type;
+mod type_system;
 mod environment;
 mod codegen;
-mod import_processor;
-mod macro_expander;
-mod constant_folder;
+pub mod backend;
+pub mod backends;
 
 pub const MAX_PACKAGE_SIZE_BYTES: u128 = 2u128.pow(32); // Max uncompressed package size is 4 GB (basic protection against malicious ZIPs)
 

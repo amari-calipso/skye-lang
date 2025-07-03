@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind}, type_system::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, parser::tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -169,7 +169,7 @@ pub struct CodeGen {
     source_path: Option<Box<PathBuf>>,
     skye_path:   PathBuf,
 
-    definitions:     Vec<Rc<RefCell<IrStatement>>>,
+    pub definitions: Vec<Rc<RefCell<IrStatement>>>,
     curr_definition: Option<Rc<RefCell<IrStatement>>>,
 
     string_type: Option<SkyeType>,

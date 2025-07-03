@@ -3,8 +3,12 @@ use std::{collections::HashMap, rc::Rc};
 use crate::{
     ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase},
     ast_error, ast_note, token_error, token_note,
-    tokens::{Token, TokenType}
 };
+
+use tokens::{Token, TokenType};
+
+pub mod scanner;
+pub mod tokens;
 
 macro_rules! match_number_literal {
     ($parser: expr, $type_: tt, $bits: tt, $expr_type: tt, $parse: expr) => {

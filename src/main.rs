@@ -3,7 +3,7 @@ use std::{collections::HashMap, env, ffi:: OsString, fs::{self, create_dir, remo
 use clap::{Parser, Subcommand};
 use scopeguard::defer;
 use serde_json::Value;
-use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, CompileMode, CompilerFlags, MAX_PACKAGE_SIZE_BYTES};
+use skye::{backends::BackendOption, compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, CompileMode, CompilerFlags, MAX_PACKAGE_SIZE_BYTES};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BUILD_FILE_INIT: &[u8] = concat!(
@@ -64,7 +64,10 @@ enum CompilerCommand {
 
         #[arg(short, long, default_value_t = String::from(""))]
         /// Output filename
-        output: String
+        output: String,
+
+        #[arg(short, long, default_value_t, value_enum)]
+        backend: BackendOption
     },
     /// Builds a standalone project
     Build {
@@ -137,10 +140,11 @@ fn main() -> Result<(), Error> {
         }
     };
 
+    let backends = skye::backends::load();
     let args = Args::parse();
 
     match args.command {
-        CompilerCommand::Compile { file, emit_c, compile_mode, output } => {
+        CompilerCommand::Compile { file, emit_c, compile_mode, output, backend } => {
             let compiler_flags = CompilerFlags { 
                 no_builtins: args.no_builtins, 
                 no_panic: args.no_panic, 

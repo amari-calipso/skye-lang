@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
 
-use crate::{skye_type::SkyeType, tokens::Token};
+use crate::{type_system::SkyeType, parser::tokens::Token};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeVariable {

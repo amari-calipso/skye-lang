@@ -2,7 +2,8 @@ use std::{cmp::max, rc::Rc};
 
 use colored::{ColoredString, Colorize};
 
-use crate::{ast::Expression, tokens::Token};
+use crate::ast::Expression;
+use crate::parser::tokens::Token;
 
 pub fn substring(string: &String, a: usize, b: usize) -> String {
     string.chars().skip(a).take(b - a).collect()
