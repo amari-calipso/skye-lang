@@ -74,6 +74,10 @@ impl Token {
         Token::dummy(Rc::from(""))
     }
 
+    pub fn from_type(type_: TokenType) -> Self {
+        Token { source: Rc::from(""), filename: Rc::from(""), type_, lexeme: Rc::from(""), pos: 0, end: 1, line: 0 }
+    }
+
     pub fn set_type(&mut self, type_: TokenType) {
         self.type_ = type_;
     }

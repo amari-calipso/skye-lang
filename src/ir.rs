@@ -24,6 +24,18 @@ pub struct IrEnumVariant {
 }
 
 #[derive(Clone, Debug)]
+pub struct IrFunctionParam {
+    pub name: Rc<str>,
+    pub type_: SkyeType
+}
+
+#[derive(Clone, Debug)]
+pub struct IrSwitchBranch {
+    pub cases: Vec<IrValue>,
+    pub code: IrStatement
+}
+
+#[derive(Clone, Debug)]
 pub enum IrStatementData {
     Break,
     Define { name: Rc<str>, value: IrValue, typedef: bool },
@@ -35,14 +47,14 @@ pub enum IrStatementData {
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
+    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
     Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },
-    Include { path: Rc<str>, is_ang: bool }
-    // TODO: switch
+    Include { path: Rc<str>, is_ang: bool },
+    Switch { value: IrValue, branches: Vec<IrSwitchBranch> }
 }
 
 #[derive(Clone, Debug)]

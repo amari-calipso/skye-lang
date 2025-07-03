@@ -146,7 +146,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
 
     let mut codegen = CodeGen::new(path, compiler_flags.compile_mode, skye_path);
     codegen.compile(statements);
-    codegen.get_output()
+    Some(String::new()) // TODO
 }
 
 pub fn parse_file(path: &OsStr) -> Result<Vec<Statement>, Error> {

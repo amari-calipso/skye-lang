@@ -42,8 +42,7 @@ impl SkyeEnumVariant {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Operator {
-    Inc, Dec,
-    Pos, Neg,
+    Inc, Dec, Neg,
     Not, Inv,
     Ref, ConstRef,
     Deref, ConstDeref,
@@ -700,7 +699,7 @@ impl SkyeType {
                     ))
                 }
             }
-            SkyeType::Struct(..) | SkyeType::Enum(..) => Some(from.clone()),
+            SkyeType::Struct(..) | SkyeType::Enum(..) => Some(IrValue::new(from.data.clone(), self.clone())),
             _ => None
         }
     }

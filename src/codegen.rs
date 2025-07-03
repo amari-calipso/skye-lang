@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 const OUTPUT_INDENT_SPACES: usize = 4;
@@ -207,6 +207,7 @@ impl CodeGen {
         definitions.push(Rc::new(RefCell::new(IrStatement {
             data: IrStatementData::Function { 
                 name: Rc::from("_SKYE_INIT"), 
+                params: Vec::new(),
                 body: Some(Vec::new()), 
                 return_type: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true)
             },
@@ -337,9 +338,9 @@ impl CodeGen {
         }
     }
 
-    async fn get_params(&mut self, params: &Vec<FunctionParam>, existing: Option<SkyeVariable>, has_decl: bool, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> (String, Vec<SkyeFunctionParam>) {
-        let mut params_string = String::new();
-        let mut params_output = Vec::with_capacity(params.len());
+    async fn get_params(&mut self, params: &Vec<FunctionParam>, existing: Option<SkyeVariable>, has_decl: bool, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> (Vec<IrFunctionParam>, Vec<SkyeFunctionParam>) {
+        let mut params_evaluated = Vec::with_capacity(params.len());
+        let mut params_types = Vec::with_capacity(params.len());
         for i in 0 .. params.len() {
             let param_type: SkyeType = {
                 let inner_param_type = ctx.run(|ctx| self.evaluate(&params[i].type_, index, allow_unknown, ctx)).await.ir_value.type_;
@@ -387,20 +388,14 @@ impl CodeGen {
                 }
             };
 
-            params_output.push(SkyeFunctionParam::new(param_type.clone(), params[i].is_const));
-            params_string.push_str(&param_type.stringify());
+            params_types.push(SkyeFunctionParam::new(param_type.clone(), params[i].is_const));
 
-            if let Some(param) = &params[i].name {
-                params_string.push(' ');
-                params_string.push_str(&param.lexeme);
-            }
-
-            if i != params.len() - 1 {
-                params_string.push_str(", ");
+            if let Some(name) = &params[i].name {
+                params_evaluated.push(IrFunctionParam { name: Rc::clone(&name.lexeme), type_: param_type });
             }
         }
 
-        (params_string, params_output)
+        (params_evaluated, params_types)
     }
 
     fn get_temporary_var(&mut self) -> Rc<str> {
@@ -4043,9 +4038,9 @@ impl CodeGen {
                 let callee = ctx.run(|ctx| self.evaluate(&callee_expr, index, allow_unknown, ctx)).await;
                 ctx.run(|ctx| self.call(&callee, expr, callee_expr, arguments, index, allow_unknown, ctx)).await
             }
-            Expression::FnPtr { kw, return_type: return_type_expr, params } => {
+            Expression::FnPtr { return_type: return_type_expr, params, .. } => {
                 let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, index, allow_unknown, ctx)).await;
-                let (params_string, params_output) = ctx.run(|ctx| self.get_params(params, None, false, index, allow_unknown, ctx)).await;
+                let (_, params_output) = ctx.run(|ctx| self.get_params(params, None, false, index, allow_unknown, ctx)).await;
                 SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Function(params_output, Box::new(return_type), false))))
             }
             Expression::Ternary { condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr, .. } => {
@@ -5308,7 +5303,7 @@ impl CodeGen {
                     );
                 }
 
-                if let SkyeType::Enum(.., base_name) = value.ir_value.type_ {
+                if let SkyeType::Enum(.., base_name) = &value.ir_value.type_ {
                     if base_name.as_ref() == "core_DOT_Result" {
                         ast_warning!(expr, "Error is being ignored implictly");
                         ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
@@ -5436,8 +5431,8 @@ impl CodeGen {
                     let definition = IrStatement {
                         pos: stmt.get_pos(),
                         data: IrStatementData::VarDecl {
-                            name: full_name,
-                            type_,
+                            name: Rc::clone(&full_name),
+                            type_: type_.clone(),
                             initializer: value.map(|x| x.ir_value),
                         }
                     };
@@ -5556,8 +5551,8 @@ impl CodeGen {
                 }
 
                 let return_stringified = return_type.stringify();
-                let (params_string, params_output) = ctx.run(|ctx| self.get_params(params, existing, has_decl, index, false, ctx)).await;
-                let type_ = SkyeType::Function(params_output.clone(), Box::new(return_type.clone()), body.is_some());
+                let (params_evaluated, params_types) = ctx.run(|ctx| self.get_params(params, existing, has_decl, index, false, ctx)).await;
+                let type_ = SkyeType::Function(params_types.clone(), Box::new(return_type.clone()), body.is_some());
 
                 let has_body = body.is_some();
 
@@ -5608,9 +5603,9 @@ impl CodeGen {
                     let returns_void_result = return_stringified == "core_DOT_Result_GENOF_void_GENAND_void_GENEND_";
 
                     let has_stdargs = {
-                        params_output.len() == 2 &&
-                        params_output[0].type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) &&
-                        params_output[1].type_.equals(&SkyeType::Pointer(
+                        params_types.len() == 2 &&
+                        params_types[0].type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) &&
+                        params_types[1].type_.equals(&SkyeType::Pointer(
                             Box::new(SkyeType::Pointer(
                                 Box::new(SkyeType::Char),
                                 false, false
@@ -5620,9 +5615,9 @@ impl CodeGen {
                     };
 
                     let has_args = {
-                        params_output.len() == 1 &&
+                        params_types.len() == 1 &&
                         {
-                            if let SkyeType::Struct(.., base_name) = &params_output[0].type_ {
+                            if let SkyeType::Struct(.., base_name) = &params_types[0].type_ {
                                 base_name.as_ref() == "core_DOT_Array"
                             } else {
                                 false
@@ -5630,7 +5625,7 @@ impl CodeGen {
                         }
                     };
 
-                    let no_args = params_output.len() == 0;
+                    let no_args = params_types.len() == 0;
 
                     if (returns_void || returns_i32 || returns_i32_result || returns_void_result) && (no_args || has_args || has_stdargs) {
                         full_name = Rc::from("_SKYE_MAIN");
@@ -5638,8 +5633,6 @@ impl CodeGen {
                         token_error!(self, name, "Invalid function signature for \"main\" function");
                     }
                 }
-
-                let mut buf = String::new();
 
                 {
                     let mut env = self.globals.borrow_mut();
@@ -5658,6 +5651,7 @@ impl CodeGen {
                         pos: stmt.get_pos(),
                         data: IrStatementData::Function { 
                             name: full_name, 
+                            params: params_evaluated,
                             return_type,
                             body: None, 
                         }
@@ -5666,22 +5660,21 @@ impl CodeGen {
                     return Ok(Some(type_));
                 }
 
-                let mut fn_environment = None;
-                fn_environment = Some(Environment::with_enclosing(Rc::clone(&self.environment)));
+                let mut fn_environment = Some(Environment::with_enclosing(Rc::clone(&self.environment)));
 
                 for i in 0 .. params.len() {
                     fn_environment.as_mut().unwrap().define(
                         Rc::clone(&params[i].name.as_ref().unwrap().lexeme),
                         SkyeVariable::new(
-                            params_output[i].type_.clone(),
-                            params_output[i].is_const,
+                            params_types[i].type_.clone(),
+                            params_types[i].is_const,
                             Some(Box::new(params[i].name.as_ref().unwrap().clone()))
                         )
                     );
                 }
 
                 let enclosing_level = self.curr_function.clone();
-                self.curr_function = CurrentFn::Some { return_type, return_type_expr: return_type_expr.clone() };
+                self.curr_function = CurrentFn::Some { return_type: return_type.clone(), return_type_expr: return_type_expr.clone() };
 
                 let enclosing_deferred = Rc::clone(&self.deferred);
                 self.deferred = Rc::new(RefCell::new(Vec::new()));
@@ -5690,6 +5683,7 @@ impl CodeGen {
                     pos: stmt.get_pos(),
                     data: IrStatementData::Function { 
                         name: full_name, 
+                        params: params_evaluated,
                         body: Some(Vec::new()), 
                         return_type 
                     }
@@ -5736,7 +5730,7 @@ impl CodeGen {
                 }
 
                 let then_scope = IrStatement::empty_scope(then_branch.get_pos());
-                let else_scope = else_branch.map(|x| Box::new(IrStatement::empty_scope(x.get_pos())));
+                let else_scope = else_branch.as_ref().map(|x| Box::new(IrStatement::empty_scope(x.get_pos())));
 
                 self.add_statement(IrStatement {
                     pos: kw.get_pos(),
@@ -6112,30 +6106,16 @@ impl CodeGen {
                     &Token::dummy(Rc::clone(&full_name))
                 );
 
-                let has_decl = {
-                    if !full_name.contains("_UNKNOWN_") {
-                        if let Some(var) = &existing {
-                            if let SkyeType::Type(inner_type) = &var.type_ {
-                                if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
-                                    if *has_body && existing_fields.is_some() {
-                                        token_error!(self, name, "Cannot redefine structs");
-
-                                        if let Some(token) = &var.tok {
-                                            token_note!(*token, "Previously defined here");
-                                        }
-
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                } else {
-                                    token_error!(self, name, "Cannot declare struct with same name as existing symbol");
+                if !full_name.contains("_UNKNOWN_") {
+                    if let Some(var) = &existing {
+                        if let SkyeType::Type(inner_type) = &var.type_ {
+                            if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
+                                if *has_body && existing_fields.is_some() {
+                                    token_error!(self, name, "Cannot redefine structs");
 
                                     if let Some(token) = &var.tok {
                                         token_note!(*token, "Previously defined here");
                                     }
-
-                                    false
                                 }
                             } else {
                                 token_error!(self, name, "Cannot declare struct with same name as existing symbol");
@@ -6143,16 +6123,16 @@ impl CodeGen {
                                 if let Some(token) = &var.tok {
                                     token_note!(*token, "Previously defined here");
                                 }
-
-                                false
                             }
                         } else {
-                            false
+                            token_error!(self, name, "Cannot declare struct with same name as existing symbol");
+
+                            if let Some(token) = &var.tok {
+                                token_note!(*token, "Previously defined here");
+                            }
                         }
-                    } else {
-                        false
                     }
-                };
+                }
 
                 drop(env);
 
@@ -6222,8 +6202,6 @@ impl CodeGen {
                             if output_fields.contains_key(&field.name.lexeme) {
                                 token_error!(self, field.name, "Cannot define the same struct field multiple times");
                             } else {
-                                let field_type_stringified = field_type.stringify();
-
                                 let bits = {
                                     if let Some(bits_expr) = &field.bits {
                                         match bits_expr.get_inner() {
@@ -6420,7 +6398,7 @@ impl CodeGen {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
                                 name: Rc::clone(&identifier.lexeme), 
-                                value: use_value.ir_value, 
+                                value: use_value.ir_value.clone(), 
                                 typedef: *typedef 
                             }
                         };
@@ -6534,65 +6512,61 @@ impl CodeGen {
                             drop(env);
                             
                             if let Some(bound_name) = binding {
-                                let mut write = true;
                                 if !*bind_typedefed {
-                                    self.declarations.push(CodeOutput::new());
-                                    self.declarations.last_mut().unwrap().push("typedef enum ");
-                                } else {
-                                    write = bound_name.lexeme != full_name;
-
-                                    if write {
-                                        self.declarations.push(CodeOutput::new());
-                                        self.declarations.last_mut().unwrap().push("typedef enum ");
-                                    }
-                                }
-
-                                if write {
-                                    self.declarations.last_mut().unwrap().push(&bound_name.lexeme);
-                                    self.declarations.last_mut().unwrap().push(": ");
-                                    self.declarations.last_mut().unwrap().push(&type_.stringify());
-                                    self.declarations.last_mut().unwrap().push(" ");
-                                    self.declarations.last_mut().unwrap().push(&full_name);
-                                    self.declarations.last_mut().unwrap().push(";\n");
+                                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Define { 
+                                            name: Rc::clone(&full_name), 
+                                            value: IrValue::new(
+                                                IrValueData::TypeRef { 
+                                                    kind: TypeKind::Enum, 
+                                                    name: Rc::clone(&bound_name.lexeme) 
+                                                },
+                                                SkyeType::Void // TODO
+                                            ), 
+                                            typedef: true 
+                                        }
+                                    })));
+                                } else if bound_name.lexeme != full_name {
+                                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Define { 
+                                            name: Rc::clone(&full_name), 
+                                            value: IrValue::new(
+                                                IrValueData::Variable { name: Rc::clone(&bound_name.lexeme) },
+                                                SkyeType::Void // TODO
+                                            ), 
+                                            typedef: true 
+                                        }
+                                    })));
                                 }
                             } else {
-                                self.declarations.push(CodeOutput::new());
-                                self.declarations.last_mut().unwrap().push("typedef enum ");
-
-                                let full_struct_name = self.get_name(&Rc::from(format!("SKYE_ENUM_{}", simple_enum_name)));
-                                self.declarations.last_mut().unwrap().push(&full_struct_name);
-                                self.declarations.last_mut().unwrap().push(": ");
-                                self.declarations.last_mut().unwrap().push(&type_.stringify());
-                                self.declarations.last_mut().unwrap().push(" {\n");
-                                self.declarations.last_mut().unwrap().inc_indent();
-
-                                for (i, variant) in variants.iter().enumerate() {
-                                    self.declarations.last_mut().unwrap().push_indent();
-                                    self.declarations.last_mut().unwrap().push(&simple_enum_full_name);
-                                    self.declarations.last_mut().unwrap().push("_DOT_");
-                                    self.declarations.last_mut().unwrap().push(&variant.name.lexeme);
-
+                                let mut output_variants = Vec::new();
+                                for variant in variants {
+                                    let mut value = None;
                                     if let Some(default) = &variant.default {
-                                        self.declarations.last_mut().unwrap().push(" = ");
-
                                         if matches!(default, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. }) {
-                                            let value = ctx.run(|ctx| self.evaluate(default, index, false, ctx)).await;
-                                            self.declarations.last_mut().unwrap().push(&value.ir_value);
+                                            value = Some(ctx.run(|ctx| self.evaluate(default, index, false, ctx)).await.ir_value);
                                         } else {
                                             ast_error!(self, default, "Enum value must be a literal");
                                             ast_note!(default, "The value must be known at compile time");
                                         }
                                     }
 
-                                    if i != variants.len() - 1 {
-                                        self.declarations.last_mut().unwrap().push(",\n");
-                                    }
+                                    output_variants.push(IrEnumVariant {
+                                        name: Rc::clone(&variant.name.lexeme),
+                                        value,
+                                    });
                                 }
 
-                                self.declarations.last_mut().unwrap().dec_indent();
-                                self.declarations.last_mut().unwrap().push("\n} ");
-                                self.declarations.last_mut().unwrap().push(&simple_enum_full_name);
-                                self.declarations.last_mut().unwrap().push(";\n");
+                                self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                    pos: stmt.get_pos(),
+                                    data: IrStatementData::Enum {
+                                        name: Rc::clone(&simple_enum_full_name),
+                                        variants: output_variants,
+                                        type_,
+                                    }
+                                })));
                             }
 
                             let mut env = self.globals.borrow_mut();
@@ -6606,36 +6580,12 @@ impl CodeGen {
                         }
 
                         let write_output = binding.is_none() && !*is_simple;
-                        let base_struct_name = self.get_generics(&name.lexeme, generics, &self.environment);
-                        let full_struct_name = self.get_name(&Rc::from(format!("SKYE_STRUCT_{}", base_struct_name)));
-
-                        let mut def_buf = CodeOutput::new();
-
-                        if write_output {
-                            let mut buf = String::from("typedef struct ");
-                            buf.push_str(&full_struct_name);
-                            buf.push(' ');
-
-                            self.declarations.push(CodeOutput::new());
-                            self.declarations.last_mut().unwrap().push(&buf);
-                            self.declarations.last_mut().unwrap().push(&full_name);
-                            self.declarations.last_mut().unwrap().push(";\n");
-
-                            def_buf.push(&buf);
-                            def_buf.push("{\n");
-                            def_buf.inc_indent();
-
-                            def_buf.push_indent();
-                            def_buf.push("union {\n");
-                            def_buf.inc_indent();
-                        }
 
                         let mut output_fields = HashMap::new();
-                        let mut initializers = CodeOutput::new();
                         let mut evaluated_variants = Vec::with_capacity(variants.len());
                         for variant in variants {
                             let variant_type = {
-                                let type_ = ctx.run(|ctx| self.evaluate(&variant.type_, index, false, ctx)).await.type_;
+                                let type_ = ctx.run(|ctx| self.evaluate(&variant.type_, index, false, ctx)).await.ir_value.type_;
                                 match type_ {
                                     SkyeType::Void | SkyeType::Unknown(_) => type_,
                                     SkyeType::Type(inner_type) => {
@@ -6668,8 +6618,8 @@ impl CodeGen {
 
                             evaluated_variants.push(SkyeEnumVariant::new(
                                 variant.name.clone(),
-                                variant_type.clone())
-                            );
+                                variant_type.clone()
+                            ));
 
                             let mut env = self.globals.borrow_mut();
                             if binding.is_some() {
@@ -6692,121 +6642,91 @@ impl CodeGen {
 
                             drop(env);
 
-                            let is_void = matches!(variant_type, SkyeType::Void);
-                            let is_not_void = !is_void;
-
-                            if write_output {
-                                let mut buf = String::new();
-                                buf.push_str(&full_name);
-                                buf.push(' ');
-                                buf.push_str(&full_name);
-                                buf.push_str("_DOT_");
-
-                                if is_void {
-                                    buf.push_str("SKYE_ENUM_INIT_");
-                                }
-
-                                buf.push_str(&variant.name.lexeme);
-                                buf.push_str("(");
-
-                                if is_not_void {
-                                    buf.push_str(&variant_type.stringify());
-                                    buf.push_str(" value");
-                                }
-
-                                buf.push(')');
-
-                                self.declarations.push(CodeOutput::new());
-                                self.declarations.last_mut().unwrap().push(&buf);
-                                self.declarations.last_mut().unwrap().push(";\n");
-
-                                initializers.push_indent();
-                                initializers.push(&buf);
-                                initializers.push(" {\n");
-                                initializers.inc_indent();
-
-                                initializers.push_indent();
-                                initializers.push(&full_name);
-                                initializers.push(" tmp;\n");
-
-                                initializers.push_indent();
-                                initializers.push("tmp.kind = ");
-                                initializers.push(&simple_enum_full_name);
-                                initializers.push("_DOT_");
-                                initializers.push(&variant.name.lexeme);
-                                initializers.push(";\n");
-
-                                if is_not_void {
-                                    initializers.push_indent();
-                                    initializers.push("tmp.");
-                                    initializers.push(&variant.name.lexeme);
-                                    initializers.push(" = value;\n");
-                                }
-
-                                initializers.push_indent();
-                                initializers.push("return tmp;\n");
-                                initializers.dec_indent();
-
-                                initializers.push_indent();
-                                initializers.push("}\n\n");
-                            }
-
-                            if is_void {
-                                if write_output {
-                                    self.declarations.push(CodeOutput::new());
-                                    self.declarations.last_mut().unwrap().push("#define ");
-                                    self.declarations.last_mut().unwrap().push(&full_name);
-                                    self.declarations.last_mut().unwrap().push("_DOT_");
-                                    self.declarations.last_mut().unwrap().push(&variant.name.lexeme);
-                                    self.declarations.last_mut().unwrap().push(" ");
-                                    self.declarations.last_mut().unwrap().push(&full_name);
-                                    self.declarations.last_mut().unwrap().push("_DOT_SKYE_ENUM_INIT_");
-                                    self.declarations.last_mut().unwrap().push(&variant.name.lexeme);
-                                    self.declarations.last_mut().unwrap().push("()\n");
-                                }
-                            } else {
-                                if write_output {
-                                    def_buf.push_indent();
-                                    def_buf.push(&variant_type.stringify());
-                                    def_buf.push(" ");
-                                    def_buf.push(&variant.name.lexeme);
-                                    def_buf.push(";\n");
-                                }
-
+                            if !matches!(variant_type, SkyeType::Void) {
                                 output_fields.insert(Rc::clone(&variant.name.lexeme), variant_type);
                             }
                         }
 
                         if write_output {
-                            output_fields.insert(Rc::from("kind"), simple_enum_type.clone());
-
-                            def_buf.dec_indent();
-                            def_buf.push_indent();
-                            def_buf.push("};\n\n");
-
-                            def_buf.push_indent();
-                            def_buf.push(&simple_enum_full_name);
-                            def_buf.push(" kind;\n");
-                            def_buf.dec_indent();
-
-                            def_buf.push_indent();
-                            def_buf.push("} ");
-                            def_buf.push(&full_name);
-                            def_buf.push(";\n\n");
-
-                            def_buf.push(&initializers.code);
+                            let kind_name = Rc::from("kind");
+                            output_fields.insert(Rc::clone(&kind_name), simple_enum_type.clone());
 
                             let struct_output_type = SkyeType::Enum(
-                                Rc::clone(&full_name), Some(output_fields),
+                                Rc::clone(&full_name), Some(output_fields.clone()),
                                 Rc::clone(&base_name)
                             );
+
+                            self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                pos: stmt.get_pos(),
+                                data: IrStatementData::TaggedUnion { 
+                                    name: Rc::clone(&full_name), 
+                                    kind_name: Rc::clone(&kind_name), 
+                                    fields: output_fields 
+                                }
+                            })));
 
                             for variant in evaluated_variants {
                                 let mut env = self.globals.borrow_mut();
 
+                                let tmp_var = Rc::from("tmp");
+                                let mut function_body = vec![
+                                    // SumTypeEnumType tmp;
+                                    IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::VarDecl { 
+                                            name: Rc::clone(&tmp_var), 
+                                            type_: struct_output_type.clone(), 
+                                            initializer: None 
+                                        }
+                                    },
+                                    // tmp.kind = currentVariantKind;
+                                    IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Expression { 
+                                            value: IrValue::new(
+                                                IrValueData::Assign { 
+                                                    op: AssignOp::None,
+                                                    target: Box::new(IrValue::new(
+                                                        IrValueData::Get { 
+                                                            from: Box::new(IrValue::new(
+                                                                IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                                                struct_output_type.clone()
+                                                            )), 
+                                                            name: Rc::clone(&kind_name) 
+                                                        },
+                                                        simple_enum_type.clone()
+                                                    )),
+                                                    value: Box::new(IrValue::new(
+                                                        IrValueData::Variable { 
+                                                            name: format!("{}_DOT_{}", simple_enum_full_name, variant.name.lexeme).into() 
+                                                        },
+                                                        simple_enum_type.clone()
+                                                    )) 
+                                                },
+                                                simple_enum_type.clone()
+                                            )
+                                        }
+                                    }
+                                ];
+
+                                // return tmp;
+                                let return_tmp = IrStatement {
+                                    pos: stmt.get_pos(),
+                                    data: IrStatementData::Return { 
+                                        value: Some(IrValue::new(
+                                            IrValueData::Variable { name: Rc::clone(&tmp_var) },
+                                            struct_output_type.clone()
+                                        ))
+                                    }
+                                };
+
                                 if matches!(variant.type_, SkyeType::Void) {
+                                    let enum_variant_init_fn_name = format!("{}_DOT_SKYE_ENUM_INIT_{}", full_name, variant.name.lexeme).into();
+                                    let enum_variant_init_alias = format!("{}_DOT_{}", full_name, variant.name.lexeme).into();
+                                    let function_type = SkyeType::Function(Vec::new(), Box::new(struct_output_type.clone()), true);
+
                                     env.define(
-                                        Rc::from(format!("{}_DOT_{}", full_name, variant.name.lexeme)),
+                                        Rc::clone(&enum_variant_init_alias),
                                         SkyeVariable::new(
                                             struct_output_type.clone(),
                                             true,
@@ -6814,53 +6734,102 @@ impl CodeGen {
                                         )
                                     );
 
-                                    let type_ = SkyeType::Function(
-                                        Vec::new(), Box::new(struct_output_type.clone()),
-                                        true
-                                    );
+                                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Define { 
+                                            name: enum_variant_init_alias, 
+                                            value: IrValue::new(
+                                                IrValueData::Variable { name: Rc::clone(&enum_variant_init_fn_name) },
+                                                function_type.clone()
+                                            ), 
+                                            typedef: false 
+                                        }
+                                    })));
 
                                     env.define(
-                                        Rc::from(format!("{}_DOT_SKYE_ENUM_INIT_{}", full_name, variant.name.lexeme)),
+                                        Rc::clone(&enum_variant_init_fn_name),
                                         SkyeVariable::new(
-                                            type_.clone(), true,
+                                            function_type, true,
                                             Some(Box::new(variant.name.clone()))
                                         )
                                     );
+
+                                    function_body.push(return_tmp);
+
+                                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Function { 
+                                            name: enum_variant_init_fn_name,
+                                            params: Vec::new(),
+                                            return_type: struct_output_type.clone(),
+                                            body: Some(function_body), 
+                                        }
+                                    })));
                                 } else {
-                                    let type_ = SkyeType::Function(
+                                    let enum_variant_init_fn_name = format!("{}_DOT_{}", full_name, variant.name.lexeme).into();
+                                    let value = Rc::from("value");
+
+                                    let function_type = SkyeType::Function(
                                         vec![SkyeFunctionParam::new(variant.type_.clone(), true)],
                                         Box::new(struct_output_type.clone()),
                                         true
                                     );
 
                                     env.define(
-                                        Rc::from(format!("{}_DOT_{}", full_name, variant.name.lexeme)),
+                                        Rc::clone(&enum_variant_init_fn_name),
                                         SkyeVariable::new(
-                                            type_.clone(), true,
+                                            function_type, true,
                                             Some(Box::new(variant.name.clone()))
                                         )
                                     );
+
+                                    function_body.extend([
+                                        // tmp.variant = value
+                                        IrStatement {
+                                            pos: stmt.get_pos(),
+                                            data: IrStatementData::Expression { 
+                                                value: IrValue::new(
+                                                    IrValueData::Assign { 
+                                                        op: AssignOp::None, 
+                                                        target: Box::new(IrValue::new(
+                                                            IrValueData::Get { 
+                                                                from: Box::new(IrValue::new(
+                                                                    IrValueData::Variable { name: tmp_var },
+                                                                    struct_output_type.clone()
+                                                                )), 
+                                                                name: Rc::clone(&variant.name.lexeme)
+                                                            },
+                                                            variant.type_.clone()
+                                                        )),
+                                                        value: Box::new(IrValue::new(
+                                                            IrValueData::Variable { name: Rc::clone(&value) },
+                                                            variant.type_.clone()
+                                                        )),
+                                                    },
+                                                    variant.type_.clone()
+                                                ) 
+                                            }
+                                        },
+                                        return_tmp
+                                    ]);
+
+                                    self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                        pos: stmt.get_pos(),
+                                        data: IrStatementData::Function { 
+                                            name: enum_variant_init_fn_name, 
+                                            params: vec![IrFunctionParam { name: value, type_: variant.type_.clone() }],
+                                            return_type: struct_output_type.clone(),
+                                            body: Some(function_body), 
+                                        }
+                                    })));
                                 }
                             }
-
-                            self.struct_definitions.insert(Rc::clone(&full_name), def_buf);
-                            self.struct_defs_order.push(Rc::clone(&full_name));
 
                             Some(struct_output_type)
                         } else {
                             Some(simple_enum_type)
                         }
                     } else {
-                        if binding.is_none() {
-                            let full_struct_name = self.get_name(&Rc::from(format!("SKYE_STRUCT_{}", simple_enum_name)));
-                            self.declarations.push(CodeOutput::new());
-                            self.declarations.last_mut().unwrap().push("typedef struct ");
-                            self.declarations.last_mut().unwrap().push(&full_struct_name);
-                            self.declarations.last_mut().unwrap().push(" ");
-                            self.declarations.last_mut().unwrap().push(&full_name);
-                            self.declarations.last_mut().unwrap().push(";\n");
-                        }
-
                         Some(SkyeType::Enum(Rc::clone(&full_name), None, base_name))
                     }
                 };
@@ -6932,11 +6901,10 @@ impl CodeGen {
                     token_note!(kw, "Remove this switch statement");
                 }
 
-                let is_not_grouping = !matches!(switch_expr, Expression::Grouping(_));
                 let switch = ctx.run(|ctx| self.evaluate(&switch_expr, index, false, ctx)).await;
                 let mut is_classic = true;
 
-                match &switch.type_ {
+                match &switch.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
@@ -6955,7 +6923,7 @@ impl CodeGen {
                                 self, switch_expr,
                                 format!(
                                     "Expecting expression of primitive arithmetic type, simple enum or type for switch condition (got {})",
-                                    switch.type_.stringify_native()
+                                    switch.ir_value.type_.stringify_native()
                                 ).as_ref()
                             );
                         }
@@ -6965,45 +6933,26 @@ impl CodeGen {
                             self, switch_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type, simple enum or type for switch condition (got {})",
-                                switch.type_.stringify_native()
+                                switch.ir_value.type_.stringify_native()
                             ).as_ref()
                         );
                     }
                 }
 
-                if is_classic {
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push("switch ");
+                let previous_definition = self.curr_definition.clone();
 
-                    if is_not_grouping {
-                        self.definitions[index].push("(");
-                    }
-
-                    self.definitions[index].push(&switch.ir_value);
-
-                    if is_not_grouping {
-                        self.definitions[index].push(")");
-                    }
-
-                    self.definitions[index].push(" {\n");
-                    self.definitions[index].inc_indent();
-                }
-
+                let mut branches_output = Vec::new();
                 let mut entered_case = false;
                 for case in cases {
                     let mut case_types = Vec::new();
+                    let mut cases_output = Vec::new();
 
                     if let Some(real_cases) = &case.cases {
-                        for (i, real_case) in real_cases.iter().enumerate() {
-                            if is_classic {
-                                self.definitions[index].push_indent();
-                                self.definitions[index].push("case ");
-                            }
-
+                        for real_case in real_cases {
                             let real_case_evaluated = ctx.run(|ctx| self.evaluate(&real_case, index, false, ctx)).await;
 
                             if is_classic {
-                                match real_case_evaluated.type_ {
+                                match &real_case_evaluated.ir_value.type_ {
                                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                                     SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
@@ -7014,7 +6963,7 @@ impl CodeGen {
                                                 self, switch_expr,
                                                 format!(
                                                     "Expecting expression of primitive arithmetic type or simple enum for case expression (got {})",
-                                                    switch.type_.stringify_native()
+                                                    switch.ir_value.type_.stringify_native()
                                                 ).as_ref()
                                             );
                                         }
@@ -7024,37 +6973,27 @@ impl CodeGen {
                                             self, real_case,
                                             format!(
                                                 "Expecting expression of primitive arithmetic type or simple enum for case expression (got {})",
-                                                real_case_evaluated.type_.stringify_native()
+                                                real_case_evaluated.ir_value.type_.stringify_native()
                                             ).as_ref()
                                         );
                                     }
                                 }
 
-                                self.definitions[index].push(&real_case_evaluated.ir_value);
-                                self.definitions[index].push(":");
-
-                                if i != real_cases.len() - 1 {
-                                    self.definitions[index].push("\n");
-                                } else {
-                                    self.definitions[index].push(" ");
-                                }
-                            } else if !matches!(real_case_evaluated.type_, SkyeType::Type(_) | SkyeType::Void) {
+                                cases_output.push(real_case_evaluated.ir_value);
+                            } else if !matches!(real_case_evaluated.ir_value.type_, SkyeType::Type(_) | SkyeType::Void) {
                                 ast_error!(
                                     self, real_case,
                                     format!(
                                         "Expecting type or void for case expression (got {})",
-                                        real_case_evaluated.type_.stringify_native()
+                                        real_case_evaluated.ir_value.type_.stringify_native()
                                     ).as_ref()
                                 );
                             } else {
-                                case_types.push(real_case_evaluated.type_);
+                                case_types.push(real_case_evaluated.ir_value.type_);
                             }
                         }
                     } else {
-                        if is_classic {
-                            self.definitions[index].push_indent();
-                            self.definitions[index].push("default: ");
-                        } else if !entered_case {
+                        if !is_classic && !entered_case {
                             // use code from the default case if other cases weren't hit
 
                             ctx.run(|ctx| self.execute_block(
@@ -7070,13 +7009,10 @@ impl CodeGen {
                         }
                     }
 
-                    if is_classic {
-                        self.definitions[index].push("{\n");
-                        self.definitions[index].inc_indent();
-                    } else {
+                    if !is_classic {
                         let no_exec = 'no_exec_block: {
                             for type_ in case_types {
-                                if switch.type_.equals(&type_, EqualsLevel::Typewise) {
+                                if switch.ir_value.type_.equals(&type_, EqualsLevel::Typewise) {
                                     break 'no_exec_block false;
                                 }
                             }
@@ -7091,6 +7027,9 @@ impl CodeGen {
                         }
                     }
 
+                    let scope = IrStatement::empty_scope(stmt.get_pos());
+                    self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
+
                     ctx.run(|ctx| self.execute_block(
                         &case.code,
                         Rc::new(RefCell::new(
@@ -7101,18 +7040,18 @@ impl CodeGen {
                         index, false, ctx
                     )).await;
 
-                    if is_classic {
-                        self.definitions[index].dec_indent();
-                        self.definitions[index].push_indent();
-                        self.definitions[index].push("} break;\n");
-                    }
+                    
+                    branches_output.push(IrSwitchBranch { cases: cases_output, code: scope });
                 }
 
-                if is_classic {
-                    self.definitions[index].dec_indent();
-                    self.definitions[index].push_indent();
-                    self.definitions[index].push("}\n");
-                }
+                self.curr_definition = previous_definition;
+                self.add_statement(IrStatement {
+                    pos: stmt.get_pos(),
+                    data: IrStatementData::Switch { 
+                        value: switch.ir_value, 
+                        branches: branches_output 
+                    }
+                });
             }
             Statement::Template { name, declaration: definition, generics, generics_names } => {
                 let full_name = self.get_name(&name.lexeme);
@@ -7186,43 +7125,31 @@ impl CodeGen {
                 let env = self.globals.borrow();
                 let existing = env.get(&Token::dummy(Rc::clone(&full_name)));
 
-                let has_decl = {
-                    if let Some(var) = &existing {
-                        if let SkyeType::Type(inner_type) = &var.type_ {
-                            if let SkyeType::Union(_, existing_fields) = &**inner_type {
-                                if *has_body && existing_fields.is_some() {
-                                    token_error!(self, name, "Cannot redefine unions");
-
-                                    if let Some(token) = &var.tok {
-                                        token_note!(*token, "Previously defined here");
-                                    }
-
-                                    false
-                                } else {
-                                    true
-                                }
-                            } else {
-                                token_error!(self, name, "Cannot declare union with same name as existing symbol");
+                if let Some(var) = &existing {
+                    if let SkyeType::Type(inner_type) = &var.type_ {
+                        if let SkyeType::Union(_, existing_fields) = &**inner_type {
+                            if *has_body && existing_fields.is_some() {
+                                token_error!(self, name, "Cannot redefine unions");
 
                                 if let Some(token) = &var.tok {
                                     token_note!(*token, "Previously defined here");
                                 }
-
-                                false
-                            }
+                            } 
                         } else {
                             token_error!(self, name, "Cannot declare union with same name as existing symbol");
 
                             if let Some(token) = &var.tok {
                                 token_note!(*token, "Previously defined here");
                             }
-
-                            false
                         }
                     } else {
-                        false
+                        token_error!(self, name, "Cannot declare union with same name as existing symbol");
+
+                        if let Some(token) = &var.tok {
+                            token_note!(*token, "Previously defined here");
+                        }
                     }
-                };
+                }
 
                 drop(env);
 
@@ -7289,8 +7216,6 @@ impl CodeGen {
                             if output_fields.contains_key(&field.name.lexeme) {
                                 token_error!(self, field.name, "Cannot define the same union field multiple times");
                             } else {
-                                let field_type_stringified = field_type.stringify();
-
                                 let bits = {
                                     if let Some(bits_expr) = &field.bits {
                                         match bits_expr.get_inner() {
@@ -7531,7 +7456,7 @@ impl CodeGen {
                     env.define(
                         Rc::clone(&var_name.lexeme),
                         SkyeVariable::new(
-                            item_type,
+                            item_type.clone(),
                             true,
                             Some(Box::new(var_name.clone()))
                         )
@@ -7829,9 +7754,5 @@ impl CodeGen {
         for statement in statements {
             let _ = stack.enter(|ctx| self.execute(&statement, 0, ctx)).finish();
         }
-    }
-
-    pub fn get_output(&self) -> Option<String> {
-        todo!("remove")
     }
 }
