@@ -168,10 +168,12 @@ impl IrGen {
         }
     }
 
-    fn get_generics(&self, name: &Rc<str>, generics: &Vec<Token>, env: &Rc<RefCell<Environment>>) -> Rc<str> {
+    fn get_generics(&self, name: &Rc<str>, generics: &Vec<Token>, env: &Rc<RefCell<Environment>>) -> (Rc<str>, bool) {
         if generics.len() == 0 {
-            Rc::clone(name)
+            (Rc::clone(name), false)
         } else {
+            let mut has_unknown = false;
+
             let mut buf = String::new();
             buf.push_str(name);
             buf.push_str("_GENOF_");
@@ -185,7 +187,10 @@ impl IrGen {
                             }
                         }
                         SkyeType::Void => buf.push_str("void"),
-                        SkyeType::Unknown(_) => buf.push_str("_UNKNOWN_"),
+                        SkyeType::Unknown(_) => {
+                            buf.push_str("_UNKNOWN_");
+                            has_unknown = true;
+                        }
                         _ => ()
                     }
                 }
@@ -196,7 +201,7 @@ impl IrGen {
             }
 
             buf.push_str("_GENEND_");
-            Rc::from(buf)
+            (Rc::from(buf), has_unknown)
         }
     }
 
@@ -1376,7 +1381,7 @@ impl IrGen {
                         }
                     };
 
-                    let final_name = self.get_generics(&name, &generics_names, &self.environment);
+                    let (final_name, _) = self.get_generics(&name, &generics_names, &self.environment);
 
                     let search_tok = Token::dummy(Rc::clone(&final_name));
 
@@ -4408,7 +4413,7 @@ impl IrGen {
                                 }
                             }
 
-                            let final_name = self.get_generics(&name, &generics_names, &self.environment);
+                            let (final_name, _) = self.get_generics(&name, &generics_names, &self.environment);
                             let search_tok = Token::dummy(Rc::clone(&final_name));
 
                             let mut env = self.globals.borrow_mut();
@@ -4728,13 +4733,13 @@ impl IrGen {
                             );
                         }
 
-                        let final_name = self.get_generics(&name, &generics_names, &tmp_env);
+                        let (final_name, _) = self.get_generics(&name, &generics_names, &tmp_env);
                         let search_tok = Token::dummy(Rc::clone(&final_name));
 
                         let mut env = self.globals.borrow_mut();
 
-                        if !final_name.contains("_UNKNOWN_") {
-                            if let Some(var) = env.get(&search_tok) {
+                        if let Some(var) = env.get(&search_tok) {
+                            if !var.type_.contains_unknown() {
                                 if let SkyeType::Function(.., has_body) = var.type_ {
                                     if has_body {
                                         env = tmp_env.borrow_mut();
@@ -4788,7 +4793,7 @@ impl IrGen {
                                         );
                                     }
                                 }
-                            }
+                            }                            
                         }
 
                         drop(env);
@@ -5386,14 +5391,14 @@ impl IrGen {
                 self.curr_definition = previous_definition;
             }
             Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind, init } => {
-                let mut full_name = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
+                let (mut full_name, has_unknown) = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
 
                 let env = self.globals.borrow();
                 let search_tok = Token::dummy(Rc::clone(&full_name));
                 let existing = env.get(&search_tok);
 
                 let has_decl = {
-                    if !full_name.contains("_UNKNOWN_") {
+                    if !has_unknown {
                         if let Some(var) = &existing {
                             if let SkyeType::Function(.., has_body) = var.type_ {
                                 if has_body && body.is_some() {
@@ -6024,14 +6029,14 @@ impl IrGen {
             }
             Statement::Struct { name, fields, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
-                let full_name = self.get_generics(&base_name, generics, &self.environment);
+                let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
                 let env = self.globals.borrow();
                 let existing = env.get(
                     &Token::dummy(Rc::clone(&full_name))
                 );
 
-                if !full_name.contains("_UNKNOWN_") {
+                if !has_unknown {
                     if let Some(var) = &existing {
                         if let SkyeType::Type(inner_type) = &var.type_ {
                             if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
@@ -6373,7 +6378,7 @@ impl IrGen {
             }
             Statement::Enum { name, kind_type: type_expr, variants, is_simple, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
-                let full_name = self.get_generics(&base_name, generics, &self.environment);
+                let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
                 let type_ = {
                     let enum_type = ctx.run(|ctx| self.evaluate(type_expr, index, false, ctx)).await.ir_value.type_;
@@ -6767,7 +6772,7 @@ impl IrGen {
                 };
 
                 let mut env = self.globals.borrow_mut();
-                if !full_name.contains("_UNKNOWN_") {
+                if !has_unknown {
                     let existing = env.get(&Token::dummy(Rc::clone(&full_name)));
 
                     if let Some(var) = &existing {
