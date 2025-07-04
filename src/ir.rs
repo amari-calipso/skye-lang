@@ -5,7 +5,7 @@ use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token}
 #[derive(Clone, Debug)]
 pub struct IrStatement {
     pub data: IrStatementData,
-    pub pos: AstPos
+    #[allow(unused)] pub pos: AstPos
 }
 
 impl IrStatement {
@@ -13,6 +13,85 @@ impl IrStatement {
         IrStatement { 
             data: IrStatementData::Scope { statements: Rc::new(RefCell::new(Vec::new())) }, 
             pos 
+        }
+    }
+
+    pub fn contains_unknown(&self) -> bool {
+        match &self.data {
+            IrStatementData::Define { value, .. } |
+            IrStatementData::Expression { value } => value.contains_unknown(),
+            IrStatementData::Struct { type_ } |
+            IrStatementData::Union { type_ } => type_.contains_unknown(),
+            IrStatementData::Loop { body } => body.contains_unknown(),
+            IrStatementData::VarDecl { type_, initializer, .. } => {
+                type_.contains_unknown() || initializer.as_ref().map(|x| x.contains_unknown()).unwrap_or(false)
+            }
+            IrStatementData::Return { value } => {
+                value.as_ref().map(|x| x.contains_unknown()).unwrap_or(false)
+            }
+            IrStatementData::If { condition, then_branch, else_branch } => {
+                condition.contains_unknown() || then_branch.contains_unknown() || 
+                else_branch.as_ref().map(|x| x.contains_unknown()).unwrap_or(false)
+            }
+            IrStatementData::Scope { statements } => {
+                for statement in statements.borrow().iter() {
+                    if statement.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            IrStatementData::TaggedUnion { fields, .. } => {
+                for (_, field) in fields {
+                    if field.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            IrStatementData::Function { params, body, signature, .. } => {
+                if signature.contains_unknown() {
+                    return true;
+                }
+
+                for param in params {
+                    if param.type_.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                if let Some(body) = body {
+                    for statement in body {
+                        if statement.contains_unknown() {
+                            return true;
+                        }
+                    }
+                }
+
+                false
+            }
+            IrStatementData::Switch { value, branches } => {
+                if value.contains_unknown() {
+                    return true;
+                }
+
+                for branch in branches {
+                    if branch.code.contains_unknown() {
+                        return true;
+                    }
+
+                    for case in &branch.cases {
+                        if case.contains_unknown() {
+                            return true;
+                        }
+                    }
+                }
+
+                false
+            }
+            _ => false
         }
     }
 }
@@ -47,10 +126,10 @@ pub enum IrStatementData {
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, return_type: SkyeType }, // TODO: add qualifiers
+    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType }, // TODO: add qualifiers
     Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
-    TaggedUnion { name: Rc<str>, kind_name: Rc<str>, fields: HashMap<Rc<str>, SkyeType> },
+    TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: HashMap<Rc<str>, SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },
     Include { path: Rc<str>, is_ang: bool },
@@ -66,10 +145,6 @@ pub struct IrValue {
 impl IrValue {
     pub fn new(data: IrValueData, type_: SkyeType) -> Self {
         IrValue { data, type_ }
-    }
-
-    pub fn empty() -> Self {
-        IrValue { data: IrValueData::Empty, type_: SkyeType::Void }
     }
 
     pub fn empty_with_type(type_: SkyeType) -> Self {
@@ -88,6 +163,10 @@ impl IrValue {
             data: IrValueData::Literal { value: Expression::UnsignedIntLiteral { value, tok: Token::empty(), bits } }, 
             type_
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self.data, IrValueData::Empty)
     }
 
     pub fn keep_side_effects(&self) -> Self {
@@ -122,6 +201,69 @@ impl IrValue {
                 output.data = IrValueData::Empty;
                 output
             }
+        }
+    }
+
+    pub fn contains_unknown(&self) -> bool {
+        if self.type_.contains_unknown() {
+            return true;
+        }
+
+        match &self.data {
+            IrValueData::Increment { value } | 
+            IrValueData::Decrement { value } |
+            IrValueData::Negative { value } |
+            IrValueData::Invert { value } |
+            IrValueData::Negate { value } |
+            IrValueData::Reference { value } |
+            IrValueData::Dereference { value } | 
+            IrValueData::Get { from: value, .. } | 
+            IrValueData::DereferenceGet { from: value, .. } |
+            IrValueData::Grouping(value) => value.contains_unknown(),
+            IrValueData::Cast { to, from } => {
+                to.contains_unknown() || from.contains_unknown()
+            }
+            IrValueData::Subscript { subscripted: left, index: right } |
+            IrValueData::Binary { left, right, .. } | 
+            IrValueData::Assign { target: left, value: right, .. } => {
+                left.contains_unknown() || right.contains_unknown()
+            }
+            IrValueData::Ternary { condition, then_branch, else_branch } => {
+                condition.contains_unknown() || then_branch.contains_unknown() || else_branch.contains_unknown()
+            }
+            IrValueData::Call { callee, args } => {
+                if callee.contains_unknown() {
+                    return true;
+                }
+
+                for arg in args {
+                    if arg.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            IrValueData::Slice { items } |
+            IrValueData::Array { items } => {
+                for item in items {
+                    if item.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            IrValueData::CompoundLiteral { items } => {
+                for (_, item) in items {
+                    if item.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            _ => false
         }
     }
 }
@@ -161,7 +303,7 @@ pub enum IrValueData {
 #[derive(Clone, Debug)]
 pub enum BinaryOp {
     Add, Subtract, Divide, Multiply, Modulo, 
-    ShiftLeft, ShiftRight, LogicOr, LogicAnd,
+    ShiftLeft, ShiftRight,
     BitwiseXor, BitwiseOr, BitwiseAnd, 
     Greater, GreaterEqual, Less, LessEqual,
     Equal, NotEqual

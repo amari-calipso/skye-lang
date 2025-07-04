@@ -191,47 +191,6 @@ impl SkyeType {
             SkyeType::I64 => String::from("i64"),
             SkyeType::F64 => String::from("f64"),
             SkyeType::Usz => String::from("usz"),
-            SkyeType::I32 | SkyeType::AnyInt   => String::from("i32"),
-            SkyeType::F32 | SkyeType::AnyFloat => String::from("f32"),
-
-            SkyeType::Char => String::from("char"),
-
-            SkyeType::Void       => String::from("void"),
-            SkyeType::Unknown(_) => String::from("void*"),
-
-            SkyeType::Group(..) |
-            SkyeType::Template(..) |
-            SkyeType::Macro(..) => String::new(),
-
-            SkyeType::Type(inner) => inner.stringify(),
-            SkyeType::Function(..) => self.mangle(),
-
-            SkyeType::Pointer(inner, ..) => {
-                format!("{}*", inner.stringify())
-            }
-
-            SkyeType::Array(inner, size) => {
-                format!("SKYE_ARRAY_{}_{}", inner.mangle(), *size)
-            }
-
-            SkyeType::Struct(name, ..) |
-            SkyeType::Namespace(name) |
-            SkyeType::Enum(name, ..) |
-            SkyeType::Union(name, _) => name.to_string(),
-        }
-    }
-
-    pub fn stringify_native(&self) -> String {
-        match self {
-            SkyeType::U8  => String::from("u8"),
-            SkyeType::I8  => String::from("i8"),
-            SkyeType::U16 => String::from("u16"),
-            SkyeType::I16 => String::from("i16"),
-            SkyeType::U32 => String::from("u32"),
-            SkyeType::U64 => String::from("u64"),
-            SkyeType::I64 => String::from("i64"),
-            SkyeType::F64 => String::from("f64"),
-            SkyeType::Usz => String::from("usz"),
             SkyeType::I32 => String::from("i32"),
             SkyeType::F32 => String::from("f32"),
             SkyeType::AnyInt   => String::from("AnyInt"),
@@ -240,7 +199,7 @@ impl SkyeType {
             SkyeType::Char => String::from("char"),
             SkyeType::Void => String::from("void"),
 
-            SkyeType::Group(left, right) => format!("{} | {}", left.stringify_native(), right.stringify_native()),
+            SkyeType::Group(left, right) => format!("{} | {}", left.stringify(), right.stringify()),
             SkyeType::Template(name, ..) => format!("template \"{}\"", name.replace("_DOT_", "::")),
             SkyeType::Namespace(name) => format!("namespace \"{}\"", name.replace("_DOT_", "::")),
             SkyeType::Macro(name, ..) => format!("macro \"{}\"", name),
@@ -252,7 +211,7 @@ impl SkyeType {
                 }
             }
 
-            SkyeType::Type(inner) => format!("type \"{}\"", inner.stringify_native()),
+            SkyeType::Type(inner) => format!("type \"{}\"", inner.stringify()),
             SkyeType::Function(args, return_type, _) => {
                 let mut buf = String::from("fn (");
                 for (i, arg) in args.iter().enumerate() {
@@ -260,7 +219,7 @@ impl SkyeType {
                         buf.push_str("const ");
                     }
 
-                    buf.push_str(&arg.type_.stringify_native());
+                    buf.push_str(&arg.type_.stringify());
 
                     if i != args.len() - 1 {
                         buf.push_str(", ");
@@ -268,7 +227,7 @@ impl SkyeType {
                 }
 
                 buf.push_str(") ");
-                buf.push_str(&return_type.stringify_native());
+                buf.push_str(&return_type.stringify());
                 buf
             }
 
@@ -282,14 +241,14 @@ impl SkyeType {
                 };
 
                 if *is_const {
-                    String::from(format!("{}const {}", sym, inner.stringify_native()))
+                    String::from(format!("{}const {}", sym, inner.stringify()))
                 } else {
-                    String::from(format!("{}{}", sym, inner.stringify_native()))
+                    String::from(format!("{}{}", sym, inner.stringify()))
                 }
             }
 
             SkyeType::Array(inner, size) => {
-                format!("[{}; {}]", inner.stringify_native(), *size)
+                format!("[{}; {}]", inner.stringify(), *size)
             }
 
             SkyeType::Struct(name, ..) |
@@ -1043,6 +1002,54 @@ impl SkyeType {
                 }
             }
             _ => true
+        }
+    }
+
+    pub fn contains_unknown(&self) -> bool {
+        match self {
+            SkyeType::Unknown(_) => true,
+            SkyeType::Pointer(inner, _, _) | SkyeType::Array(inner, _) |
+            SkyeType::Type(inner) => inner.contains_unknown(),
+            SkyeType::Group(a, b) => {
+                a.contains_unknown() || b.contains_unknown()
+            }
+            SkyeType::Function(params, return_type, _) => {
+                if return_type.contains_unknown() {
+                    return true;
+                }
+
+                for param in params {
+                    if param.type_.contains_unknown() {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            SkyeType::Struct(_, fields, _) |
+            SkyeType::Union(_, fields) => {
+                if let Some(fields) = fields {
+                    for (_, field) in fields {
+                        if field.type_.contains_unknown() {
+                            return true;
+                        }
+                    }
+                }
+
+                false
+            }
+            SkyeType::Enum(_, variants, _) => {
+                if let Some(variants) = variants {
+                    for (_, variant) in variants {
+                        if variant.contains_unknown() {
+                            return true;
+                        }
+                    }
+                }
+
+                false
+            }
+            _ => false
         }
     }
 

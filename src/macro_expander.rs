@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, codegen, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -36,7 +36,7 @@ macro_rules! at_operator {
                                 source: $pos
                             };
                         }
-                        MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at codegen time
+                        MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at irgen time
                     }
                 } else {
                     unreachable!()
@@ -50,7 +50,7 @@ macro_rules! at_operator {
                 $slf, $op,
                 format!(
                     "'@' can only be used on macros (got {})",
-                    inner.stringify_native()
+                    inner.stringify()
                 ).as_ref()
             );
         }
@@ -256,7 +256,7 @@ impl MacroExpander {
                             self, object_expr,
                             format!(
                                 "Can only statically access namespaces, structs, enums and instances (got {})",
-                                object.stringify_native()
+                                object.stringify()
                             ).as_ref()
                         );
                     }
@@ -303,7 +303,7 @@ impl MacroExpander {
                         _ => ()
                     }
 
-                    if codegen::BUILTIN_MACROS.contains(name.as_ref()) {
+                    if irgen::BUILTIN_MACROS.contains(name.as_ref()) {
                         return None;
                     }
 
@@ -397,7 +397,7 @@ impl MacroExpander {
                             // re-expand the expression to expand potential nested macros
                             ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
                         }
-                        MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at codegen time
+                        MacroBody::Binding(_) => () // ignore macro bindings, they are resolved at irgen time
                     }
                 }
             }
@@ -573,7 +573,7 @@ impl MacroExpander {
                 self.curr_name = previous_name;
             }
             Statement::Macro { name, params, body } => {
-                if matches!(body, MacroBody::Binding(..)) { // ignore macro bindings, they are resolved at codegen time
+                if matches!(body, MacroBody::Binding(..)) { // ignore macro bindings, they are resolved at irgen time
                     return;
                 }
 
