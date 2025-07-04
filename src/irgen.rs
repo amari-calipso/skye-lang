@@ -205,8 +205,8 @@ impl IrGen {
         }
     }
 
-    async fn get_return_type(&mut self, return_type_expr: &Expression, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeType {
-        let val = ctx.run(|ctx| self.evaluate(&return_type_expr, index, allow_unknown, ctx)).await;
+    async fn get_return_type(&mut self, return_type_expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeType {
+        let val = ctx.run(|ctx| self.evaluate(&return_type_expr, allow_unknown, ctx)).await;
 
         match val.ir_value.type_ {
             SkyeType::Type(inner_type) => {
@@ -231,12 +231,12 @@ impl IrGen {
         }
     }
 
-    async fn get_params(&mut self, params: &Vec<FunctionParam>, existing: Option<SkyeVariable>, has_decl: bool, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> (Vec<IrFunctionParam>, Vec<SkyeFunctionParam>) {
+    async fn get_params(&mut self, params: &Vec<FunctionParam>, existing: Option<SkyeVariable>, has_decl: bool, allow_unknown: bool, ctx: &mut reblessive::Stk) -> (Vec<IrFunctionParam>, Vec<SkyeFunctionParam>) {
         let mut params_evaluated = Vec::with_capacity(params.len());
         let mut params_types = Vec::with_capacity(params.len());
         for i in 0 .. params.len() {
             let param_type: SkyeType = {
-                let inner_param_type = ctx.run(|ctx| self.evaluate(&params[i].type_, index, allow_unknown, ctx)).await.ir_value.type_;
+                let inner_param_type = ctx.run(|ctx| self.evaluate(&params[i].type_, allow_unknown, ctx)).await.ir_value.type_;
                 if inner_param_type.check_completeness() {
                     if let SkyeType::Type(inner_type) = inner_param_type {
                         if inner_type.can_be_instantiated(false) {
@@ -366,7 +366,7 @@ impl IrGen {
         result
     }
 
-    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
+    async fn handle_builtin_macros(&mut self, macro_name: &Rc<str>, arguments: &Vec<Expression>, allow_unknown: bool, callee_expr: &Expression, ctx: &mut reblessive::Stk) -> Option<SkyeValue> {
         match macro_name.as_ref() {
             "format" | "fprint" | "fprintln" => {
                 let is_format   = macro_name.as_ref() == "format";
@@ -384,7 +384,7 @@ impl IrGen {
                     return Some(SkyeValue::special(SkyeType::Void));
                 }
 
-                let first = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                let first = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 let (real_fmt_string, tok) = {
                     if let Expression::StringLiteral { value, tok, .. } = arguments[1].get_inner() {
@@ -441,7 +441,7 @@ impl IrGen {
                     // this evaluation will be performed again later, so generate the code in a scratch buffer
                     let previous_definition = self.curr_definition.clone();
                     self.curr_definition = Some(Rc::new(RefCell::new(IrStatement::empty_scope(callee_expr.get_pos()))));
-                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, 0, allow_unknown, ctx)).await;
+                    let evaluated = ctx.run(|ctx| self.evaluate(&portion_expr, allow_unknown, ctx)).await;
                     self.curr_definition = previous_definition;
 
                     let mut do_write = true;
@@ -617,11 +617,11 @@ impl IrGen {
                 }
 
                 let stmts = Statement::Block(tok.clone(), statements);
-                let _ = ctx.run(|ctx| self.execute(&stmts, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.execute(&stmts, ctx)).await;
                 Some(SkyeValue::special(SkyeType::Void))
             }
             "typeOf" => {
-                let inner = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                let inner = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 match inner.ir_value.type_ {
                     SkyeType::Void         => ast_error!(self, arguments[0], "Cannot get type of void"),
@@ -636,10 +636,10 @@ impl IrGen {
                 Some(SkyeValue::special(inner.ir_value.type_))
             }
             "cast" => {
-                let cast_to = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                let cast_to = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 if let SkyeType::Type(inner_type) = cast_to.ir_value.type_ {
-                    let to_cast = ctx.run(|ctx| self.evaluate(&arguments[1], index, allow_unknown, ctx)).await;
+                    let to_cast = ctx.run(|ctx| self.evaluate(&arguments[1], allow_unknown, ctx)).await;
                     let to_cast_type = to_cast.ir_value.type_.finalize();
 
                     let castable_how = to_cast_type.is_castable_to(&inner_type);
@@ -698,7 +698,7 @@ impl IrGen {
                                         custom_tok.set_lexeme(&mangled);
 
                                         let option_expr = Expression::Unary { op: question, expr: Box::new(Expression::Variable(custom_tok)), is_prefix: true };
-                                        let option_type = ctx.run(|ctx| self.evaluate(&option_expr, index, allow_unknown, ctx)).await;
+                                        let option_type = ctx.run(|ctx| self.evaluate(&option_expr, allow_unknown, ctx)).await;
 
                                         if let SkyeType::Type(inner_option_type) = option_type.ir_value.type_ {
                                             let mangled_option_type = inner_option_type.mangle();
@@ -807,7 +807,7 @@ impl IrGen {
                 }
             }
             "constCast" => {
-                let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.ir_value.type_ {
                     if *is_const {
@@ -831,7 +831,7 @@ impl IrGen {
                 }
             }
             "asPtr" => {
-                let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                let to_cast = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 if let SkyeType::Pointer(inner_type, is_const, is_reference) = &to_cast.ir_value.type_ {
                     if *is_reference {
@@ -894,7 +894,7 @@ impl IrGen {
         IrValue::new(return_data, return_type)
     }
 
-    async fn call(&mut self, callee: &SkyeValue, expr: &Expression, callee_expr: &Expression, arguments: &Vec<Expression>, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
+    async fn call(&mut self, callee: &SkyeValue, expr: &Expression, callee_expr: &Expression, arguments: &Vec<Expression>, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         let (arguments_len, arguments_mod) = {
             if callee.self_info.is_some() {
                 (arguments.len() + 1, 1 as usize)
@@ -931,7 +931,7 @@ impl IrGen {
                             }
                         }
 
-                        ctx.run(|ctx| self.evaluate(&arguments[i - arguments_mod], index, allow_unknown, ctx)).await
+                        ctx.run(|ctx| self.evaluate(&arguments[i - arguments_mod], allow_unknown, ctx)).await
                     };
 
                     let is_self = i == 0 && arguments_mod == 1;
@@ -953,7 +953,7 @@ impl IrGen {
                                         Box::new(arguments[i - arguments_mod].clone())
                                     )), is_prefix: true };
 
-                                ctx.run(|ctx| self.evaluate(&ref_expr, index, allow_unknown, ctx)).await
+                                ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
                             } else {
                                 arg
                             }
@@ -1003,7 +1003,7 @@ impl IrGen {
                     let search_tok = Token::dummy(Rc::from("__copy__"));
                     if let Some(value) = self.get_method(&new_arg, &search_tok, true) {
                         let v = Vec::new();
-                        let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &arguments[i - arguments_mod], &v, index, allow_unknown, ctx)).await;
+                        let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &arguments[i - arguments_mod], &v, allow_unknown, ctx)).await;
                         
                         args.push(copy_constructor.ir_value);
                         ast_info!(arguments[i - arguments_mod], "Skye inserted a copy constructor call for this expression"); // +I-copies
@@ -1052,7 +1052,7 @@ impl IrGen {
                                 }
                             }
 
-                            ctx.run(|ctx| self.evaluate(&arguments[i - arguments_mod], index, false, ctx)).await
+                            ctx.run(|ctx| self.evaluate(&arguments[i - arguments_mod], false, ctx)).await
                         };
 
                         // definition type evaluation has to be performed in definition environment
@@ -1062,7 +1062,7 @@ impl IrGen {
                         let previous_name = self.curr_name.clone();
                         self.curr_name = curr_name.clone();
 
-                        let def_evaluated = ctx.run(|ctx| self.evaluate(&params[i].type_, index, true, ctx)).await;
+                        let def_evaluated = ctx.run(|ctx| self.evaluate(&params[i].type_, true, ctx)).await;
 
                         self.curr_name   = previous_name;
                         self.environment = previous;
@@ -1099,7 +1099,7 @@ impl IrGen {
                                                 Box::new(arguments[i - arguments_mod].clone())
                                             )), is_prefix: true };
 
-                                        ctx.run(|ctx| self.evaluate(&ref_expr, index, allow_unknown, ctx)).await
+                                        ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
                                     } else {
                                         call_evaluated
                                     }
@@ -1226,7 +1226,7 @@ impl IrGen {
                             };
 
                             let v = Vec::new();
-                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, loc_callee_expr, &v, index, allow_unknown, ctx)).await;
+                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, loc_callee_expr, &v, allow_unknown, ctx)).await;
                             
                             args.push(copy_constructor.ir_value);
                             ast_info!(loc_callee_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
@@ -1245,7 +1245,7 @@ impl IrGen {
                                 let previous = Rc::clone(&self.environment);
                                 self.environment = Rc::clone(&tmp_env);
 
-                                let evaluated = ctx.run(|ctx| self.evaluate(&default, index, false, ctx)).await;
+                                let evaluated = ctx.run(|ctx| self.evaluate(&default, false, ctx)).await;
 
                                 self.environment = previous;
 
@@ -1283,7 +1283,7 @@ impl IrGen {
                                 let previous = Rc::clone(&self.environment);
                                 self.environment = Rc::clone(&tmp_env);
 
-                                let evaluated = ctx.run(|ctx| self.evaluate(&bounds, index, false, ctx)).await;
+                                let evaluated = ctx.run(|ctx| self.evaluate(&bounds, false, ctx)).await;
 
                                 self.environment = previous;
 
@@ -1349,7 +1349,7 @@ impl IrGen {
                     self.curr_name = curr_name.clone();
 
                     let return_evaluated = {
-                        let ret_type = ctx.run(|ctx| self.evaluate(&return_type_expr, index, false, ctx)).await.ir_value.type_;
+                        let ret_type = ctx.run(|ctx| self.evaluate(&return_type_expr, false, ctx)).await.ir_value.type_;
 
                         match ret_type {
                             SkyeType::Type(inner_type) => {
@@ -1424,7 +1424,7 @@ impl IrGen {
                     let old_errors = self.errors;
 
                     let type_ = {
-                        match ctx.run(|ctx| self.execute(&definition, 0, ctx)).await {
+                        match ctx.run(|ctx| self.execute(&definition, ctx)).await {
                             Ok(item) => item.unwrap_or_else(|| {
                                 ast_error!(self, expr, "Could not process template generation for this expression");
                                 SkyeType::get_unknown()
@@ -1508,7 +1508,7 @@ impl IrGen {
 
                     let mut args = Vec::new();
                     for i in 0 .. arguments_len {
-                        let mut arg = ctx.run(|ctx| self.evaluate(&arguments[i], index, allow_unknown, ctx)).await;
+                        let mut arg = ctx.run(|ctx| self.evaluate(&arguments[i], allow_unknown, ctx)).await;
 
                         if !arg.ir_value.type_.can_be_instantiated(false) {
                             arg.ir_value.data = IrValueData::Empty;
@@ -1531,7 +1531,7 @@ impl IrGen {
                     let previous = Rc::clone(&self.environment);
                     self.environment = tmp_env;
 
-                    let call_return_type = ctx.run(|ctx| self.evaluate(&return_type, index, allow_unknown, ctx)).await;
+                    let call_return_type = ctx.run(|ctx| self.evaluate(&return_type, allow_unknown, ctx)).await;
 
                     self.environment = previous;
 
@@ -1557,7 +1557,7 @@ impl IrGen {
                         ast_note!(expr, "This error is a result of this macro expansion");
                         SkyeValue::get_unknown()
                     }
-                } else if let Some(result) = ctx.run(|ctx| self.handle_builtin_macros(macro_name, arguments, index, allow_unknown, callee_expr, ctx)).await {
+                } else if let Some(result) = ctx.run(|ctx| self.handle_builtin_macros(macro_name, arguments, allow_unknown, callee_expr, ctx)).await {
                     return result;
                 } else if let MacroBody::Expression(return_expr) = body {
                     if macro_name.as_ref() == "panic" {
@@ -1599,7 +1599,7 @@ impl IrGen {
 
                             let old_errors = self.errors;
 
-                            let res = ctx.run(|ctx| self.evaluate(&curr_expr, index, allow_unknown, ctx)).await;
+                            let res = ctx.run(|ctx| self.evaluate(&curr_expr, allow_unknown, ctx)).await;
 
                             if self.errors != old_errors {
                                 ast_note!(expr, "This error is a result of this macro expansion");
@@ -1668,7 +1668,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
-                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await;
+                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await;
                     inner
                 } else {
                     token_error!(
@@ -1738,7 +1738,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&inner, &search_tok, true) {
                     let v = Vec::new();
-                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await;
+                    let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await;
                     
                     SkyeValue::new(
                         IrValue::new(
@@ -1795,7 +1795,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_inner, &search_tok, true) {
                     let v = Vec::new();
-                    ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, 0, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await
                 } else {
                     token_error!(
                         self, op,
@@ -1833,7 +1833,7 @@ impl IrGen {
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await.follow_reference(self.external_zero_check(op));
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await.follow_reference(self.external_zero_check(op));
 
                 if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
                     new_left.ir_value.type_.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
@@ -1872,7 +1872,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -1943,7 +1943,7 @@ impl IrGen {
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await
                     .follow_reference(self.external_zero_check(op));
 
                 if right.ir_value.type_.equals(&SkyeType::AnyInt, EqualsLevel::Typewise) {
@@ -1974,7 +1974,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -2051,7 +2051,7 @@ impl IrGen {
 
             let previous_definition = self.curr_definition.clone();
             self.curr_definition = Some(Rc::new(RefCell::new(scope)));
-            let _ = ctx.run(|ctx| self.execute(&panic_stmt, 0, ctx)).await;
+            let _ = ctx.run(|ctx| self.execute(&panic_stmt, ctx)).await;
             self.curr_definition = previous_definition;
 
             IrValue::new(IrValueData::Variable { name: tmp_var }, type_)
@@ -2078,7 +2078,7 @@ impl IrGen {
 
         match new_left.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(compatible_types) => {
-                let right = ctx.run(|ctx| self.evaluate(&right_expr, 0, allow_unknown, ctx)).await
+                let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await
                     .follow_reference(self.external_zero_check(op));
 
                 if matches!(new_left.ir_value.type_, SkyeType::Unknown(_)) ||
@@ -2168,7 +2168,7 @@ impl IrGen {
                         true
                     );
 
-                    let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, 0, allow_unknown, ctx)).await;
+                    let result = ctx.run(|ctx| self.call(&fmod_value, expr, left_expr, &args, allow_unknown, ctx)).await;
                     self.environment.borrow_mut().undef(tmp_var);
                     return result;
                 }
@@ -2176,7 +2176,7 @@ impl IrGen {
                 let search_tok = Token::dummy(Rc::from(op_method));
                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                     let args = vec![right_expr.clone()];
-                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, 0, allow_unknown, ctx)).await
+                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
                     ast_error!(
                         self, left_expr,
@@ -2235,8 +2235,8 @@ impl IrGen {
         )).await
     }
 
-    async fn get_type_equality(&mut self, inner_left: &SkyeType, right_expr: &Expression, index: usize, allow_unknown: bool, reversed: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
-        let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await;
+    async fn get_type_equality(&mut self, inner_left: &SkyeType, right_expr: &Expression, allow_unknown: bool, reversed: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
+        let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await;
 
         if let SkyeType::Type(inner_right) = right.ir_value.type_ {
             if reversed ^ inner_left.equals(&inner_right, EqualsLevel::Typewise) {
@@ -2257,10 +2257,10 @@ impl IrGen {
         }
     }
 
-    async fn evaluate(&mut self, expr: &Expression, index: usize, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
+    async fn evaluate(&mut self, expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         match expr {
             Expression::Grouping(inner_expr) => {
-                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
+                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, allow_unknown, ctx)).await;
                 SkyeValue::new(
                     {
                         if inner.ir_value.is_empty() {
@@ -2277,7 +2277,7 @@ impl IrGen {
             }
             Expression::InMacro { inner: inner_expr, source } => {
                 let old_errors = self.errors;
-                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
+                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, allow_unknown, ctx)).await;
 
                 if self.errors != old_errors {
                     astpos_note!(source, "This error is a result of this macro expansion");
@@ -2289,7 +2289,7 @@ impl IrGen {
                 let old_errors = self.errors;
 
                 for statement in inner {
-                    let _ = ctx.run(|ctx| self.execute(statement, index, ctx)).await;
+                    let _ = ctx.run(|ctx| self.execute(statement, ctx)).await;
                 }
 
                 if self.errors != old_errors {
@@ -2299,11 +2299,11 @@ impl IrGen {
                 SkyeValue::special(SkyeType::Void)
             }
             Expression::Slice { opening_brace, items } => {
-                let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
+                let first_item = ctx.run(|ctx| self.evaluate(&items[0], allow_unknown, ctx)).await;
                 let mut output_items = vec![first_item.ir_value];
                
                 for i in 1 .. items.len() {
-                    let evaluated = ctx.run(|ctx| self.evaluate(&items[i], index, allow_unknown, ctx)).await;
+                    let evaluated = ctx.run(|ctx| self.evaluate(&items[i], allow_unknown, ctx)).await;
 
                     if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
                         ast_error!(
@@ -2341,7 +2341,7 @@ impl IrGen {
 
                 let subscript_expr = Expression::Subscript { subscripted: Box::new(Expression::Variable(slice_tok)), paren: opening_brace.clone(), args: vec![Expression::Variable(type_tok)] };
 
-                let return_type = ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await;
+                let return_type = ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await;
 
                 let mut env = self.environment.borrow_mut();
                 env.undef(tmp_var);
@@ -2359,7 +2359,7 @@ impl IrGen {
                 }
             }
             Expression::Array { item: item_expr, size: size_expr, .. } => {
-                let item = ctx.run(|ctx| self.evaluate(&item_expr, index, allow_unknown, ctx)).await;
+                let item = ctx.run(|ctx| self.evaluate(&item_expr, allow_unknown, ctx)).await;
 
                 let size = {
                     match size_expr.get_inner() {
@@ -2418,11 +2418,11 @@ impl IrGen {
                 )
             }
             Expression::ArrayLiteral { items, .. } => {
-                let first_item = ctx.run(|ctx| self.evaluate(&items[0], index, allow_unknown, ctx)).await;
+                let first_item = ctx.run(|ctx| self.evaluate(&items[0], allow_unknown, ctx)).await;
                 let mut output_items = vec![first_item.ir_value];
                
                 for i in 1 .. items.len() {
-                    let evaluated = ctx.run(|ctx| self.evaluate(&items[i], index, allow_unknown, ctx)).await;
+                    let evaluated = ctx.run(|ctx| self.evaluate(&items[i], allow_unknown, ctx)).await;
 
                     if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
                         ast_error!(
@@ -2506,7 +2506,7 @@ impl IrGen {
                 }
             }
             Expression::Unary { op, expr: inner_expr, is_prefix } => {
-                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, index, allow_unknown, ctx)).await;
+                let inner = ctx.run(|ctx| self.evaluate(&inner_expr, allow_unknown, ctx)).await;
 
                 if *is_prefix {
                     match op.type_ {
@@ -2578,7 +2578,7 @@ impl IrGen {
                                     ] 
                                 };
 
-                                ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
+                                ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await
                             } else {
                                 ctx.run(|ctx| self.unary_operator(
                                     inner, inner_expr, expr, "!", "__not__", Operator::Not, 
@@ -2609,7 +2609,7 @@ impl IrGen {
                                     args: vec![*inner_expr.clone()] 
                                 };
 
-                                ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
+                                ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await
                             } else {
                                 ast_error!(
                                     self, inner_expr,
@@ -2802,7 +2802,7 @@ impl IrGen {
 
                                                 if let Some(value) = self.get_method(&inner, &search_tok, true) {
                                                     let v = Vec::new();
-                                                    let value = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, index, allow_unknown, ctx)).await;
+                                                    let value = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await;
 
                                                     let (inner_type, is_const) = {
                                                         if let SkyeType::Pointer(inner, ptr_is_const, _) = &value.ir_value.type_ {
@@ -2970,7 +2970,7 @@ impl IrGen {
 
                                         let previous_definition = self.curr_definition.clone();
                                         self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                        ctx.run(|ctx| self.handle_all_deferred(index, false, expr, "in the propagation branch of this expression", ctx)).await;
+                                        ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
                                         self.curr_definition = previous_definition;
 
                                         if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
@@ -3048,7 +3048,7 @@ impl IrGen {
 
                                         let previous_definition = self.curr_definition.clone();
                                         self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                        ctx.run(|ctx| self.handle_all_deferred(index, false, expr, "in the propagation branch of this expression", ctx)).await;
+                                        ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
                                         self.curr_definition = previous_definition;
 
                                         if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
@@ -3185,7 +3185,7 @@ impl IrGen {
                                 if let SkyeType::Macro(name, params, body) = &*inner_type {
                                     if matches!(params, MacroParams::None) {
                                         if let MacroBody::Binding(return_type) = body {
-                                            let ret_type = ctx.run(|ctx| self.evaluate(return_type, index, allow_unknown, ctx)).await;
+                                            let ret_type = ctx.run(|ctx| self.evaluate(return_type, allow_unknown, ctx)).await;
 
                                             if let SkyeType::Type(inner_type) = ret_type.ir_value.type_ {
                                                 if !inner_type.check_completeness() {
@@ -3302,7 +3302,7 @@ impl IrGen {
                 }
             }
             Expression::Binary { left: left_expr, op, right: right_expr } => {
-                let left = ctx.run(|ctx| self.evaluate(&left_expr, index, allow_unknown, ctx)).await;
+                let left = ctx.run(|ctx| self.evaluate(&left_expr, allow_unknown, ctx)).await;
 
                 match op.type_ {
                     TokenType::Plus => {
@@ -3417,7 +3417,7 @@ impl IrGen {
                                 let previous_definition = self.curr_definition.clone();
                                 self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
                                 
-                                let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
+                                let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await
                                     .follow_reference(self.external_zero_check(op));
 
                                 self.curr_definition = previous_definition;
@@ -3465,7 +3465,7 @@ impl IrGen {
                                 let search_tok = Token::dummy(Rc::from("__or__"));
                                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                                     let args = vec![*right_expr.clone()];
-                                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
+                                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                                 } else {
                                     ast_error!(
                                         self, left_expr,
@@ -3554,7 +3554,7 @@ impl IrGen {
                                 let previous_definition = self.curr_definition.clone();
                                 self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
 
-                                let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await
+                                let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await
                                     .follow_reference(self.external_zero_check(op));
 
                                 self.curr_definition = previous_definition;
@@ -3585,7 +3585,7 @@ impl IrGen {
                                 let search_tok = Token::dummy(Rc::from("__and__"));
                                 if let Some(value) = self.get_method(&new_left, &search_tok, true) {
                                     let args = vec![*right_expr.clone()];
-                                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, index, allow_unknown, ctx)).await
+                                    ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                                 } else {
                                     ast_error!(
                                         self, left_expr,
@@ -3620,7 +3620,7 @@ impl IrGen {
                     }
                     TokenType::BitwiseOr => {
                         if left.ir_value.type_.is_type() || matches!(left.ir_value.type_, SkyeType::Void) {
-                            let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await;
+                            let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await;
 
                             if right.ir_value.type_.is_type() || matches!(right.ir_value.type_, SkyeType::Void) {
                                 SkyeValue::special(SkyeType::Group(Box::new(left.ir_value.type_), Box::new(right.ir_value.type_)))
@@ -3681,7 +3681,7 @@ impl IrGen {
                     TokenType::EqualEqual => {
                         if let SkyeType::Type(inner_left) = left.ir_value.type_ {
                             ctx.run(|ctx| self.get_type_equality(
-                                &*inner_left, right_expr, index, allow_unknown, false, ctx
+                                &*inner_left, right_expr, allow_unknown, false, ctx
                             )).await
                         } else {
                             ctx.run(|ctx| self.binary_operator(
@@ -3694,7 +3694,7 @@ impl IrGen {
                     TokenType::BangEqual => {
                         if let SkyeType::Type(inner_left) = left.ir_value.type_ {
                             ctx.run(|ctx| self.get_type_equality(
-                                &*inner_left, right_expr, index, allow_unknown, true, ctx
+                                &*inner_left, right_expr, allow_unknown, true, ctx
                             )).await
                         } else {
                             ctx.run(|ctx| self.binary_operator(
@@ -3716,7 +3716,7 @@ impl IrGen {
                                 ast_error!(self, left_expr, format!("Cannot instantiate type {}", left.ir_value.type_.stringify()).as_ref());
                             }
 
-                            let right = ctx.run(|ctx| self.evaluate(&right_expr, index, allow_unknown, ctx)).await;
+                            let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await;
 
                             if matches!(right.ir_value.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_)) {
                                 // result operator
@@ -3742,7 +3742,7 @@ impl IrGen {
                                     ] 
                                 };
 
-                                ctx.run(|ctx| self.evaluate(&subscript_expr, index, allow_unknown, ctx)).await
+                                ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await
                             } else {
                                 ast_error!(
                                     self, right_expr,
@@ -3805,7 +3805,7 @@ impl IrGen {
                 }
             }
             Expression::Assign { target: target_expr, op, value: value_expr } => {
-                let target = ctx.run(|ctx| self.evaluate(&target_expr, index, allow_unknown, ctx)).await;
+                let target = ctx.run(|ctx| self.evaluate(&target_expr, allow_unknown, ctx)).await;
                 let target_type = target.ir_value.type_.clone();
 
                 if matches!(op.type_, TokenType::Equal) {
@@ -3820,14 +3820,14 @@ impl IrGen {
 
                 match op.type_ {
                     TokenType::Equal => {
-                        let value = ctx.run(|ctx| self.evaluate(&value_expr, index, allow_unknown, ctx)).await;
+                        let value = ctx.run(|ctx| self.evaluate(&value_expr, allow_unknown, ctx)).await;
 
                         if target_type.equals(&value.ir_value.type_, EqualsLevel::Strict) {
                             let search_tok = Token::dummy(Rc::from("__copy__"));
                             let output_value = {
                                 if let Some(value) = self.get_method(&value, &search_tok, true) {
                                     let v = Vec::new();
-                                    let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &value_expr, &v, index, allow_unknown, ctx)).await;
+                                    let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &value_expr, &v, allow_unknown, ctx)).await;
                                     ast_info!(value_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
                                     copy_constructor
                                 } else {
@@ -3932,16 +3932,16 @@ impl IrGen {
                 }
             }
             Expression::Call(callee_expr, _, arguments, _) => {
-                let callee = ctx.run(|ctx| self.evaluate(&callee_expr, index, allow_unknown, ctx)).await;
-                ctx.run(|ctx| self.call(&callee, expr, callee_expr, arguments, index, allow_unknown, ctx)).await
+                let callee = ctx.run(|ctx| self.evaluate(&callee_expr, allow_unknown, ctx)).await;
+                ctx.run(|ctx| self.call(&callee, expr, callee_expr, arguments, allow_unknown, ctx)).await
             }
             Expression::FnPtr { return_type: return_type_expr, params, .. } => {
-                let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, index, allow_unknown, ctx)).await;
-                let (_, params_output) = ctx.run(|ctx| self.get_params(params, None, false, index, allow_unknown, ctx)).await;
+                let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, allow_unknown, ctx)).await;
+                let (_, params_output) = ctx.run(|ctx| self.get_params(params, None, false, allow_unknown, ctx)).await;
                 SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Function(params_output, Box::new(return_type), false))))
             }
             Expression::Ternary { condition: cond_expr, then_expr: then_branch_expr, else_expr: else_branch_expr, .. } => {
-                let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, allow_unknown, ctx)).await;
+                let cond = ctx.run(|ctx| self.evaluate(&cond_expr, allow_unknown, ctx)).await;
 
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -3964,10 +3964,10 @@ impl IrGen {
                 let previous_definition = self.curr_definition.clone();
                 
                 self.curr_definition = Some(Rc::new(RefCell::new(then_scope.clone())));
-                let then_branch = ctx.run(|ctx| self.evaluate(&then_branch_expr, 0, allow_unknown, ctx)).await;
+                let then_branch = ctx.run(|ctx| self.evaluate(&then_branch_expr, allow_unknown, ctx)).await;
 
                 self.curr_definition = Some(Rc::new(RefCell::new(else_scope.clone())));
-                let else_branch = ctx.run(|ctx| self.evaluate(&else_branch_expr, 0, allow_unknown, ctx)).await;
+                let else_branch = ctx.run(|ctx| self.evaluate(&else_branch_expr, allow_unknown, ctx)).await;
                 
                 self.curr_definition = previous_definition;
 
@@ -4046,7 +4046,7 @@ impl IrGen {
                 )
             }
             Expression::CompoundLiteral { type_: identifier_expr, fields, .. } => {
-                let identifier_type = ctx.run(|ctx| self.evaluate(&identifier_expr, index, allow_unknown, ctx)).await;
+                let identifier_type = ctx.run(|ctx| self.evaluate(&identifier_expr, allow_unknown, ctx)).await;
 
                 match &identifier_type.ir_value.type_ {
                     SkyeType::Type(inner_type) => {
@@ -4069,7 +4069,7 @@ impl IrGen {
                                     let mut fields_output = HashMap::new();
                                     for field in fields {
                                         if let Some(defined_field) = defined_fields.get(&field.name.lexeme) {
-                                            let field_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, index, allow_unknown, ctx)).await;
+                                            let field_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, allow_unknown, ctx)).await;
 
                                             if !defined_field.type_.equals(&field_evaluated.ir_value.type_, EqualsLevel::Strict) {
                                                 ast_error!(
@@ -4084,7 +4084,7 @@ impl IrGen {
                                             let search_tok = Token::dummy(Rc::from("__copy__"));
                                             if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
                                                 let v = Vec::new();
-                                                let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &field.expr, &v, index, allow_unknown, ctx)).await;
+                                                let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &field.expr, &v, allow_unknown, ctx)).await;
                                                 
                                                 fields_output.insert(Rc::clone(&field.name.lexeme), copy_constructor.ir_value);
                                                 ast_info!(field.expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
@@ -4117,7 +4117,7 @@ impl IrGen {
 
                                     let mut fields_output = HashMap::new();
                                     if let Some(defined_field) = defined_fields.get(&fields[0].name.lexeme) {
-                                        let field_evaluated = ctx.run(|ctx| self.evaluate(&fields[0].expr, index, allow_unknown, ctx)).await;
+                                        let field_evaluated = ctx.run(|ctx| self.evaluate(&fields[0].expr, allow_unknown, ctx)).await;
 
                                         if !defined_field.type_.equals(&field_evaluated.ir_value.type_, EqualsLevel::Strict) {
                                             ast_error!(
@@ -4132,7 +4132,7 @@ impl IrGen {
                                         let search_tok = Token::dummy(Rc::from("__copy__"));
                                         if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
                                             let v = Vec::new();
-                                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &fields[0].expr, &v, index, allow_unknown, ctx)).await;
+                                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &fields[0].expr, &v, allow_unknown, ctx)).await;
                                             
                                             fields_output.insert(Rc::clone(&fields[0].name.lexeme), copy_constructor.ir_value);
 
@@ -4207,12 +4207,12 @@ impl IrGen {
                                     let previous_name = self.curr_name.clone();
                                     self.curr_name = curr_name.clone();
 
-                                    let def_evaluated = ctx.run(|ctx| self.evaluate(&def_field_expr, index, true, ctx)).await;
+                                    let def_evaluated = ctx.run(|ctx| self.evaluate(&def_field_expr, true, ctx)).await;
 
                                     self.curr_name   = previous_name;
                                     self.environment = previous;
 
-                                    let literal_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await;
+                                    let literal_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await;
 
                                     let def_type = {
                                         if let SkyeType::Unknown(name) = &def_evaluated.ir_value.type_ {
@@ -4318,7 +4318,7 @@ impl IrGen {
                                         let previous = Rc::clone(&self.environment);
                                         self.environment = Rc::clone(&tmp_env);
 
-                                        let evaluated = ctx.run(|ctx| self.evaluate(&default, index, false, ctx)).await;
+                                        let evaluated = ctx.run(|ctx| self.evaluate(&default, false, ctx)).await;
 
                                         self.environment = previous;
 
@@ -4356,7 +4356,7 @@ impl IrGen {
                                         let previous = Rc::clone(&self.environment);
                                         self.environment = Rc::clone(&tmp_env);
 
-                                        let evaluated = ctx.run(|ctx| self.evaluate(&bounds, index, false, ctx)).await;
+                                        let evaluated = ctx.run(|ctx| self.evaluate(&bounds, false, ctx)).await;
 
                                         self.environment = previous;
 
@@ -4449,7 +4449,7 @@ impl IrGen {
                             self.curr_name = curr_name.clone();
 
                             let type_ = {
-                                match ctx.run(|ctx| self.execute(&definition, 0, ctx)).await {
+                                match ctx.run(|ctx| self.execute(&definition,  ctx)).await {
                                     Ok(item) => item.unwrap_or_else(|| {
                                         ast_error!(self, expr, "Could not process template generation for this expression");
                                         SkyeType::get_unknown()
@@ -4510,7 +4510,7 @@ impl IrGen {
                 }
             }
             Expression::Subscript { subscripted: subscripted_expr, paren, args: arguments } => {
-                let subscripted = ctx.run(|ctx| self.evaluate(&subscripted_expr, index, allow_unknown, ctx)).await;
+                let subscripted = ctx.run(|ctx| self.evaluate(&subscripted_expr, allow_unknown, ctx)).await;
 
                 let new_subscripted = subscripted.follow_reference(self.external_zero_check(paren));
 
@@ -4523,7 +4523,7 @@ impl IrGen {
                             return SkyeValue::special(*inner_type.clone());
                         }
 
-                        let arg = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                        let arg = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                         match arg.ir_value.type_ {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -4561,7 +4561,7 @@ impl IrGen {
                             return SkyeValue::special(*inner_type.clone());
                         }
 
-                        let arg = ctx.run(|ctx| self.evaluate(&arguments[0], index, allow_unknown, ctx)).await;
+                        let arg = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                         match arg.ir_value.type_ {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -4655,12 +4655,12 @@ impl IrGen {
                         for (i, generic) in generics.iter().enumerate() {
                             let evaluated = {
                                 if i >= offs && i - offs < arguments.len() {
-                                    ctx.run(|ctx| self.evaluate(&arguments[i - offs], index, allow_unknown, ctx)).await.ir_value.type_
+                                    ctx.run(|ctx| self.evaluate(&arguments[i - offs], allow_unknown, ctx)).await.ir_value.type_
                                 } else {
                                     let previous = Rc::clone(&self.environment);
                                     self.environment = Rc::clone(&tmp_env);
 
-                                    let ret = ctx.run(|ctx| self.evaluate(generic.default.as_ref().unwrap(), index, allow_unknown, ctx)).await;
+                                    let ret = ctx.run(|ctx| self.evaluate(generic.default.as_ref().unwrap(), allow_unknown, ctx)).await;
 
                                     self.environment = previous;
 
@@ -4696,7 +4696,7 @@ impl IrGen {
                                 let previous = Rc::clone(&self.environment);
                                 self.environment = Rc::clone(&tmp_env);
 
-                                let evaluated_bound = ctx.run(|ctx| self.evaluate(&bounds, index, false, ctx)).await;
+                                let evaluated_bound = ctx.run(|ctx| self.evaluate(&bounds, false, ctx)).await;
 
                                 self.environment = previous;
 
@@ -4805,7 +4805,7 @@ impl IrGen {
                         self.curr_name = curr_name;
 
                         let type_ = {
-                            match ctx.run(|ctx| self.execute(&definition, 0, ctx)).await {
+                            match ctx.run(|ctx| self.execute(&definition, ctx)).await {
                                 Ok(item) => item.unwrap_or_else(|| {
                                     ast_error!(self, expr, "Could not process template generation for this expression");
                                     SkyeType::get_unknown()
@@ -4861,7 +4861,7 @@ impl IrGen {
                                 };
 
                                 if let Some(value) = self.get_method(&new_subscripted, &search_tok, true) {
-                                    let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
+                                    let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, allow_unknown, ctx)).await;
 
                                     if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
                                         let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", ctx)).await;
@@ -4898,7 +4898,7 @@ impl IrGen {
                                     };
 
                                     if let Some(value) = self.get_method(&new_subscripted, &search_tok, true) {
-                                        let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, index, allow_unknown, ctx)).await;
+                                        let call_value = ctx.run(|ctx| self.call(&value, expr, &subscripted_expr, &arguments, allow_unknown, ctx)).await;
 
                                         if let SkyeType::Pointer(ref inner_type, is_const, _) = call_value.ir_value.type_ {
                                             let call_value_value = ctx.run(|ctx| self.zero_check(&call_value, paren, "Null pointer dereference", ctx)).await;
@@ -4954,7 +4954,7 @@ impl IrGen {
                 }
             }
             Expression::Get(object_expr, name) => {
-                let object = ctx.run(|ctx| self.evaluate(&object_expr, index, allow_unknown, ctx)).await;
+                let object = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
 
                 match object.ir_value.type_.get(&object.ir_value, name, object.is_const, self.external_zero_check(name)) {
                     GetResult::Ok(value, is_const) => {
@@ -4981,7 +4981,7 @@ impl IrGen {
                 SkyeValue::get_unknown()
             }
             Expression::StaticGet(object_expr, name, gets_macro) => {
-                let object = ctx.run(|ctx| self.evaluate(&object_expr, index, allow_unknown, ctx)).await;
+                let object = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
 
                 if let Some(full_name) = object.ir_value.type_.static_get(name) {
                     let mut search_tok = name.clone();
@@ -5001,7 +5001,7 @@ impl IrGen {
                                 expr: Box::new(Expression::Variable(search_tok)), 
                                 is_prefix: true 
                             };
-                            return ctx.run(|ctx| self.evaluate(&output_expr, index, allow_unknown, ctx)).await;
+                            return ctx.run(|ctx| self.evaluate(&output_expr, allow_unknown, ctx)).await;
                         } else {
                             return SkyeValue::new(
                                 IrValue::new(
@@ -5043,19 +5043,19 @@ impl IrGen {
         }
     }
 
-    async fn handle_deferred(&mut self, index: usize, ctx: &mut reblessive::Stk) {
+    async fn handle_deferred(&mut self, ctx: &mut reblessive::Stk) {
         let deferred = self.deferred.borrow();
         if let Some(statements) = deferred.last() {
             let cloned = statements.clone();
             drop(deferred);
 
             for statement in cloned.iter().rev() {
-                let _ = ctx.run(|ctx| self.execute(&statement, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.execute(&statement, ctx)).await;
             }
         }
     }
 
-    async fn handle_destructors<T: Ast>(&mut self, index: usize, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
+    async fn handle_destructors<T: Ast>(&mut self, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
         if !global {
             let vars = self.environment.borrow().iter_local();
 
@@ -5075,7 +5075,7 @@ impl IrGen {
                         let fake_expr = Expression::Variable(search_tok);
                         let v = Vec::new();
 
-                        let call = ctx.run(|ctx| self.call(&value, &fake_expr, &fake_expr, &v, index, false, ctx)).await;
+                        let call = ctx.run(|ctx| self.call(&value, &fake_expr, &fake_expr, &v, false, ctx)).await;
 
                         ast_info!(ast_item, format!("Skye inserted a destructor call for \"{}\" {}", name, msg).as_ref()); // +I-destructors
 
@@ -5094,19 +5094,19 @@ impl IrGen {
         Ok(None)
     }
 
-    async fn handle_all_deferred<T: Ast>(&mut self, index: usize, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) {
+    async fn handle_all_deferred<T: Ast>(&mut self, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) {
         let deferred = self.deferred.borrow().clone();
 
         for statements in deferred.iter().rev() {
             for statement in statements.iter().rev() {
-                let _ = ctx.run(|ctx| self.execute(&statement, index, ctx)).await;
+                let _ = ctx.run(|ctx| self.execute(&statement, ctx)).await;
             }
         }
 
-        let _ = ctx.run(|ctx| self.handle_destructors(index, global, ast_item, msg, ctx)).await;
+        let _ = ctx.run(|ctx| self.handle_destructors(global, ast_item, msg, ctx)).await;
     }
 
-    async fn execute_block(&mut self, statements: &Vec<Statement>, environment: Rc<RefCell<Environment>>, index: usize, global: bool, ctx: &mut reblessive::Stk) {
+    async fn execute_block(&mut self, statements: &Vec<Statement>, environment: Rc<RefCell<Environment>>, global: bool, ctx: &mut reblessive::Stk) {
         let previous = Rc::clone(&self.environment);
         self.environment = environment;
 
@@ -5114,11 +5114,11 @@ impl IrGen {
 
         let mut destructors_called = false;
         for (i, statement) in statements.iter().enumerate() {
-            if let Err(interrupt) = ctx.run(|ctx| self.execute(statement, index, ctx)).await {
+            if let Err(interrupt) = ctx.run(|ctx| self.execute(statement, ctx)).await {
                 match interrupt {
                     ExecutionInterrupt::Interrupt(output) => {
-                        ctx.run(|ctx| self.handle_deferred(index, ctx)).await;
-                        let _ = ctx.run(|ctx| self.handle_destructors(index, global, statement, "before this statement", ctx)).await;
+                        ctx.run(|ctx| self.handle_deferred(ctx)).await;
+                        let _ = ctx.run(|ctx| self.handle_destructors(global, statement, "before this statement", ctx)).await;
                         destructors_called = true;
 
                         self.add_statement(output);
@@ -5129,7 +5129,7 @@ impl IrGen {
                         }
                     }
                     ExecutionInterrupt::Return(output) => {
-                        ctx.run(|ctx| self.handle_all_deferred(index, global, statement, "before this statement", ctx)).await;
+                        ctx.run(|ctx| self.handle_all_deferred(global, statement, "before this statement", ctx)).await;
                         destructors_called = true;
 
                         self.add_statement(output);
@@ -5144,8 +5144,8 @@ impl IrGen {
         }
 
         if statements.len() != 0 && !destructors_called {
-            ctx.run(|ctx| self.handle_deferred(index, ctx)).await;
-            let _ = ctx.run(|ctx| self.handle_destructors(index, global, statements.last().unwrap(), "after this statement", ctx)).await;
+            ctx.run(|ctx| self.handle_deferred(ctx)).await;
+            let _ = ctx.run(|ctx| self.handle_destructors(global, statements.last().unwrap(), "after this statement", ctx)).await;
         }
 
         self.deferred.borrow_mut().pop();
@@ -5160,21 +5160,21 @@ impl IrGen {
                 Rc::new(RefCell::new(Environment::with_enclosing(
                     Rc::clone(&self.environment)
                 ))),
-                0, false, ctx
+                false, ctx
             )).await;
         } else {
-            let _ = ctx.run(|ctx| self.execute(stmt, 0, ctx)).await;
+            let _ = ctx.run(|ctx| self.execute(stmt, ctx)).await;
         }
     }
 
-    pub async fn execute(&mut self, stmt: &Statement, index: usize, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
+    pub async fn execute(&mut self, stmt: &Statement, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
         match stmt {
             Statement::Empty => (),
             Statement::ImportedBlock { statements, source } => {
                 let old_errors = self.errors;
 
                 for statement in statements {
-                    ctx.run(|ctx| self.execute(&statement, index, ctx)).await?;
+                    ctx.run(|ctx| self.execute(&statement, ctx)).await?;
                 }
 
                 if self.errors != old_errors {
@@ -5187,7 +5187,7 @@ impl IrGen {
                     ast_note!(expr, "Place this expression inside a function");
                 }
 
-                let value = ctx.run(|ctx| self.evaluate(&expr, index, false, ctx)).await;
+                let value = ctx.run(|ctx| self.evaluate(&expr, false, ctx)).await;
 
                 if !value.ir_value.type_.can_be_instantiated(true) {
                     ast_error!(self, expr, "Cannot use compile-time type as a standalone expression");
@@ -5217,7 +5217,7 @@ impl IrGen {
             Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, qualifiers } => {
                 let value = {
                     if let Some(init) = initializer {
-                        Some(ctx.run(|ctx| self.evaluate(init, index, false, ctx)).await)
+                        Some(ctx.run(|ctx| self.evaluate(init, false, ctx)).await)
                     } else {
                         None
                     }
@@ -5225,7 +5225,7 @@ impl IrGen {
 
                 let type_spec = {
                     if let Some(type_) = type_spec_expr {
-                        let type_spec_evaluated = ctx.run(|ctx| self.evaluate(type_, index, false, ctx)).await;
+                        let type_spec_evaluated = ctx.run(|ctx| self.evaluate(type_, false, ctx)).await;
 
                         match type_spec_evaluated.ir_value.type_ {
                             SkyeType::Type(inner_type) => {
@@ -5385,7 +5385,7 @@ impl IrGen {
                             Rc::clone(&self.environment)
                         )
                     )),
-                    index, false, ctx
+                    false, ctx
                 )).await;
 
                 self.curr_definition = previous_definition;
@@ -5431,7 +5431,7 @@ impl IrGen {
 
                 drop(env);
 
-                let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, index, false, ctx)).await;
+                let return_type = ctx.run(|ctx| self.get_return_type(return_type_expr, false, ctx)).await;
 
                 if has_decl {
                     if let SkyeType::Function(_, existing_return_type, _) = &existing.as_ref().unwrap().type_ {
@@ -5448,7 +5448,7 @@ impl IrGen {
                 }
 
                 let return_stringified = return_type.stringify();
-                let (params_evaluated, params_types) = ctx.run(|ctx| self.get_params(params, existing, has_decl, index, false, ctx)).await;
+                let (params_evaluated, params_types) = ctx.run(|ctx| self.get_params(params, existing, has_decl, false, ctx)).await;
                 let type_ = SkyeType::Function(params_types.clone(), Box::new(return_type.clone()), body.is_some());
 
                 let has_body = body.is_some();
@@ -5597,7 +5597,7 @@ impl IrGen {
                 ctx.run(|ctx| self.execute_block(
                     body.as_ref().unwrap(),
                     Rc::new(RefCell::new(fn_environment.unwrap())),
-                    0, false, ctx
+                    false, ctx
                 )).await;
 
                 self.curr_definition = previous_definition;
@@ -5612,7 +5612,7 @@ impl IrGen {
                     token_note!(kw, "Place this if statement inside a function");
                 }
 
-                let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
+                let cond = ctx.run(|ctx| self.evaluate(cond_expr, false, ctx)).await;
 
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -5644,11 +5644,11 @@ impl IrGen {
                 let previous_definition = self.curr_definition.clone();
 
                 self.curr_definition = Some(Rc::new(RefCell::new(then_scope)));
-                let _ = ctx.run(|ctx| self.execute(&then_branch, 0, ctx)).await;
+                let _ = ctx.run(|ctx| self.execute(&then_branch, ctx)).await;
 
                 if let Some(else_branch_statement) = else_branch {
                     self.curr_definition = Some(Rc::new(RefCell::new(*else_scope.unwrap())));
-                    let _ = ctx.run(|ctx| self.execute(&else_branch_statement, index, ctx)).await;
+                    let _ = ctx.run(|ctx| self.execute(&else_branch_statement, ctx)).await;
                 }
 
                 self.curr_definition = previous_definition;
@@ -5669,7 +5669,7 @@ impl IrGen {
                 let previous_definition = self.curr_definition.clone();
                 self.curr_definition = Some(Rc::new(RefCell::new(body_scope.clone())));
 
-                let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
+                let cond = ctx.run(|ctx| self.evaluate(cond_expr, false, ctx)).await;
 
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -5753,7 +5753,7 @@ impl IrGen {
                 self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
 
                 if let Some(init) = initializer {
-                    let _ = ctx.run(|ctx| self.execute(&init, index, ctx)).await;
+                    let _ = ctx.run(|ctx| self.execute(&init, ctx)).await;
                 }
 
                 let body_scope = IrStatement::empty_scope(kw.get_pos());
@@ -5765,7 +5765,7 @@ impl IrGen {
 
                 self.curr_definition = Some(Rc::new(RefCell::new(body_scope.clone())));
 
-                let cond = ctx.run(|ctx| self.evaluate(cond_expr, index, false, ctx)).await;
+                let cond = ctx.run(|ctx| self.evaluate(cond_expr, false, ctx)).await;
 
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -5827,7 +5827,7 @@ impl IrGen {
                 
                 for increment in increments {
                     let stmt = Statement::Expression(increment.clone());
-                    let _ = ctx.run(|ctx| self.execute(&stmt, index, ctx)).await;
+                    let _ = ctx.run(|ctx| self.execute(&stmt, ctx)).await;
                 }
 
                 self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
@@ -5874,7 +5874,7 @@ impl IrGen {
 
                 self.curr_loop = previous_loop;
 
-                let cond = ctx.run(|ctx| self.evaluate(&cond_expr, index, false, ctx)).await;
+                let cond = ctx.run(|ctx| self.evaluate(&cond_expr, false, ctx)).await;
 
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
@@ -5934,7 +5934,7 @@ impl IrGen {
                 }
 
                 if let Some(expr) = ret_expr {
-                    let value = ctx.run(|ctx| self.evaluate(expr, index, false, ctx)).await;
+                    let value = ctx.run(|ctx| self.evaluate(expr, false, ctx)).await;
 
                     let is_void;
                     if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
@@ -5977,7 +5977,7 @@ impl IrGen {
                             let search_tok = Token::dummy(Rc::from("__copy__"));
                             if let Some(method_value) = self.get_method(&value, &search_tok, true) {
                                 let v = Vec::new();
-                                let copy_constructor = ctx.run(|ctx| self.call(&method_value, expr, &expr, &v, index, false, ctx)).await;
+                                let copy_constructor = ctx.run(|ctx| self.call(&method_value, expr, &expr, &v, false, ctx)).await;
 
                                 ast_info!(expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
                                 copy_constructor
@@ -6102,7 +6102,7 @@ impl IrGen {
                         let mut output_fields = HashMap::new();
                         for field in fields {
                             let field_type = {
-                                let tmp = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.ir_value.type_;
+                                let tmp = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await.ir_value.type_;
 
                                 match tmp {
                                     SkyeType::Type(inner_type) => {
@@ -6187,7 +6187,7 @@ impl IrGen {
                 return Ok(Some(output_type));
             }
             Statement::Impl { object: struct_expr, declarations: statements } => {
-                let struct_name = ctx.run(|ctx| self.evaluate(&struct_expr, index, false, ctx)).await;
+                let struct_name = ctx.run(|ctx| self.evaluate(&struct_expr, false, ctx)).await;
 
                 match &struct_name.ir_value.type_ {
                     SkyeType::Type(inner_type) => {
@@ -6208,7 +6208,7 @@ impl IrGen {
                                 self.curr_name = base_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
-                                    statements, Rc::clone(&self.globals), index, true, ctx
+                                    statements, Rc::clone(&self.globals), true, ctx
                                 )).await;
 
                                 self.curr_name = previous_name;
@@ -6245,7 +6245,7 @@ impl IrGen {
                                 self.curr_name = template_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
-                                    statements, Rc::clone(&self.globals), index, true, ctx
+                                    statements, Rc::clone(&self.globals), true, ctx
                                 )).await;
 
                                 self.curr_name = previous_name;
@@ -6313,14 +6313,14 @@ impl IrGen {
                     self.curr_name = full_name.to_string();
 
                     ctx.run(|ctx| self.execute_block(
-                        body, Rc::clone(&self.globals), index, true, ctx
+                        body, Rc::clone(&self.globals), true, ctx
                     )).await;
 
                     self.curr_name = previous_name;
                 }
             }
             Statement::Use { use_expr, as_name: identifier, typedef, bind } => {
-                let use_value = ctx.run(|ctx| self.evaluate(&use_expr, index, false, ctx)).await;
+                let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
                     // TODO: check if this works properly.
@@ -6381,7 +6381,7 @@ impl IrGen {
                 let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
                 let type_ = {
-                    let enum_type = ctx.run(|ctx| self.evaluate(type_expr, index, false, ctx)).await.ir_value.type_;
+                    let enum_type = ctx.run(|ctx| self.evaluate(type_expr, false, ctx)).await.ir_value.type_;
 
                     if let SkyeType::Type(inner_type) = &enum_type {
                         match **inner_type {
@@ -6479,7 +6479,7 @@ impl IrGen {
                                     let mut value = None;
                                     if let Some(default) = &variant.default {
                                         if matches!(default, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. }) {
-                                            value = Some(ctx.run(|ctx| self.evaluate(default, index, false, ctx)).await.ir_value);
+                                            value = Some(ctx.run(|ctx| self.evaluate(default, false, ctx)).await.ir_value);
                                         } else {
                                             ast_error!(self, default, "Enum value must be a literal");
                                             ast_note!(default, "The value must be known at compile time");
@@ -6518,7 +6518,7 @@ impl IrGen {
                         let mut evaluated_variants = Vec::with_capacity(variants.len());
                         for variant in variants {
                             let variant_type = {
-                                let type_ = ctx.run(|ctx| self.evaluate(&variant.type_, index, false, ctx)).await.ir_value.type_;
+                                let type_ = ctx.run(|ctx| self.evaluate(&variant.type_, false, ctx)).await.ir_value.type_;
                                 match type_ {
                                     SkyeType::Void | SkyeType::Unknown(_) => type_,
                                     SkyeType::Type(inner_type) => {
@@ -6838,7 +6838,7 @@ impl IrGen {
                     token_note!(kw, "Remove this switch statement");
                 }
 
-                let switch = ctx.run(|ctx| self.evaluate(&switch_expr, index, false, ctx)).await;
+                let switch = ctx.run(|ctx| self.evaluate(&switch_expr, false, ctx)).await;
                 let mut is_classic = true;
 
                 match &switch.ir_value.type_ {
@@ -6886,7 +6886,7 @@ impl IrGen {
 
                     if let Some(real_cases) = &case.cases {
                         for real_case in real_cases {
-                            let real_case_evaluated = ctx.run(|ctx| self.evaluate(&real_case, index, false, ctx)).await;
+                            let real_case_evaluated = ctx.run(|ctx| self.evaluate(&real_case, false, ctx)).await;
 
                             if is_classic {
                                 match &real_case_evaluated.ir_value.type_ {
@@ -6940,7 +6940,7 @@ impl IrGen {
                                         Rc::clone(&self.environment)
                                     )
                                 )),
-                                index, false, ctx
+                                false, ctx
                             )).await;
                             continue;
                         }
@@ -6974,7 +6974,7 @@ impl IrGen {
                                 Rc::clone(&self.environment)
                             )
                         )),
-                        index, false, ctx
+                        false, ctx
                     )).await;
 
                     
@@ -7133,7 +7133,7 @@ impl IrGen {
                         let mut output_fields = HashMap::new();
                         for field in fields {
                             let field_type = {
-                                let inner_field_type = ctx.run(|ctx| self.evaluate(&field.expr, index, false, ctx)).await.ir_value.type_;
+                                let inner_field_type = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await.ir_value.type_;
 
                                 if let SkyeType::Type(inner_type) = inner_field_type {
                                     if inner_type.check_completeness() {
@@ -7252,7 +7252,7 @@ impl IrGen {
                 let previous_definition = self.curr_definition.clone();
                 self.curr_definition = Some(Rc::new(RefCell::new(toplevel_scope.clone())));
 
-                let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, index, false, ctx)).await;
+                let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, false, ctx)).await;
 
                 let tmp_iter_var_name = self.get_temporary_var();
 
@@ -7294,7 +7294,7 @@ impl IrGen {
 
                         if let Some(method) = self.get_method(&iterator, &search_tok, false) {
                             let v = Vec::new();
-                            let iterator_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, index, false, ctx)).await;
+                            let iterator_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, false, ctx)).await;
 
                             let iterator_type_stringified = iterator_call.ir_value.type_.stringify();
                             if iterator_type_stringified.len() == 0 || !matches!(iterator.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
@@ -7352,7 +7352,7 @@ impl IrGen {
                 self.curr_definition = Some(Rc::new(RefCell::new(body_scope)));
 
                 let v = Vec::new();
-                let next_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, index, false, ctx)).await;
+                let next_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, false, ctx)).await;
 
                 let item_type = {
                     if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
@@ -7493,7 +7493,7 @@ impl IrGen {
                         let mut evaluated_types = Vec::new();
 
                         for bound_type in bound_types {
-                            let evaluated = ctx.run(|ctx| self.evaluate(&bound_type, index, false, ctx)).await;
+                            let evaluated = ctx.run(|ctx| self.evaluate(&bound_type, false, ctx)).await;
                             if matches!(evaluated.ir_value.type_, SkyeType::Void) || !evaluated.ir_value.type_.can_be_instantiated(true) {
                                 ast_error!(self, bound_type, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
                             }
@@ -7613,7 +7613,7 @@ impl IrGen {
                             bind_typedefed: false 
                         };
 
-                        let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
+                        let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
 
                         let old_errors = self.errors;
 
@@ -7630,7 +7630,7 @@ impl IrGen {
                             );
                         }
 
-                        let _ = ctx.run(|ctx| self.execute(&impl_def, index, ctx)).await;
+                        let _ = ctx.run(|ctx| self.execute(&impl_def, ctx)).await;
                     } else {
                         let mut functions = Vec::new();
 
@@ -7670,12 +7670,12 @@ impl IrGen {
                             bind_typedefed: false
                         };
 
-                        let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
+                        let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
 
                         custom_tok.set_lexeme(&full_name);
                         let impl_def = Statement::Impl { object: Expression::Variable(custom_tok), declarations: functions };
 
-                        let _ = ctx.run(|ctx| self.execute(&impl_def, index, ctx)).await;
+                        let _ = ctx.run(|ctx| self.execute(&impl_def, ctx)).await;
                     }
                 } else {
                     assert!(types.is_none()); // ensured by parser
@@ -7694,7 +7694,7 @@ impl IrGen {
                         bind_typedefed: false 
                     };
 
-                    let _ = ctx.run(|ctx| self.execute(&enum_def, index, ctx)).await;
+                    let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
                 }
             }
         }
@@ -7706,7 +7706,7 @@ impl IrGen {
         let mut stack = reblessive::Stack::new();
 
         for statement in statements {
-            let _ = stack.enter(|ctx| self.execute(&statement, 0, ctx)).finish();
+            let _ = stack.enter(|ctx| self.execute(&statement, ctx)).finish();
         }
     }
 
