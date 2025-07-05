@@ -435,7 +435,7 @@ impl Parser {
 
     fn prefix_unary(&mut self) -> Option<Expression> {
         if self.match_(&[
-            TokenType::PlusPlus, TokenType::MinusMinus, TokenType::Plus,
+            TokenType::PlusPlus, TokenType::MinusMinus,
             TokenType::Minus, TokenType::Tilde, TokenType::Star,
             TokenType::Bang, TokenType::BitwiseAnd
         ]) {

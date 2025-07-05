@@ -57,7 +57,6 @@ impl<'a> Scanner<'a> {
         keywords.insert(       "_GENAND_", TokenType::Reserved);
         keywords.insert(       "_GENEND_", TokenType::Reserved);
         keywords.insert(       "_PTREND_", TokenType::Reserved);
-        keywords.insert(      "_UNKNOWN_", TokenType::Reserved);
         keywords.insert(     "SKYE_ENUM_", TokenType::Reserved);
         keywords.insert(    "_PARAM_AND_", TokenType::Reserved);
         keywords.insert(    "_PARAM_END_", TokenType::Reserved);

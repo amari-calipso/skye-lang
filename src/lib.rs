@@ -2,7 +2,7 @@ use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, 
 
 use ast::{ImportType, Statement};
 use clap::ValueEnum;
-use codegen::CodeGen;
+use irgen::IrGen;
 use constant_folder::ConstantFolder;
 use import_processor::ImportProcessor;
 use macro_expander::MacroExpander;
@@ -11,13 +11,17 @@ use scanner::Scanner;
 use tokens::{Token, TokenType};
 use zip::{write::SimpleFileOptions, ZipWriter};
 
+use crate::codegen::CodeGen;
+
 mod utils;
 mod tokens;
 mod scanner;
 mod ast;
+mod ir;
 mod parser;
 mod skye_type;
 mod environment;
+mod irgen;
 mod codegen;
 mod import_processor;
 mod macro_expander;
@@ -143,9 +147,15 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
         return None;
     }
 
-    let mut codegen = CodeGen::new(path, compiler_flags.compile_mode, skye_path);
-    codegen.compile(statements);
-    codegen.get_output()
+    let mut irgen = IrGen::new(path, compiler_flags.compile_mode, skye_path);
+    irgen.compile(statements);
+
+    if irgen.errors != 0 {
+        return None;
+    }
+
+    let mut codegen = CodeGen::new();
+    codegen.generate(IrGen::get_definitions(irgen.definitions))
 }
 
 pub fn parse_file(path: &OsStr) -> Result<Vec<Statement>, Error> {

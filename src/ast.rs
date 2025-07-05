@@ -21,6 +21,10 @@ impl AstPos {
     pub fn new(source: Rc<str>, filename: Rc<str>, start: usize, end: usize, line: usize) -> Self {
         AstPos { source, filename, start, end, line }
     }
+
+    pub fn empty() -> Self {
+        AstPos { source: Rc::from(""), filename: Rc::from(""), start: 0, end: 1, line: 0 }
+    }
 }
 
 pub trait Ast {

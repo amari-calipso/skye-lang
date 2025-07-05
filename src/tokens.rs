@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use crate::ast::AstPos;
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Hash, Eq)]
 pub enum TokenType {
     LeftParen, RightParen,
@@ -68,11 +70,27 @@ impl Token {
         Token { source: Rc::from(""), filename: Rc::from(""), type_: TokenType::Identifier, lexeme, pos: 0, end: 1, line: 0 }
     }
 
+    pub fn empty() -> Self {
+        Token::dummy(Rc::from(""))
+    }
+
+    pub fn from_type(type_: TokenType) -> Self {
+        Token { source: Rc::from(""), filename: Rc::from(""), type_, lexeme: Rc::from(""), pos: 0, end: 1, line: 0 }
+    }
+
     pub fn set_type(&mut self, type_: TokenType) {
         self.type_ = type_;
     }
 
     pub fn set_lexeme(&mut self, lexeme: &str) {
         self.lexeme = Rc::from(lexeme);
+    }
+
+    pub fn get_pos(&self) -> AstPos {
+        AstPos::new(
+            Rc::clone(&self.source), 
+            Rc::clone(&self.filename), 
+            self.pos, self.end, self.line
+        )
     }
 }

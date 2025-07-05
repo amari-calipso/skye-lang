@@ -643,7 +643,6 @@ This approach to type dispatching has been experimented with in Rust, and has sh
 | Suffix increment | `x++` | Increments `x` after it's used [*1](#additional-information) |
 | Prefix decrement | `--x` | Decrements `x` before it's used [*1](#additional-information) |
 | Suffix decrement | `x--` | Decrements `x` after it's used [*1](#additional-information) |
-| Unary plus | `+x` | Same behavior as C |
 | Negation | `-x` | ... |
 | Boolean not | `!x` | Can also define a `Result` type with `Ok = void` |
 | Bitwise not | `~x` | ... |

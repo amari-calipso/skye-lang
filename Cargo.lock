@@ -615,7 +615,7 @@ checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
 
 [[package]]
 name = "skye"
-version = "2025.6.23"
+version = "2025.7.5"
 dependencies = [
  "clap",
  "colored",
@@ -623,6 +623,7 @@ dependencies = [
  "reblessive",
  "scopeguard",
  "serde_json",
+ "topo_sort",
  "zip",
 ]
 
@@ -687,6 +688,12 @@ name = "time-core"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9e9a38711f559d9e3ce1cdb06dd7c5b8ea546bc90052da6d06bb76da74bb07c"
+
+[[package]]
+name = "topo_sort"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "156552d3c80df430aaac98c605a4e0eb7da8d06029cce2d40b4a6b095a34b37e"
 
 [[package]]
 name = "typenum"
