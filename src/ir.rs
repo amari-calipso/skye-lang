@@ -190,18 +190,15 @@ impl IrValue {
             // expressions that might contain multiple things that have side effects
             IrValueData::Ternary { condition, then_branch, else_branch  } => {
                 let condition = condition.keep_side_effects();
-                let mut side_effects: Vec<IrValue> = [
-                    condition.clone(), 
-                    then_branch.keep_side_effects(), 
-                    else_branch.keep_side_effects()
-                ].into_iter().filter(|x| !x.is_empty()).collect();
+                let then_branch = then_branch.keep_side_effects();
+                let else_branch = else_branch.keep_side_effects();
 
-                if side_effects.len() == 0 {
-                    condition
-                } else if side_effects.len() == 1 {
-                    side_effects.pop().unwrap()
-                } else {
+                if !then_branch.is_empty() || !else_branch.is_empty() {
+                    // if either of the branches have side effects, then we must keep the entire expression
                     self.clone()
+                } else {
+                    // if neither do, then we need to keep only the condition (which might be empty due to the check above)
+                    condition
                 }
             }
             IrValueData::CompoundLiteral { items } => {
