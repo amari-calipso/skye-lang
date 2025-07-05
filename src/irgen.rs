@@ -297,6 +297,25 @@ impl IrGen {
         res.into()
     }
 
+    fn make_temporary_var(&mut self, value: IrValue, pos: AstPos) -> Rc<str> {
+        if let IrValueData::Variable { name } = value.data {
+            name
+        } else {
+            let tmp_var = self.get_temporary_var();
+
+            self.add_statement(IrStatement {
+                pos,
+                data: IrStatementData::VarDecl { 
+                    name: Rc::clone(&tmp_var), 
+                    type_: value.type_.clone(), 
+                    initializer: Some(value)
+                }
+            });
+
+            tmp_var
+        }
+    }
+
     fn get_method(&mut self, object: &SkyeValue, name: &Token, strict: bool) -> Option<SkyeValue> {
         if let Some(full_name) = object.ir_value.type_.get_method(name, strict) {
             let search_tok = Token::dummy(Rc::clone(&full_name));
@@ -703,16 +722,7 @@ impl IrGen {
                                         if let SkyeType::Type(inner_option_type) = option_type.ir_value.type_ {
                                             let mangled_option_type = inner_option_type.mangle();
 
-                                            let tmp_var = self.get_temporary_var();
-
-                                            self.add_statement(IrStatement {
-                                                pos: callee_expr.get_pos(),
-                                                data: IrStatementData::VarDecl { 
-                                                    name: Rc::clone(&tmp_var), 
-                                                    type_: to_cast.ir_value.type_.clone(), 
-                                                    initializer: Some(to_cast.ir_value.clone())
-                                                }
-                                            });
+                                            let tmp_var = self.make_temporary_var(to_cast.ir_value.clone(), callee_expr.get_pos());
 
                                             // tmp.kind == kind_we_are_trying_to_cast_to ? Some(tmp.Variant) : None
                                             return Some(SkyeValue::new(
@@ -1641,20 +1651,14 @@ impl IrGen {
     ) -> SkyeValue {
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
-                let tmp_var = self.get_temporary_var();
-
                 let type_ = inner.ir_value.type_.clone();
-                self.add_statement(IrStatement { 
-                    pos: expr.get_pos(),
-                    data: IrStatementData::VarDecl { 
-                        name: Rc::clone(&tmp_var), 
-                        type_: type_.clone(), 
-                        initializer: Some(IrValue::new(
-                            apply_op(inner.ir_value),
-                            type_.clone()
-                        ))
-                    }
-                });
+                let tmp_var = self.make_temporary_var(
+                    IrValue::new(
+                        apply_op(inner.ir_value),
+                        type_.clone()
+                    ), 
+                    expr.get_pos()
+                );
 
                 SkyeValue::new(
                     IrValue::new(
@@ -1702,16 +1706,7 @@ impl IrGen {
         op_type: Operator, apply_op: impl FnOnce(IrValue) -> IrValueData, 
         op: &Token, allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let tmp_var = self.get_temporary_var();
-
-        self.add_statement(IrStatement { 
-            pos: expr.get_pos(),
-            data: IrStatementData::VarDecl { 
-                name: Rc::clone(&tmp_var), 
-                type_: inner.ir_value.type_.clone(), 
-                initializer: Some(inner.ir_value.clone())
-            }
-        });
+        let tmp_var = self.make_temporary_var(inner.ir_value.clone(), expr.get_pos());
 
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
@@ -2003,17 +1998,8 @@ impl IrGen {
 
     async fn zero_check(&mut self, value: &SkyeValue, tok: &Token, msg: &str, ctx: &mut reblessive::Stk) -> IrValue {
         if matches!(self.compile_mode, CompileMode::Debug) {
-            let tmp_var = self.get_temporary_var();
             let type_ = value.ir_value.type_.clone();
-
-            self.add_statement(IrStatement { 
-                pos: tok.get_pos(),
-                data: IrStatementData::VarDecl { 
-                    name: Rc::clone(&tmp_var), 
-                    type_: type_.clone(), 
-                    initializer: Some(value.ir_value.clone())
-                }
-            });
+            let tmp_var = self.make_temporary_var(value.ir_value.clone(), tok.get_pos());
 
             let scope = IrStatement::empty_scope(tok.get_pos());
 
@@ -2138,18 +2124,9 @@ impl IrGen {
                         }
                     };
 
-                    let tmp_var = self.get_temporary_var();
-                    let left_expr_pos = left_expr.get_pos();
-
                     let left_type = left.ir_value.type_.clone();
-                    self.add_statement(IrStatement { 
-                        pos: expr.get_pos(),
-                        data: IrStatementData::VarDecl { 
-                            name: Rc::clone(&tmp_var), 
-                            type_: left_type.clone(), 
-                            initializer: Some(left.ir_value) 
-                        }
-                    });
+                    let tmp_var = self.make_temporary_var(left.ir_value, expr.get_pos());
+                    let left_expr_pos = left_expr.get_pos();
 
                     let tmp_var_tok = Token::new(
                         left_expr_pos.source, left_expr_pos.filename, 
@@ -2390,16 +2367,13 @@ impl IrGen {
                     return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
                 } 
 
-                let value = self.get_temporary_var();
-
-                self.add_statement(IrStatement {
-                    pos: item_expr.get_pos(),
-                    data: IrStatementData::VarDecl { 
-                        name: Rc::clone(&value), 
-                        type_: type_.clone(), 
-                        initializer: Some(item.ir_value.clone()) 
-                    }
-                });
+                let value = self.make_temporary_var(
+                    IrValue::new(
+                        item.ir_value.data.clone(),
+                        type_.clone()
+                    ), 
+                    item_expr.get_pos()
+                );
 
                 let mut items = Vec::new();
                 for _ in 0 .. size {
@@ -2646,16 +2620,7 @@ impl IrGen {
                                                 if inner_expr.is_valid_assignment_target() {
                                                     new_inner.ir_value.clone()
                                                 } else {
-                                                    let tmp_var = self.get_temporary_var();
-
-                                                    self.add_statement(IrStatement { 
-                                                        pos: expr.get_pos(),
-                                                        data: IrStatementData::VarDecl { 
-                                                            name: Rc::clone(&tmp_var), 
-                                                            type_: new_inner.ir_value.type_.clone(), 
-                                                            initializer: Some(new_inner.ir_value.clone()) 
-                                                        }
-                                                    });
+                                                    let tmp_var = self.make_temporary_var(new_inner.ir_value.clone(), expr.get_pos());
 
                                                     IrValue::new(
                                                         IrValueData::Variable { name: tmp_var },
@@ -2704,16 +2669,7 @@ impl IrGen {
                                                 if inner_expr.is_valid_assignment_target() {
                                                     new_inner.ir_value.clone()
                                                 } else {
-                                                    let tmp_var = self.get_temporary_var();
-
-                                                    self.add_statement(IrStatement { 
-                                                        pos: expr.get_pos(),
-                                                        data: IrStatementData::VarDecl { 
-                                                            name: Rc::clone(&tmp_var), 
-                                                            type_: new_inner.ir_value.type_.clone(), 
-                                                            initializer: Some(new_inner.ir_value.clone()) 
-                                                        }
-                                                    });
+                                                    let tmp_var = self.make_temporary_var(new_inner.ir_value.clone(), expr.get_pos());
 
                                                     IrValue::new(
                                                         IrValueData::Variable { name: tmp_var },
@@ -2924,16 +2880,7 @@ impl IrGen {
                                     }
                                 };
 
-                                let tmp_var_name = self.get_temporary_var();
-
-                                self.add_statement(IrStatement { 
-                                    pos: expr.get_pos(),
-                                    data: IrStatementData::VarDecl { 
-                                        name: Rc::clone(&tmp_var_name), 
-                                        type_: inner.ir_value.type_.clone(), 
-                                        initializer: Some(inner.ir_value.clone()) 
-                                    }
-                                });
+                                let tmp_var_name = self.make_temporary_var(inner.ir_value.clone(), expr.get_pos());
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -3362,7 +3309,6 @@ impl IrGen {
                             ImplementsHow::Native(compatible_types) => {
                                 // needed so short circuiting can work
                                 let result_tmp = self.get_temporary_var();
-                                let left_tmp = self.get_temporary_var();
 
                                 self.add_statement(IrStatement {
                                     pos: expr.get_pos(),
@@ -3373,14 +3319,13 @@ impl IrGen {
                                     } 
                                 });
 
-                                self.add_statement(IrStatement {
-                                    pos: expr.get_pos(),
-                                    data: IrStatementData::VarDecl { 
-                                        name: Rc::clone(&left_tmp), 
-                                        type_: result_type.clone(), 
-                                        initializer: Some(new_left.ir_value)
-                                    } 
-                                });
+                                let left_tmp = self.make_temporary_var(
+                                    IrValue::new(
+                                        new_left.ir_value.data,
+                                        result_type.clone()
+                                    ), 
+                                    expr.get_pos()
+                                );
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -3499,7 +3444,6 @@ impl IrGen {
                             ImplementsHow::Native(compatible_types) => {
                                 // needed so short circuiting can work
                                 let result_tmp = self.get_temporary_var();
-                                let left_tmp = self.get_temporary_var();
 
                                 self.add_statement(IrStatement {
                                     pos: expr.get_pos(),
@@ -3510,14 +3454,13 @@ impl IrGen {
                                     } 
                                 });
 
-                                self.add_statement(IrStatement {
-                                    pos: expr.get_pos(),
-                                    data: IrStatementData::VarDecl { 
-                                        name: Rc::clone(&left_tmp), 
-                                        type_: result_type.clone(), 
-                                        initializer: Some(new_left.ir_value)
-                                    } 
-                                });
+                                let left_tmp = self.make_temporary_var(
+                                    IrValue::new(
+                                        new_left.ir_value.data,
+                                        result_type.clone()
+                                    ), 
+                                    expr.get_pos()
+                                );
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -6003,19 +5946,10 @@ impl IrGen {
                             }
                         };
 
-                        // return value is saved in a temporary variable so deferred statements get executed after evaluation
-                        let tmp_var_name = self.get_temporary_var();
-
                         let type_ = final_value.ir_value.type_.clone();
 
-                        self.add_statement(IrStatement {
-                            pos: kw.get_pos(),
-                            data: IrStatementData::VarDecl { 
-                                name: Rc::clone(&tmp_var_name), 
-                                type_: type_.clone(), 
-                                initializer: Some(final_value.ir_value)
-                            }
-                        });
+                        // return value is saved in a temporary variable so deferred statements get executed after evaluation
+                        let tmp_var_name = self.make_temporary_var(final_value.ir_value, kw.get_pos());
 
                         return Err(ExecutionInterrupt::Return(IrStatement { 
                             pos: kw.get_pos(),
@@ -7289,8 +7223,6 @@ impl IrGen {
 
                 let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, false, ctx)).await;
 
-                let tmp_iter_var_name = self.get_temporary_var();
-
                 if !matches!(iterator_raw.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
                     ast_error!(
                         self, iterator_expr,
@@ -7303,15 +7235,8 @@ impl IrGen {
                     return Ok(None);
                 }
 
-                self.add_statement(IrStatement {
-                    pos: iterator_expr.get_pos(),
-                    data: IrStatementData::VarDecl { 
-                        name: Rc::clone(&tmp_iter_var_name), 
-                        type_: iterator_raw.ir_value.type_.clone(), 
-                        initializer: Some(iterator_raw.ir_value.clone()) 
-                    }
-                });
-
+                let tmp_iter_var_name = self.make_temporary_var(iterator_raw.ir_value.clone(), iterator_expr.get_pos());
+                
                 let iterator = SkyeValue::new(
                     IrValue::new(
                         IrValueData::Variable { name: Rc::clone(&tmp_iter_var_name) },
