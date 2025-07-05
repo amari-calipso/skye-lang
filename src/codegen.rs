@@ -1119,6 +1119,8 @@ impl CodeGen {
                     self.fndefs.last_mut().unwrap().push("break;\n");
                     self.fndefs.last_mut().unwrap().dec_indent();
                 }
+
+                self.end_scope();
             }
         }
     }
