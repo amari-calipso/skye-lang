@@ -1053,6 +1053,56 @@ impl SkyeType {
         }
     }
 
+    fn is_recursive_inner(&self, mut main_name: Option<Rc<str>>) -> bool {
+        match self {
+            SkyeType::Type(inner) => inner.is_recursive_inner(main_name),
+            SkyeType::Struct(name, fields, _) |
+            SkyeType::Union(name, fields) => {
+                if let Some(main_name) = &main_name {
+                    if name.as_ref() == main_name.as_ref() {
+                        return true;
+                    }
+                } else {
+                    main_name = Some(Rc::clone(&name));
+                }
+
+                if let Some(fields) = fields {
+                    for (_, field) in fields {
+                        if field.type_.is_recursive_inner(main_name.clone()) {
+                            return true;
+                        }
+                    }
+                }
+                
+                false
+            }
+            SkyeType::Enum(name, variants, _) => {
+                if let Some(main_name) = &main_name {
+                    if name.as_ref() == main_name.as_ref() {
+                        return true;
+                    }
+                } else {
+                    main_name = Some(Rc::clone(&name));
+                }
+
+                if let Some(variants) = variants {
+                    for (_, variant) in variants {
+                        if variant.is_recursive_inner(main_name.clone()) {
+                            return true;
+                        }
+                    }
+                }
+                
+                false
+            }
+            _ => false
+        }
+    }
+
+    pub fn is_recursive(&self) -> bool {
+        self.is_recursive_inner(None)
+    }
+
     pub fn get_unknown() -> SkyeType {
         SkyeType::Unknown(Rc::from(""))
     }

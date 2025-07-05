@@ -6182,6 +6182,11 @@ impl IrGen {
                     }
                 };
 
+                if type_.is_recursive() {
+                    ast_error!(self, stmt, "Cannot declare a recursive data structure");
+                    ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                }
+
                 if binding.is_none() {
                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
                         pos: stmt.get_pos(),
@@ -6612,6 +6617,11 @@ impl IrGen {
                                 Rc::clone(&full_name), Some(output_fields),
                                 Rc::clone(&base_name)
                             );
+
+                            if struct_output_type.is_recursive() {
+                                ast_error!(self, stmt, "Cannot declare a recursive data structure");
+                                ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                            }
 
                             for variant in evaluated_variants {
                                 let mut env = self.globals.borrow_mut();
@@ -7212,6 +7222,11 @@ impl IrGen {
                         SkyeType::Union(Rc::clone(&full_name), None)
                     }
                 };
+
+                if type_.is_recursive() {
+                    ast_error!(self, stmt, "Cannot declare a recursive data structure");
+                    ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                }
 
                 if binding.is_none() {
                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
