@@ -188,13 +188,51 @@ impl IrValue {
             IrValueData::DereferenceGet { from: value, .. } | 
             IrValueData::Negate { value } => value.keep_side_effects(),
             // expressions that might contain multiple things that have side effects
-            // TODO if one of the items has side effects, keep that item. 
-            //      if more than one has side effects, keep whole expression.
-            //      if none of the items have side effects, return empty
-            IrValueData::Ternary { .. } |
-            IrValueData::CompoundLiteral { .. } | 
-            IrValueData::Binary { .. } |
-            IrValueData::Subscript { .. } => self.clone(),
+            IrValueData::Ternary { condition, then_branch, else_branch  } => {
+                let condition = condition.keep_side_effects();
+                let mut side_effects: Vec<IrValue> = [
+                    condition.clone(), 
+                    then_branch.keep_side_effects(), 
+                    else_branch.keep_side_effects()
+                ].into_iter().filter(|x| !x.is_empty()).collect();
+
+                if side_effects.len() == 0 {
+                    condition
+                } else if side_effects.len() == 1 {
+                    side_effects.pop().unwrap()
+                } else {
+                    self.clone()
+                }
+            }
+            IrValueData::CompoundLiteral { items } => {
+                let mut side_effects: Vec<IrValue> = items.iter()
+                    .map(|(_, v)| v.keep_side_effects())
+                    .filter(|x| !x.is_empty())
+                    .collect();
+
+                if side_effects.len() == 0 {
+                    let mut output = self.clone();
+                    output.data = IrValueData::Empty;
+                    output
+                } else if side_effects.len() == 1 {
+                    side_effects.pop().unwrap()
+                } else {
+                    self.clone()
+                }
+            }
+            IrValueData::Binary { left, right, .. } |
+            IrValueData::Subscript { subscripted: left, index: right } => {
+                let left = left.keep_side_effects();
+                let right = right.keep_side_effects();
+
+                if left.is_empty() && right.is_empty() {
+                    self.clone()
+                } else if left.is_empty() {
+                    right
+                } else {
+                    left
+                }
+            }
             // expressions with no side effects
             _ => {
                 let mut output = self.clone();
