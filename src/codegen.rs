@@ -1,6 +1,7 @@
-use std::{collections::{HashMap, HashSet}, rc::Rc};
+use std::{cell::OnceCell, collections::{HashMap, HashSet}, rc::Rc};
 
 use lazy_static::lazy_static;
+use topo_sort::{SortResults, TopoSort};
 
 use crate::{ast::{Bits, Expression, StringKind}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
 
@@ -189,11 +190,119 @@ fn stringify_type(type_: &SkyeType) -> String {
     }
 }
 
+fn get_type_dependencies_inner(type_: &SkyeType, toplevel: bool, declarations: bool) -> HashSet<Rc<str>> {
+    match type_ {
+        SkyeType::Type(inner) => get_type_dependencies_inner(&inner, false, declarations),
+        SkyeType::Struct(name, fields, _) |
+        SkyeType::Union(name, fields) => {
+            let mut dependencies = HashSet::new();
+
+            if !toplevel {
+                dependencies.insert(Rc::clone(name));   
+            }
+            
+            // if we're just declaring the struct/union, fields aren't defined yet, and hence we don't depend on them
+            if !declarations {
+                if let Some(fields) = fields {
+                    for (_, field) in fields {
+                        dependencies.extend(get_type_dependencies_inner(&field.type_, false, declarations));
+                    }
+                }
+            }
+            
+            dependencies
+        }
+        SkyeType::Enum(name, variants, _) => {
+            let mut dependencies = HashSet::new();
+
+            if !toplevel {
+                dependencies.insert(Rc::clone(name));   
+            }
+
+            // if we're just declaring the tagged union, fields aren't defined yet, and hence we don't depend on them
+            if !declarations {
+                if let Some(variants) = variants {
+                    for (_, variant) in variants {
+                        dependencies.extend(get_type_dependencies_inner(&variant, false, declarations));
+                    }
+                }
+            }
+            
+            dependencies
+        }
+        SkyeType::Function(params, return_type, _) => {
+            // if we aren't sorting declarations, functions don't matter in the order
+            if !declarations {
+                return HashSet::new();
+            }
+
+            let mut dependencies = get_type_dependencies_inner(&return_type, false, declarations);
+
+            if !toplevel {
+                dependencies.insert(type_.mangle().into());
+            }
+
+            for param in params {
+                dependencies.extend(get_type_dependencies_inner(&param.type_, false, declarations));
+            }
+
+            dependencies
+        }
+        SkyeType::Pointer(inner, ..) => {
+            // i didn't know this, but in declarations types hidden behind pointers still count as undeclared?
+            if !declarations {
+                return HashSet::new();
+            }
+
+            get_type_dependencies_inner(&inner, false, declarations)
+        }
+        SkyeType::Group(..) | 
+        SkyeType::Namespace(_) | 
+        SkyeType::Macro(..) |
+        SkyeType::Template(..) => {
+            println!("{:?}", type_);
+            unreachable!()
+        }
+        _ => HashSet::new()
+    }
+}
+
+fn get_type_dependencies_definitions(type_: &SkyeType) -> HashSet<Rc<str>> {
+    get_type_dependencies_inner(type_, true, false)
+}
+
+fn get_type_dependencies_definitions_from_within(type_: &SkyeType) -> HashSet<Rc<str>> {
+    get_type_dependencies_inner(type_, false, false)
+}
+
+fn get_type_dependencies_declarations(type_: &SkyeType) -> HashSet<Rc<str>> {
+    get_type_dependencies_inner(type_, true, true)
+}
+
+fn get_type_dependencies_declarations_from_within(type_: &SkyeType) -> HashSet<Rc<str>> {
+    get_type_dependencies_inner(type_, false, true)
+}
+
 fn prepare_name(name: Rc<str>) -> Rc<str> {
     if C_KEYWORDS.contains(name.as_ref()) {
         format!("__reserved_{}", name).into()
     } else {
         name
+    }
+}
+
+struct TypeOutput {
+    pub output: CodeOutput,
+    pub dependencies: OnceCell<HashSet<Rc<str>>>
+}
+
+impl TypeOutput {
+    pub fn new(output: CodeOutput, dependencies: HashSet<Rc<str>>) -> Self {
+        TypeOutput { output, dependencies: OnceCell::from(dependencies) }
+    }
+
+    pub fn independent(output: CodeOutput) -> Self {
+        TypeOutput { output, dependencies: OnceCell::from(HashSet::new()) }
     }
 }
 
@@ -204,8 +313,8 @@ pub struct CodeGen {
 
     strings_code: CodeOutput,
     includes:     CodeOutput,
-    declarations: Vec<CodeOutput>,
-    typedefs:     HashMap<Rc<str>, CodeOutput>,
+    declarations: HashMap<Rc<str>, TypeOutput>,
+    typedefs:     HashMap<Rc<str>, TypeOutput>,
     fndefs:       Vec<CodeOutput>,
 
     in_function: bool,
@@ -219,7 +328,7 @@ impl CodeGen {
             fnptrs: HashSet::new(),
             strings_code: CodeOutput::new(),
             includes: CodeOutput::new(),
-            declarations: Vec::new(),
+            declarations: HashMap::new(),
             typedefs: HashMap::new(),
             fndefs: Vec::new(),
             in_function: false,
@@ -233,9 +342,11 @@ impl CodeGen {
 
             self.arrays.insert(array_specifier);
 
-            self.declarations.push(CodeOutput::new());
-            self.declarations.last_mut().unwrap().push(&buf);
-            self.declarations.last_mut().unwrap().push(";\n");
+            let mut decl_buf = CodeOutput::new();
+            decl_buf.push(&buf);
+            decl_buf.push(";\n");
+
+            self.declarations.insert(Rc::clone(&type_name), TypeOutput::independent(decl_buf));
 
             let mut def_buf = CodeOutput::new();
             def_buf.push(&buf);
@@ -253,7 +364,7 @@ impl CodeGen {
             def_buf.push(&type_name);
             def_buf.push(";\n\n");
 
-            self.typedefs.insert(Rc::clone(&type_name), def_buf);
+            self.typedefs.insert(Rc::clone(&type_name), TypeOutput::independent(def_buf));
         }
     }
 
@@ -261,15 +372,18 @@ impl CodeGen {
         let mangled: Rc<str> = inner_type.mangle().into();
 
         if !self.fnptrs.contains(&mangled) {
-            self.declarations.push(CodeOutput::new());
-            self.declarations.last_mut().unwrap().push("typedef ");
-            self.declarations.last_mut().unwrap().push(return_stringified);
-            self.declarations.last_mut().unwrap().push(" (*");
-            self.declarations.last_mut().unwrap().push(&mangled);
-            self.declarations.last_mut().unwrap().push(")(");
-            self.declarations.last_mut().unwrap().push(&params_string);
-            self.declarations.last_mut().unwrap().push(");\n");
+            let dependencies = get_type_dependencies_declarations(inner_type);
+            let mut buf = CodeOutput::new();
 
+            buf.push("typedef ");
+            buf.push(return_stringified);
+            buf.push(" (*");
+            buf.push(&mangled);
+            buf.push(")(");
+            buf.push(&params_string);
+            buf.push(");\n");
+
+            self.declarations.insert(Rc::clone(&mangled), TypeOutput::new(buf, dependencies));
             self.fnptrs.insert(mangled);
         }
     }
@@ -576,7 +690,7 @@ impl CodeGen {
                             StringKind::Slice => {
                                 if let Some(string_const) = self.strings.get(&value) {
                                     format!(
-                                        "(String) {{ .ptr = SKYE_STRING_{}, .length = sizeof(SKYE_STRING_{}) }}",
+                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = SKYE_STRING_{}, .length = sizeof(SKYE_STRING_{}) }}",
                                         string_const, string_const
                                     ).into()
                                 } else {
@@ -590,7 +704,7 @@ impl CodeGen {
                                     self.strings.insert(value, str_index);
 
                                     format!(
-                                        "(String) {{ .ptr = SKYE_STRING_{}, .length = {} }}",
+                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = SKYE_STRING_{}, .length = {} }}",
                                         str_index, string_len
                                     ).into()
                                 }
@@ -749,11 +863,12 @@ impl CodeGen {
                 self.includes.push("\n");
             }
             IrStatementData::VarDecl { name, type_, initializer } => {
+                let prepared_name = prepare_name(name);
                 let mut buf = String::new();
                 
                 buf.push_str(&stringify_type(&type_));
                 buf.push(' ');
-                buf.push_str(&prepare_name(name));
+                buf.push_str(&prepared_name);
 
                 if let Some(initializer) = initializer {
                     let generated = ctx.run(|ctx| self.generate_value(initializer, ctx)).await;
@@ -767,25 +882,30 @@ impl CodeGen {
                     self.fndefs.last_mut().unwrap().push_indent();
                     self.fndefs.last_mut().unwrap().push(&buf);
                 } else {
-                    self.declarations.push(CodeOutput::new());
-                    self.declarations.last_mut().unwrap().push_indent();
-                    self.declarations.last_mut().unwrap().push(&buf);
+                    let mut decl_buf = CodeOutput::new();
+                    decl_buf.push_indent();
+                    decl_buf.push(&buf);
+                    
+                    let dependencies = get_type_dependencies_declarations_from_within(&type_);
+                    self.declarations.insert(prepared_name, TypeOutput::new(decl_buf, dependencies));
                 }
             }
             IrStatementData::Define { name, value, typedef } => {
+                let prepared_name = prepare_name(name);
                 let mut buf = String::new();
                 
+                let type_ = value.type_.clone();
                 let generated = ctx.run(|ctx| self.generate_value(value, ctx)).await;
 
                 if typedef {
                     buf.push_str("typedef ");
                     buf.push_str(&generated);
                     buf.push(' ');
-                    buf.push_str(&prepare_name(name));
+                    buf.push_str(&prepared_name);
                     buf.push_str(";\n");
                 } else {
                     buf.push_str("#define ");
-                    buf.push_str(&prepare_name(name));
+                    buf.push_str(&prepared_name);
                     buf.push(' ');
                     buf.push_str(&generated);
                     buf.push('\n');
@@ -795,12 +915,16 @@ impl CodeGen {
                     self.fndefs.last_mut().unwrap().push_indent();
                     self.fndefs.last_mut().unwrap().push(&buf);
                 } else {
-                    self.declarations.push(CodeOutput::new());
-                    self.declarations.last_mut().unwrap().push_indent();
-                    self.declarations.last_mut().unwrap().push(&buf);
+                    let mut decl_buf = CodeOutput::new();
+                    decl_buf.push_indent();
+                    decl_buf.push(&buf);
+
+                    let dependencies = get_type_dependencies_declarations_from_within(&type_);
+                    self.declarations.insert(prepared_name, TypeOutput::new(decl_buf, dependencies));
                 }
             }
             IrStatementData::Struct { type_ } => {
+                let dependencies = get_type_dependencies_definitions(&type_);
                 if let SkyeType::Struct(name, fields, _) = type_ {
                     let prepared_name = prepare_name(name);
 
@@ -809,6 +933,12 @@ impl CodeGen {
                     buf.push("typedef struct SKYE_STRUCT_");
                     buf.push(&prepared_name);
 
+                    let mut decl_buf = buf.clone();
+                    decl_buf.push(" ");
+                    decl_buf.push(&prepared_name);
+                    decl_buf.push(";\n");
+                    self.declarations.insert(Rc::clone(&prepared_name), TypeOutput::independent(decl_buf));
+
                     if let Some(fields) = fields {
                         buf.push(" {\n");
                         buf.inc_indent();
@@ -829,18 +959,18 @@ impl CodeGen {
 
                         buf.dec_indent();
                         buf.push_indent();
-                        buf.push("}");
-                    }
+                        buf.push("} ");
+                        buf.push(&prepared_name);
+                        buf.push(";\n");
 
-                    buf.push(" ");
-                    buf.push(&prepared_name);
-                    buf.push(";\n");
-                    self.typedefs.insert(prepared_name, buf);
+                        self.typedefs.insert(prepared_name, TypeOutput::new(buf, dependencies));
+                    }
                 } else {
                     unreachable!()
                 }
             }
             IrStatementData::Union { type_ } => {
+                let dependencies = get_type_dependencies_definitions(&type_);
                 if let SkyeType::Union(name, fields) = type_ {
                     let prepared_name = prepare_name(name);
 
@@ -849,6 +979,12 @@ impl CodeGen {
                     buf.push("typedef union SKYE_UNION_");
                     buf.push(&prepared_name);
 
+                    let mut decl_buf = buf.clone();
+                    decl_buf.push(" ");
+                    decl_buf.push(&prepared_name);
+                    decl_buf.push(";\n");
+                    self.declarations.insert(Rc::clone(&prepared_name), TypeOutput::independent(decl_buf));
+
                     if let Some(fields) = fields {
                         buf.push(" {\n");
                         buf.inc_indent();
@@ -869,13 +1005,12 @@ impl CodeGen {
 
                         buf.dec_indent();
                         buf.push_indent();
-                        buf.push("}");
-                    } 
+                        buf.push("} ");
 
-                    buf.push(" ");
-                    buf.push(&prepared_name);
-                    buf.push(";\n");
-                    self.typedefs.insert(prepared_name, buf);
+                        buf.push(&prepared_name);
+                        buf.push(";\n");
+                        self.typedefs.insert(prepared_name, TypeOutput::new(buf, dependencies));
+                    } 
                 } else {
                     unreachable!()
                 }
@@ -887,6 +1022,13 @@ impl CodeGen {
                 buf.push_indent();
                 buf.push("typedef struct SKYE_STRUCT_");
                 buf.push(&prepared_name);
+
+                let mut decl_buf = buf.clone();
+                decl_buf.push(" ");
+                decl_buf.push(&prepared_name);
+                decl_buf.push(";\n");
+                self.declarations.insert(Rc::clone(&prepared_name), TypeOutput::independent(decl_buf));
+
                 buf.push(" {\n");
                 buf.inc_indent();
 
@@ -894,7 +1036,11 @@ impl CodeGen {
                 buf.push("union {\n");
                 buf.inc_indent();
 
+                let mut dependencies = HashSet::new();
+
                 for (name, type_) in fields {
+                    dependencies.extend(get_type_dependencies_definitions_from_within(&type_));
+
                     buf.push_indent();
                     buf.push(&stringify_type(&type_));
                     buf.push(" ");
@@ -917,7 +1063,7 @@ impl CodeGen {
                 buf.push("} ");
                 buf.push(&prepared_name);
                 buf.push(";\n");
-                self.typedefs.insert(prepared_name, buf);
+                self.typedefs.insert(prepared_name, TypeOutput::new(buf, dependencies));
             }
             IrStatementData::Enum { name, variants, type_ } => {
                 let prepared_name = prepare_name(Rc::clone(&name));
@@ -953,57 +1099,13 @@ impl CodeGen {
                 buf.push(&prepared_name);
                 buf.push(";\n");
 
-                self.declarations.push(buf);
+                self.declarations.insert(prepared_name, TypeOutput::independent(buf));
             }
             IrStatementData::Function { name, params, body, signature } => {
                 let prepared_name = prepare_name(name);
 
                 if let SkyeType::Function(_, return_type, _) = &signature {
                     let return_stringified = stringify_type(&return_type);
-
-                    let mut buf = CodeOutput::new();
-                    buf.push_indent();
-                    buf.push(&return_stringified);
-                    buf.push(" ");
-                    buf.push(&prepared_name);
-                    buf.push("(");
-
-                    let mut params_string = String::new();
-
-                    for (i, param) in params.iter().enumerate() {
-                        params_string.push_str(&stringify_type(&param.type_));
-                        params_string.push(' ');
-                        params_string.push_str(&param.name);
-
-                        if i != params.len() - 1 {
-                            params_string.push_str(", ");
-                        }
-                    }
-
-                    self.generate_fn_signature(&signature, &return_stringified, &params_string);
-
-                    buf.push(&params_string);
-                    buf.push(")");
-
-                    if let Some(body) = body {
-                        self.declarations.push(buf.clone());
-                        self.declarations.last_mut().unwrap().push(";\n");
-
-                        buf.push(" {\n");
-                        buf.inc_indent();
-                        self.fndefs.push(buf);
-                        self.in_function = true;
-
-                        for statement in body {
-                            ctx.run(|ctx| self.generate_statement(statement, ctx)).await;
-                        }
-
-                        self.in_function = false;
-                        self.end_scope();
-                    } else {
-                        buf.push(";\n");
-                        self.declarations.push(buf);
-                    }
 
                     if prepared_name.as_ref() == "_SKYE_MAIN" {
                         let returns_void        = return_stringified == "void";
@@ -1074,6 +1176,53 @@ impl CodeGen {
                             }
                         }
                     }
+
+                    let mut buf = CodeOutput::new();
+                    buf.push_indent();
+                    buf.push(&return_stringified);
+                    buf.push(" ");
+                    buf.push(&prepared_name);
+                    buf.push("(");
+
+                    let mut params_string = String::new();
+
+                    for (i, param) in params.iter().enumerate() {
+                        params_string.push_str(&stringify_type(&param.type_));
+                        params_string.push(' ');
+                        params_string.push_str(&param.name);
+
+                        if i != params.len() - 1 {
+                            params_string.push_str(", ");
+                        }
+                    }
+
+                    self.generate_fn_signature(&signature, &return_stringified, &params_string);
+
+                    buf.push(&params_string);
+                    buf.push(")");
+
+                    if let Some(body) = body {
+                        let mut decl_buf = buf.clone();
+                        decl_buf.push(";\n");
+                        let dependencies = get_type_dependencies_declarations(&signature);
+                        self.declarations.insert(prepared_name, TypeOutput::new(decl_buf, dependencies));
+
+                        buf.push(" {\n");
+                        buf.inc_indent();
+                        self.fndefs.push(buf);
+                        self.in_function = true;
+
+                        for statement in body {
+                            ctx.run(|ctx| self.generate_statement(statement, ctx)).await;
+                        }
+
+                        self.in_function = false;
+                        self.end_scope();
+                    } else {
+                        buf.push(";\n");
+                        let dependencies = get_type_dependencies_declarations(&signature);
+                        self.declarations.insert(prepared_name, TypeOutput::new(buf, dependencies));
+                    }
                 } else {
                     unreachable!()
                 }
@@ -1132,6 +1281,30 @@ impl CodeGen {
             let _ = stack.enter(|ctx| self.generate_statement(statement, ctx)).finish();
         }
 
+        let mut topo_sort_decls = TopoSort::with_capacity(self.declarations.len());
+        for (name, declaration) in &mut self.declarations {
+            topo_sort_decls.insert(Rc::clone(&name), declaration.dependencies.take().unwrap());
+        }
+
+        let decls_order = {
+            match topo_sort_decls.into_vec_nodes() {
+                SortResults::Full(items) => items,
+                SortResults::Partial(_) => panic!("dependency cycle")
+            }
+        };
+
+        let mut topo_sort_typedefs = TopoSort::with_capacity(self.typedefs.len());
+        for (name, definition) in &mut self.typedefs {
+            topo_sort_typedefs.insert(Rc::clone(&name), definition.dependencies.take().unwrap());
+        }
+
+        let typedefs_order = {
+            match topo_sort_typedefs.into_vec_nodes() {
+                SortResults::Full(items) => items,
+                SortResults::Partial(_) => panic!("dependency cycle")
+            }
+        };
+
         let mut output = String::from("// Hello from Skye!! ^_^\n\n");
 
         if self.includes.code.len() != 0 {
@@ -1145,15 +1318,15 @@ impl CodeGen {
         }
 
         if self.declarations.len() != 0 {
-            for declaration in &self.declarations {
-                output.push_str(&declaration.code);
+            for name in decls_order {
+                output.push_str(&self.declarations.get(&name).unwrap().output.code);
             }
 
             output.push('\n');
         }
 
-        for (_, definition) in &self.typedefs {
-            output.push_str(&definition.code);
+        for name in typedefs_order {
+            output.push_str(&self.typedefs.get(&name).unwrap().output.code);
             output.push('\n');
         }
 

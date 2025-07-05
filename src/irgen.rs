@@ -3573,6 +3573,23 @@ impl IrGen {
                                     );
                                 }
 
+                                Self::add_statement_to_scope(&scope.data, IrStatement { 
+                                    pos: expr.get_pos(),
+                                    data: IrStatementData::Expression { 
+                                        value: IrValue::new(
+                                            IrValueData::Assign { 
+                                                op: AssignOp::None, 
+                                                target: Box::new(IrValue::new(
+                                                    IrValueData::Variable { name: Rc::clone(&result_tmp) },
+                                                    result_type.clone()
+                                                )),
+                                                value: Box::new(right.ir_value)
+                                            },
+                                            result_type.clone()
+                                        )
+                                    }, 
+                                });
+
                                 SkyeValue::new(
                                     IrValue::new(
                                         IrValueData::Variable { name: result_tmp },
@@ -5496,8 +5513,8 @@ impl IrGen {
 
                     let returns_void        = return_stringified == "void";
                     let returns_i32         = return_stringified == "i32";
-                    let returns_i32_result  = return_stringified == "core_DOT_Result_GENOF_void_GENAND_i32_GENEND_";
-                    let returns_void_result = return_stringified == "core_DOT_Result_GENOF_void_GENAND_void_GENEND_";
+                    let returns_i32_result  = return_stringified == "core::Result[void, i32]";
+                    let returns_void_result = return_stringified == "core::Result[void, void]";
 
                     let has_stdargs = {
                         params_types.len() == 2 &&
@@ -5514,8 +5531,8 @@ impl IrGen {
                     let has_args = {
                         params_types.len() == 1 &&
                         {
-                            if let SkyeType::Struct(.., base_name) = &params_types[0].type_ {
-                                base_name.as_ref() == "core_DOT_Array"
+                            if let SkyeType::Struct(full_name, ..) = &params_types[0].type_ {
+                                full_name.as_ref() == "core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_"
                             } else {
                                 false
                             }
@@ -6323,10 +6340,7 @@ impl IrGen {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
-                    // TODO: check if this works properly.
-                    // this part might not be necessary due to the improved system
-                    // if !*bind && (!use_value.ir_value.is_empty() || use_value.ir_value.type_.can_be_instantiated(true)) {
-                    if !*bind && !use_value.ir_value.is_empty() {
+                    if !*bind && !use_value.ir_value.is_empty() && use_value.ir_value.type_.can_be_instantiated(false) {
                         let statement = IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
@@ -6673,9 +6687,15 @@ impl IrGen {
                                         data: IrStatementData::Define { 
                                             name: enum_variant_init_alias, 
                                             value: IrValue::new(
-                                                IrValueData::Variable { name: Rc::clone(&enum_variant_init_fn_name) },
-                                                function_type.clone()
-                                            ), 
+                                                IrValueData::Call { 
+                                                    callee: Box::new(IrValue::new(
+                                                        IrValueData::Variable { name: Rc::clone(&enum_variant_init_fn_name) },
+                                                        function_type.clone()
+                                                    )), 
+                                                    args: Vec::new()
+                                                },
+                                                struct_output_type.clone()
+                                            ),
                                             typedef: false 
                                         }
                                     })));
