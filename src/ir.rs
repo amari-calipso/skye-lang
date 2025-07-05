@@ -115,18 +115,50 @@ pub struct IrSwitchBranch {
 }
 
 #[derive(Clone, Debug)]
+pub enum VarQualifier {
+    Static, Extern, Volatile
+}
+
+impl VarQualifier {
+    pub fn from_string(qualifier: &str) -> Self {
+        match qualifier.to_lowercase().as_str() {
+            "static"   => VarQualifier::Static,
+            "extern"   => VarQualifier::Extern,
+            "volatile" => VarQualifier::Volatile,
+            _ => panic!("invalid qualifier")
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum FnQualifier {
+    Static, Extern, Inline
+}
+
+impl FnQualifier {
+    pub fn from_string(qualifier: &str) -> Self {
+        match qualifier.to_lowercase().as_str() {
+            "static" => FnQualifier::Static,
+            "extern" => FnQualifier::Extern,
+            "inline" => FnQualifier::Inline,
+            _ => panic!("invalid qualifier")
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum IrStatementData {
     Break,
     Define { name: Rc<str>, value: IrValue, typedef: bool },
     Undefine { name: Rc<str> },
-    VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue> }, // TODO: add qualifiers
+    VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue>, qualifiers: Vec<VarQualifier> },
     If { condition: IrValue, then_branch: Box<IrStatement>, else_branch: Option<Box<IrStatement>> },
     Scope { statements: Rc<RefCell<Vec<IrStatement>>> },
     Return { value: Option<IrValue> },
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType }, // TODO: add qualifiers
+    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType, qualifiers: Vec<FnQualifier> },
     Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: HashMap<Rc<str>, SkyeType> },

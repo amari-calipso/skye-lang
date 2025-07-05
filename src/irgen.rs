@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
 };
 
 lazy_static! {
@@ -97,7 +97,8 @@ impl IrGen {
                 name: Rc::from("_SKYE_INIT"), 
                 params: Vec::new(),
                 body: Some(Vec::new()), 
-                signature: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true)
+                signature: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true),
+                qualifiers: Vec::new()
             },
             pos: AstPos::empty()
         })));
@@ -308,7 +309,8 @@ impl IrGen {
                 data: IrStatementData::VarDecl { 
                     name: Rc::clone(&tmp_var), 
                     type_: value.type_.clone(), 
-                    initializer: Some(value)
+                    initializer: Some(value),
+                    qualifiers: Vec::new()
                 }
             });
 
@@ -893,7 +895,8 @@ impl IrGen {
                     data: IrStatementData::VarDecl { 
                         name: Rc::clone(&tmp_var), 
                         type_: return_type.clone(), 
-                        initializer: Some(call_ir_value)
+                        initializer: Some(call_ir_value),
+                        qualifiers: Vec::new()
                     }
                 });
 
@@ -1661,7 +1664,8 @@ impl IrGen {
                         initializer: Some(IrValue::new(
                             apply_op(inner.ir_value),
                             type_.clone()
-                        ))
+                        )),
+                        qualifiers: Vec::new()
                     }
                 });
 
@@ -1718,7 +1722,8 @@ impl IrGen {
             data: IrStatementData::VarDecl { 
                 name: Rc::clone(&tmp_var), 
                 type_: inner.ir_value.type_.clone(), 
-                initializer: Some(inner.ir_value.clone())
+                initializer: Some(inner.ir_value.clone()),
+                qualifiers: Vec::new()
             }
         });
 
@@ -3329,7 +3334,8 @@ impl IrGen {
                                     data: IrStatementData::VarDecl { 
                                         name: Rc::clone(&result_tmp), 
                                         type_: result_type.clone(), 
-                                        initializer: None 
+                                        initializer: None,
+                                        qualifiers: Vec::new()
                                     } 
                                 });
 
@@ -3464,7 +3470,8 @@ impl IrGen {
                                     data: IrStatementData::VarDecl { 
                                         name: Rc::clone(&result_tmp), 
                                         type_: result_type.clone(), 
-                                        initializer: None 
+                                        initializer: None,
+                                        qualifiers: Vec::new()
                                     } 
                                 });
 
@@ -3962,7 +3969,8 @@ impl IrGen {
                     data: IrStatementData::VarDecl { 
                         name: Rc::clone(&tmp_var), 
                         type_: then_branch.ir_value.type_.clone(), 
-                        initializer: None 
+                        initializer: None,
+                        qualifiers: Vec::new()
                     } 
                 });
 
@@ -5299,13 +5307,13 @@ impl IrGen {
                         }
                     };
 
-                    // TODO handle qualifiers
                     let definition = IrStatement {
                         pos: stmt.get_pos(),
                         data: IrStatementData::VarDecl {
                             name: Rc::clone(&full_name),
                             type_: type_.clone(),
                             initializer: value.map(|x| x.ir_value),
+                            qualifiers: qualifiers.iter().map(|x| VarQualifier::from_string(&x.lexeme)).collect()
                         }
                     };
 
@@ -5526,7 +5534,8 @@ impl IrGen {
                                 name: full_name, 
                                 params: params_evaluated,
                                 signature: type_.clone(),
-                                body: None, 
+                                body: None,
+                                qualifiers: qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
                             }
                         })));
                     }
@@ -5561,6 +5570,7 @@ impl IrGen {
                         params: params_evaluated,
                         body: Some(Vec::new()), 
                         signature: type_.clone(),
+                        qualifiers: qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
                     }
                 }));
 
@@ -6585,7 +6595,8 @@ impl IrGen {
                                         data: IrStatementData::VarDecl { 
                                             name: Rc::clone(&tmp_var), 
                                             type_: struct_output_type.clone(), 
-                                            initializer: None 
+                                            initializer: None,
+                                            qualifiers: Vec::new()
                                         }
                                     },
                                     // tmp.kind = currentVariantKind;
@@ -6677,7 +6688,8 @@ impl IrGen {
                                             name: enum_variant_init_fn_name,
                                             params: Vec::new(),
                                             signature: SkyeType::Function(Vec::new(), Box::new(struct_output_type.clone()), true),
-                                            body: Some(function_body), 
+                                            body: Some(function_body),
+                                            qualifiers: Vec::new() 
                                         }
                                     })));
                                 } else {
@@ -6737,7 +6749,8 @@ impl IrGen {
                                                 vec![SkyeFunctionParam::new(variant.type_.clone(), false)], 
                                                 Box::new(struct_output_type.clone()), true
                                             ),
-                                            body: Some(function_body), 
+                                            body: Some(function_body),
+                                            qualifiers: Vec::new()
                                         }
                                     })));
                                 }
@@ -7432,7 +7445,8 @@ impl IrGen {
                                 name: Rc::from("Some")
                             },
                             SkyeType::Void // TODO
-                        )) 
+                        )),
+                        qualifiers: Vec::new()
                     }
                 });
 

@@ -3,7 +3,7 @@ use std::{cell::OnceCell, collections::{HashMap, HashSet}, rc::Rc};
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
 
-use crate::{ast::{Bits, Expression, StringKind}, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
+use crate::{ast::{Bits, Expression, StringKind}, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
 
 const OUTPUT_INDENT_SPACES: usize = 4;
 
@@ -288,6 +288,22 @@ fn prepare_name(name: Rc<str>) -> Rc<str> {
         format!("__reserved_{}", name).into()
     } else {
         name
+    }
+}
+
+fn stringify_var_qualifier(qualifier: VarQualifier) -> &'static str {
+    match qualifier {
+        VarQualifier::Static   => "static",
+        VarQualifier::Extern   => "extern",
+        VarQualifier::Volatile => "volatile",
+    }
+}
+
+fn stringify_fn_qualifier(qualifier: FnQualifier) -> &'static str {
+    match qualifier {
+        FnQualifier::Static => "static",
+        FnQualifier::Extern => "extern",
+        FnQualifier::Inline => "inline",
     }
 }
 
@@ -862,9 +878,14 @@ impl CodeGen {
 
                 self.includes.push("\n");
             }
-            IrStatementData::VarDecl { name, type_, initializer } => {
+            IrStatementData::VarDecl { name, type_, initializer, qualifiers } => {
                 let prepared_name = prepare_name(name);
                 let mut buf = String::new();
+
+                for qualifier in qualifiers {
+                    buf.push_str(&stringify_var_qualifier(qualifier));
+                    buf.push(' ');
+                }
                 
                 buf.push_str(&stringify_type(&type_));
                 buf.push(' ');
@@ -1101,7 +1122,7 @@ impl CodeGen {
 
                 self.declarations.insert(prepared_name, TypeOutput::independent(buf));
             }
-            IrStatementData::Function { name, params, body, signature } => {
+            IrStatementData::Function { name, params, body, signature, qualifiers } => {
                 let prepared_name = prepare_name(name);
 
                 if let SkyeType::Function(_, return_type, _) = &signature {
@@ -1179,6 +1200,12 @@ impl CodeGen {
 
                     let mut buf = CodeOutput::new();
                     buf.push_indent();
+
+                    for qualifier in qualifiers {
+                        buf.push(&stringify_fn_qualifier(qualifier));
+                        buf.push(" ");
+                    }
+
                     buf.push(&return_stringified);
                     buf.push(" ");
                     buf.push(&prepared_name);
