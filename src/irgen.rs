@@ -1651,14 +1651,19 @@ impl IrGen {
     ) -> SkyeValue {
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
+                let tmp_var = self.get_temporary_var();
                 let type_ = inner.ir_value.type_.clone();
-                let tmp_var = self.make_temporary_var(
-                    IrValue::new(
-                        apply_op(inner.ir_value),
-                        type_.clone()
-                    ), 
-                    expr.get_pos()
-                );
+                self.add_statement(IrStatement { 
+                    pos: expr.get_pos(),
+                    data: IrStatementData::VarDecl { 
+                        name: Rc::clone(&tmp_var), 
+                        type_: type_.clone(), 
+                        initializer: Some(IrValue::new(
+                            apply_op(inner.ir_value),
+                            type_.clone()
+                        ))
+                    }
+                });
 
                 SkyeValue::new(
                     IrValue::new(
@@ -1706,7 +1711,16 @@ impl IrGen {
         op_type: Operator, apply_op: impl FnOnce(IrValue) -> IrValueData, 
         op: &Token, allow_unknown: bool, ctx: &mut reblessive::Stk
     ) -> SkyeValue {
-        let tmp_var = self.make_temporary_var(inner.ir_value.clone(), expr.get_pos());
+        let tmp_var = self.get_temporary_var();
+
+        self.add_statement(IrStatement { 
+            pos: expr.get_pos(),
+            data: IrStatementData::VarDecl { 
+                name: Rc::clone(&tmp_var), 
+                type_: inner.ir_value.type_.clone(), 
+                initializer: Some(inner.ir_value.clone())
+            }
+        });
 
         match inner.ir_value.type_.implements_op(op_type) {
             ImplementsHow::Native(_) => {
@@ -5167,10 +5181,11 @@ impl IrGen {
                     }
                 }
 
-                if !value.ir_value.is_empty() {
-                    self.add_statement(IrStatement {
-                        pos: expr.get_pos(),
-                        data: IrStatementData::Expression { value: value.ir_value }
+                let filtered = value.ir_value.keep_side_effects();
+                if !filtered.is_empty() {
+                    self.add_statement(IrStatement { 
+                        pos: expr.get_pos(), 
+                        data: IrStatementData::Expression { value: filtered }, 
                     });
                 }
             }
@@ -5604,11 +5619,11 @@ impl IrGen {
                 let previous_definition = self.curr_definition.clone();
 
                 self.curr_definition = Some(Rc::new(RefCell::new(then_scope)));
-                let _ = ctx.run(|ctx| self.execute(&then_branch, ctx)).await;
+                let _ = ctx.run(|ctx| self.scoped_execute(&then_branch, ctx)).await;
 
                 if let Some(else_branch_statement) = else_branch {
                     self.curr_definition = Some(Rc::new(RefCell::new(*else_scope.unwrap())));
-                    let _ = ctx.run(|ctx| self.execute(&else_branch_statement, ctx)).await;
+                    let _ = ctx.run(|ctx| self.scoped_execute(&else_branch_statement, ctx)).await;
                 }
 
                 self.curr_definition = previous_definition;
@@ -5801,6 +5816,8 @@ impl IrGen {
 
                 self.environment = previous;
                 self.curr_definition = previous_definition;
+
+                self.add_statement(toplevel_scope);
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
@@ -6910,7 +6927,22 @@ impl IrGen {
                         }
                     }
 
-                    if !is_classic {
+                    if is_classic {
+                        let scope = IrStatement::empty_scope(stmt.get_pos());
+                        self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
+
+                        ctx.run(|ctx| self.execute_block(
+                            &case.code,
+                            Rc::new(RefCell::new(
+                                Environment::with_enclosing(
+                                    Rc::clone(&self.environment)
+                                )
+                            )),
+                            false, ctx
+                        )).await;
+
+                        branches_output.push(IrSwitchBranch { cases: cases_output, code: scope });
+                    } else {
                         let no_exec = 'no_exec_block: {
                             for type_ in case_types {
                                 if switch.ir_value.type_.equals(&type_, EqualsLevel::Typewise) {
@@ -6923,26 +6955,19 @@ impl IrGen {
 
                         if no_exec {
                             continue;
-                        } else {
-                            entered_case = true;
                         }
+
+                        entered_case = true;
+                        ctx.run(|ctx| self.execute_block(
+                            &case.code,
+                            Rc::new(RefCell::new(
+                                Environment::with_enclosing(
+                                    Rc::clone(&self.environment)
+                                )
+                            )),
+                            false, ctx
+                        )).await;
                     }
-
-                    let scope = IrStatement::empty_scope(stmt.get_pos());
-                    self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-
-                    ctx.run(|ctx| self.execute_block(
-                        &case.code,
-                        Rc::new(RefCell::new(
-                            Environment::with_enclosing(
-                                Rc::clone(&self.environment)
-                            )
-                        )),
-                        false, ctx
-                    )).await;
-
-                    
-                    branches_output.push(IrSwitchBranch { cases: cases_output, code: scope });
                 }
 
                 self.curr_definition = previous_definition;
@@ -7443,6 +7468,8 @@ impl IrGen {
                         data: IrStatementData::Label { name: break_label }
                     });
                 }
+
+                self.add_statement(toplevel_scope);
             }
             Statement::Interface { name, declarations, types } => {
                 let full_name = self.get_name(&name.lexeme);
