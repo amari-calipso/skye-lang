@@ -5527,7 +5527,6 @@ impl IrGen {
                 
                 if !has_body {
                     if !*bind {
-                        // TODO handle qualifiers
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Function { 
