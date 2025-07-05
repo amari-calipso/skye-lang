@@ -651,7 +651,7 @@ impl IrGen {
                     SkyeType::Namespace(_) => ast_error!(self, arguments[0], "Cannot get type of namespace"),
                     SkyeType::Template(..) => ast_error!(self, arguments[0], "Cannot get type of template"),
                     SkyeType::Macro(..)    => ast_error!(self, arguments[0], "Cannot get type of macro"),
-                    _ => return Some(SkyeValue::special(SkyeType::Type(Box::new(inner.ir_value.type_))))
+                    _ => return Some(SkyeValue::special(SkyeType::Type(Box::new(inner.ir_value.type_.finalize()))))
                 }
 
                 Some(SkyeValue::special(inner.ir_value.type_))
