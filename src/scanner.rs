@@ -49,23 +49,6 @@ impl<'a> Scanner<'a> {
         keywords.insert("interface", TokenType::Interface);
         keywords.insert("namespace", TokenType::Namespace);
 
-        // reserved for internal usage
-        keywords.insert(          "_DOT_", TokenType::Reserved);
-        keywords.insert(        "_FNPTR_", TokenType::Reserved);
-        keywords.insert(        "_GENOF_", TokenType::Reserved);
-        keywords.insert(        "_PTROF_", TokenType::Reserved);
-        keywords.insert(       "_GENAND_", TokenType::Reserved);
-        keywords.insert(       "_GENEND_", TokenType::Reserved);
-        keywords.insert(       "_PTREND_", TokenType::Reserved);
-        keywords.insert(     "SKYE_ENUM_", TokenType::Reserved);
-        keywords.insert(    "_PARAM_AND_", TokenType::Reserved);
-        keywords.insert(    "_PARAM_END_", TokenType::Reserved);
-        keywords.insert(    "_FNPTR_END_", TokenType::Reserved);
-        keywords.insert(    "SKYE_UNION_", TokenType::Reserved);
-        keywords.insert(   "SKYE_STRING_", TokenType::Reserved);
-        keywords.insert(   "SKYE_STRUCT_", TokenType::Reserved);
-        keywords.insert("SKYE_ENUM_INIT_", TokenType::Reserved);
-
         Scanner {
             source, filename, tokens: Vec::new(), keywords, start_positions: Vec::new(),
             start: 0, curr: 0, line: 0, had_error: false
@@ -363,16 +346,13 @@ impl<'a> Scanner<'a> {
             self.advance();
         }
 
-        let kind = self.keywords.get(
-            substring(&self.source, self.start, self.curr).as_str()
-        );
+        let lexeme = substring(&self.source, self.start, self.curr);
+        let kind = self.keywords.get(lexeme.as_str());
 
         if let Some(type_) = kind {
-            if let TokenType::Reserved = type_ {
-                self.error("This keyword is reserved for internal use. Please use a different name");
-            } else {
-                self.add_token(type_.clone())
-            }
+            self.add_token(type_.clone());
+        } else if lexeme.starts_with("__SKYE_") {
+            self.error("Names starting with __SKYE_ are reserved for internal usage. Please use a different name");
         } else {
             self.add_token(TokenType::Identifier);
         }

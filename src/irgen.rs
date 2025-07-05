@@ -293,7 +293,7 @@ impl IrGen {
     }
 
     fn get_temporary_var(&mut self) -> Rc<str> {
-        let res = format!("SKYE_TMP_{}", self.tmp_var_cnt);
+        let res = format!("__SKYE_TMP_{}", self.tmp_var_cnt);
         self.tmp_var_cnt += 1;
         res.into()
     }

@@ -256,7 +256,7 @@ impl SkyeType {
                 // not ideal, but it's just error reporting ¯\_(ツ)_/¯
                 name.to_string()
                     .replace("_DOT_", "::")
-                    .replace("_FNPTR_", "fn (")
+                    .replace("__SKYE_FNPTR_", "fn (")
                     .replace("_PARAM_AND_", ", ")
                     .replace("_PARAM_END_", ") ")
                     .replace("_FNPTR_END_", "")
@@ -329,7 +329,7 @@ impl SkyeType {
                     }
                 }
 
-                String::from(format!("_FNPTR_{}_PARAM_END_{}_FNPTR_END_", output_params, ret_type_mangled))
+                String::from(format!("__SKYE_FNPTR_{}_PARAM_END_{}_FNPTR_END_", output_params, ret_type_mangled))
             }
         }
     }

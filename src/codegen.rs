@@ -180,7 +180,7 @@ fn stringify_type(type_: &SkyeType) -> String {
         }
 
         SkyeType::Array(inner, size) => {
-            format!("SKYE_ARRAY_{}_{}", inner.mangle(), *size)
+            format!("__SKYE_ARRAY_{}_{}", inner.mangle(), *size)
         }
 
         SkyeType::Struct(name, ..) |
@@ -353,7 +353,7 @@ impl CodeGen {
 
     fn prepare_array_struct(&mut self, array_specifier: Rc<str>, type_name: &Rc<str>, type_: &SkyeType, size: usize) {
         if !self.arrays.contains(&array_specifier) {
-            let mut buf = String::from("typedef struct SKYE_ARRAY_STRUCT_");
+            let mut buf = String::from("typedef struct __SKYE_ARRAY_STRUCT_");
             buf.push_str(&array_specifier);
 
             self.arrays.insert(array_specifier);
@@ -371,7 +371,7 @@ impl CodeGen {
 
             def_buf.push_indent();
             def_buf.push(&type_.stringify());
-            def_buf.push(" SKYE_ARRAY[");
+            def_buf.push(" __SKYE_ARRAY[");
             def_buf.push(&size.to_string());
             def_buf.push("];\n");
             def_buf.dec_indent();
@@ -483,7 +483,7 @@ impl CodeGen {
             IrValueData::Cast { to, from } => {
                 if matches!(from.type_, SkyeType::Array(..)) && matches!(to, SkyeType::Pointer(..)) {
                     let generated = ctx.run(|ctx| self.generate_value(*from, ctx)).await;
-                    format!("({})(({}).SKYE_ARRAY)", stringify_type(&to), generated).into()
+                    format!("({})(({}).__SKYE_ARRAY)", stringify_type(&to), generated).into()
                 } else {
                     let generated = ctx.run(|ctx| self.generate_value(*from, ctx)).await;
                     format!("({})({})", stringify_type(&to), generated).into()
@@ -494,7 +494,7 @@ impl CodeGen {
 
                 if matches!(subscripted.type_, SkyeType::Array(..)) {
                     let generated_subscripted = ctx.run(|ctx| self.generate_value(*subscripted, ctx)).await;
-                    format!("({}).SKYE_ARRAY[{}]", generated_subscripted, generated_index).into()
+                    format!("({}).__SKYE_ARRAY[{}]", generated_subscripted, generated_index).into()
                 } else {
                     let generated_subscripted = ctx.run(|ctx| self.generate_value(*subscripted, ctx)).await;
                     format!("{}[{}]", generated_subscripted, generated_index).into()
@@ -526,13 +526,13 @@ impl CodeGen {
                 let size = items.len();
                 let type_ = items[0].type_.clone();
                 let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
-                let type_name: Rc<str> = format!("SKYE_ARRAY_{}", array_specifier).into();
+                let type_name: Rc<str> = format!("__SKYE_ARRAY_{}", array_specifier).into();
                 self.prepare_array_struct(array_specifier, &type_name, &type_, size);
 
                 let mut buf = String::new();
                 buf.push('(');
                 buf.push_str(&type_name);
-                buf.push_str(") { .SKYE_ARRAY = { ");
+                buf.push_str(") { .__SKYE_ARRAY = { ");
 
                 for (i, item) in items.into_iter().enumerate() {
                     let generated = ctx.run(|ctx| self.generate_value(item, ctx)).await;
@@ -691,36 +691,36 @@ impl CodeGen {
                             StringKind::Char => format!("'{}'", value).into(),
                             StringKind::Raw => {
                                 if let Some(string_const) = self.strings.get(&value) {
-                                    format!("SKYE_STRING_{}", string_const).into()
+                                    format!("__SKYE_STRING_{}", string_const).into()
                                 } else {
                                     let str_index = self.strings.len();
                                     self.strings_code.push(format!(
-                                        "const char SKYE_STRING_{}[{}] = \"{}\";\n",
+                                        "const char __SKYE_STRING_{}[{}] = \"{}\";\n",
                                         str_index, get_real_string_length(&value), fix_raw_string(&value)
                                     ).as_ref());
 
                                     self.strings.insert(value, str_index);
-                                    format!("SKYE_STRING_{}", str_index).into()
+                                    format!("__SKYE_STRING_{}", str_index).into()
                                 }
                             }
                             StringKind::Slice => {
                                 if let Some(string_const) = self.strings.get(&value) {
                                     format!(
-                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = SKYE_STRING_{}, .length = sizeof(SKYE_STRING_{}) }}",
+                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = sizeof(__SKYE_STRING_{}) }}",
                                         string_const, string_const
                                     ).into()
                                 } else {
                                     let str_index = self.strings.len();
                                     let string_len = get_real_string_length(&value);
                                     self.strings_code.push(format!(
-                                        "const char SKYE_STRING_{}[{}] = \"{}\";\n",
+                                        "const char __SKYE_STRING_{}[{}] = \"{}\";\n",
                                         str_index, string_len, value
                                     ).as_ref());
 
                                     self.strings.insert(value, str_index);
 
                                     format!(
-                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = SKYE_STRING_{}, .length = {} }}",
+                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = {} }}",
                                         str_index, string_len
                                     ).into()
                                 }
@@ -951,7 +951,7 @@ impl CodeGen {
 
                     let mut buf = CodeOutput::new();
                     buf.push_indent();
-                    buf.push("typedef struct SKYE_STRUCT_");
+                    buf.push("typedef struct __SKYE_STRUCT_");
                     buf.push(&prepared_name);
 
                     let mut decl_buf = buf.clone();
@@ -997,7 +997,7 @@ impl CodeGen {
 
                     let mut buf = CodeOutput::new();
                     buf.push_indent();
-                    buf.push("typedef union SKYE_UNION_");
+                    buf.push("typedef union __SKYE_UNION_");
                     buf.push(&prepared_name);
 
                     let mut decl_buf = buf.clone();
@@ -1041,7 +1041,7 @@ impl CodeGen {
 
                 let mut buf = CodeOutput::new();
                 buf.push_indent();
-                buf.push("typedef struct SKYE_STRUCT_");
+                buf.push("typedef struct __SKYE_STRUCT_");
                 buf.push(&prepared_name);
 
                 let mut decl_buf = buf.clone();
@@ -1091,7 +1091,7 @@ impl CodeGen {
 
                 let mut buf = CodeOutput::new();
                 buf.push_indent();
-                buf.push("typedef enum SKYE_ENUM_");
+                buf.push("typedef enum __SKYE_ENUM_");
                 buf.push(&prepared_name);
                 buf.push(": ");
                 buf.push(&stringify_type(&type_));
