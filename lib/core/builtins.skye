@@ -146,7 +146,7 @@ namespace core {
     }
 
     impl[T] core::ArrayIterator[T] {
-        fn new(const array: &const Array[T]) Self[T] {
+        fn new(const array: &const core::Array[T]) Self[T] {
             return core::ArrayIterator.{ array, idx: 0 };
         }
 
@@ -391,11 +391,20 @@ namespace core {
     impl String {
         fn split[A = core::mem::HeapAllocator](const self, const buf: &core::Array[String, A], const ch: char) {
             let a = 0usz;
-            for let b = 0usz; b < self.length; b++ {
+            let b = 0usz;
+            while b < self.length {
                 if self[b] == ch {
                     buf.push(self.slice(a, b));
-                    a = b;
+                    a = ++b;
+                } else {
+                    b++;
                 }
+            }
+
+            if a < self.length {
+                buf.push(self.slice(a, b));
+            } else {
+                buf.push("");
             }
         }
 

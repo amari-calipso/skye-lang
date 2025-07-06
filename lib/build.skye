@@ -100,11 +100,18 @@ namespace build {
 
     fn pushAllExtern(const buf: &core::Array[char], const externLibs: &const Array[char]) {
         let a = 0usz;
-        for let b = 0usz; b < externLibs.length; b++ {
+        let b = 0usz;
+        while b < externLibs.length {
             if externLibs[b] == ',' {
                 @format(buf, "-l% ", externLibs.slice(a, b));
-                a = b;
+                a = ++b;
+            } else {
+                b++;
             }
+        }
+
+        if a < externLibs.length {
+            @format(buf, "-l% ", externLibs.slice(a, b));
         }
     }
 
