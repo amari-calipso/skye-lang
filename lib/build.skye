@@ -98,6 +98,16 @@ namespace build {
         return CCResult::Error;
     }
 
+    fn pushAllExtern(const buf: &core::Array[char], const externLibs: Array[char]) {
+        let a = 0usz;
+        for let b = 0usz; b < externLibs.length; b++ {
+            if externLibs[b] == ',' {
+                @format(buf, "-l% ", externLibs.slice(a, b));
+                a = b;
+            }
+        }
+    }
+
     fn compileC(const input: String, const output: String, const externLibs: ?String) !void {
         let buf = core::Array::new[char]();
         defer buf.free();
@@ -109,17 +119,8 @@ namespace build {
         //       (we just need better platform information, see https://github.com/amari-calipso/skye-lang/issues/50)
         //       make this an extern declaration in the stdlib
         if (!@WINDOWS) buf.pushString("-lm ");
-
-        if externLibs.isSome() {
-            let a = 0usz;
-            for let b = 0usz; b < externLibs.Some.length; b++ {
-                if externLibs.Some[b] == ',' {
-                    @format(&buf, "-l% ", externLibs.Some.slice(a, b));
-                    a = b;
-                }
-            }
-        }
-
+        
+        if (externLibs.isSome()) build::pushAllExtern(&buf, externLibs.Some);
         @format(&buf, "-o %", output);
         try build::system(buf.asString());
     }
