@@ -815,6 +815,8 @@ impl SkyeType {
                 if variants.is_none() {
                     if matches!(op, Operator::Eq | Operator::Ne) {
                         ImplementsHow::Native(ALL_INTS.into())
+                    } else if matches!(op, Operator::Ref | Operator::ConstRef) {
+                        ImplementsHow::Native(Vec::new())
                     } else {
                         ImplementsHow::No
                     }
