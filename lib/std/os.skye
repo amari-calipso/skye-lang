@@ -14,19 +14,48 @@ struct CDirent: dirent {
 #bind fn readdir(const dir: *const CDir) &CDirent;
 #bind fn closedir(const dir: *const CDir) i32;
 
+#bind fn popen(command: *const char, type: *const char) *CFile;
+#bind fn pclose(stream: *CFile) i32;
+
 namespace std {
     namespace os {
         macro SEPARATOR @WINDOWS ? '\\' : '/';
 
-        fn system(const command: String) !i32 {
-            let buf = core::Array::new[char]();
-            defer buf.free();
+        struct Command {
+            command: String
+        }
 
-            @format(&buf, "%\0", command);
-            const result = system(buf.array.ptr);
-            
-            if (result) return (!i32)::Error(result);
-            return (!i32)::Ok;
+        impl std::os::Command {
+            fn new(command: String) Self {
+                return Self.{ command };
+            }
+
+            fn __nullTerminated(const self) core::Array[char] {
+                let buf = core::Array::new[char]();
+                @format(&buf, "%\0", self.command);
+                return buf;
+            }
+
+            fn status(const self) i32 {
+                let buf = self.__nullTerminated();
+                defer buf.free();                
+                return system(buf.array.ptr);
+            }
+
+            fn output[A = core::mem::HeapAllocator](const self, const output: &core::Array[char, A]) i32!void {
+                let buf = self.__nullTerminated();
+                defer buf.free();
+
+                let stream = popen(buf.array.ptr, `r\0`);
+                if (stream == @nullptr) return (i32!void)::Error;
+
+                let file = core::io::File::fromCFile(stream);
+                file.readAll(output);
+
+                const exitCode = pclose(stream);
+                if (exitCode < 0) return (i32!void)::Error;
+                return (i32!void)::Ok(exitCode);
+            }
         }
 
         fn removeFile(const file: String) !String {

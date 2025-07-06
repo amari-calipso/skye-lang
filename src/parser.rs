@@ -743,7 +743,7 @@ impl Parser {
         if !self.check(TokenType::RightBrace) {
             loop {
                 let expressions = {
-                    if self.match_(&[TokenType::Default]) {
+                    if self.match_(&[TokenType::Else]) {
                         None
                     } else {
                         let mut exprs = Vec::new();
@@ -1572,6 +1572,24 @@ impl Parser {
         Some(Statement::Interface { name, declarations, types })
     }
 
+    fn extern_statement(&mut self) -> Option<Statement> {
+        let kw = self.previous().clone();
+
+        let mut libraries = Vec::new();
+
+        while !self.check(TokenType::Semicolon) {
+            let library = self.consume(TokenType::Identifier, "Expecting library name")?;
+            libraries.push(library.clone());
+
+            if !self.match_(&[TokenType::Comma]) {
+                break;
+            }
+        }
+
+        self.consume(TokenType::Semicolon, "Expecting ';' after extern declaration")?;
+        Some(Statement::Extern { kw, libraries })
+    }
+
     fn declaration(&mut self, method: bool, incoming_generics: &Vec<Generic>, self_generics: &Vec<Expression>) -> Option<Statement> {
         if self.match_(&[TokenType::Fn]) {
             return self.function(method, incoming_generics, self_generics);
@@ -1617,8 +1635,18 @@ impl Parser {
             return self.interface();
         }
 
+        if self.match_(&[TokenType::Extern]) {
+            return self.extern_statement();
+        }
+
         if self.match_(&[TokenType::Hash]) {
-            let name = self.consume(TokenType::Identifier, "Expecting qualifier name after '#'")?.clone();
+            let name = {
+                if self.match_(&[TokenType::Extern]) {
+                    self.previous().clone()
+                } else {
+                    self.consume(TokenType::Identifier, "Expecting qualifier name after '#'")?.clone()
+                }
+            };
 
             if let Some(old_tok) = self.curr_qualifiers.get(&name.lexeme) {
                 token_error!(self, name, "Cannot use same qualifier twice");

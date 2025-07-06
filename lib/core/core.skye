@@ -243,6 +243,68 @@ impl[T] core::Slice[T] {
     fn __ge__(const self, const other: &const Self[T]) bool {
         return other.__le__(self);
     }
+
+    fn slice(const self, const a: usz, const b: usz) Self[T] {
+        if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || a < self.length && b <= self.length {
+            return core::Slice::new(self.ptr + a, b - a);
+        } else {
+            @panic("Slice::slice: out of bounds access");
+        }
+    }
+}
+
+impl String {
+    fn stripRight(const self) String {
+        let i = self.length;
+
+        while i-- > 0 {
+            switch self[i] {
+                ' ' | '\n' | '\t' | '\r' {}
+                else -> break;
+            }
+        }
+
+        return self.slice(0, i + 1);
+    }
+
+    fn stripLeft(const self) String {
+        let i = 0usz;
+
+        while i < self.length {
+            switch self[i] {
+                ' ' | '\n' | '\t' | '\r' {
+                    i++;
+                }
+                else -> break;
+            }
+        }
+
+        return self.slice(i, self.length);
+    }
+
+    fn strip(const self) String {
+        let a = 0usz;
+
+        while a < self.length {
+            switch self[a] {
+                ' ' | '\n' | '\t' | '\r' {
+                    a++;
+                }
+                else -> break;
+            }
+        }
+
+        let b = self.length;
+
+        while b-- > 0 {
+            switch self[b] {
+                ' ' | '\n' | '\t' | '\r' {}
+                else -> break;
+            }
+        }
+
+        return self.slice(a, b + 1);
+    }
 }
 
 impl[T] core::SliceIterator[T] {
@@ -259,8 +321,8 @@ impl[T] core::Option[T] {
     fn expect(const self, msg: String) T {
         if self.kind == core::Option::Kind::Some {
             switch T {
-                void    -> return;
-                default -> return self.Some;
+                void -> return;
+                else -> return self.Some;
             }
         } else {
             @panic(msg);
@@ -276,8 +338,8 @@ impl[T, U] core::Result[T, U] {
     fn expect(const self, msg: String) T {
         if self.kind == core::Result::Kind::Ok {
             switch T {
-                void    -> return;
-                default -> return self.Ok;
+                void -> return;
+                else -> return self.Ok;
             }
         } else {
             @panic(msg);

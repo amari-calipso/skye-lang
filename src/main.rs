@@ -7,12 +7,9 @@ use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_pack
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BUILD_FILE_INIT: &[u8] = concat!(
-    "import \"build\";\n",
-    "use core::compiler::Checks;\n\n",
+    "import \"build\";\n\n",
     "fn main() !void {\n",
-    "    try build::compileSkye(\"src/main.skye\", \"tmp.c\", Checks::Debug);\n",
-    "    try build::compileCDefault(\"tmp.c\", \"helloworld\");\n",
-    "    try build::removeFile(\"tmp.c\");\n\n",
+    "    try build::compileSkye(\"src/main.skye\", \"helloworld\", build::Conf::default());\n",
     "    return (!void)::Ok;\n",
     "}"
 ).as_bytes();
@@ -58,6 +55,10 @@ enum CompilerCommand {
         #[arg(long, default_value_t = false)]
         /// Whether to emit C source code instead of an executable
         emit_c: bool,
+
+        #[arg(long, default_value_t = false)]
+        /// Whether to print a comma separated list of all libraries declared as "extern" in the program
+        list_extern: bool,
 
         #[arg(short, long, default_value_t, value_enum)]
         /// Level of compiler-inserted checks
@@ -154,9 +155,10 @@ fn main() -> Result<(), Error> {
     let mut config = CompilerConfig::new(skyec, skye_path, args.primitives, args.no_builtins, args.no_panic);
 
     match args.command {
-        CompilerCommand::Compile { file, emit_c, checks, output } => {
+        CompilerCommand::Compile { file, emit_c, checks, output, list_extern } => {
             config.checks = checks;
 
+            let extern_libs;
             if emit_c {
                 let output_file = OsString::from({
                     if output.len() == 0 {
@@ -166,7 +168,7 @@ fn main() -> Result<(), Error> {
                     }
                 });
 
-                compile_file_to_c(&file, &output_file, config)?;
+                extern_libs = compile_file_to_c(&file, &output_file, config)?;
             } else {
                 let output_file = OsString::from({
                     if output.len() == 0 {
@@ -176,7 +178,17 @@ fn main() -> Result<(), Error> {
                     }
                 });
 
-                compile_file_to_exec(&file, &output_file, config)?;
+                extern_libs = compile_file_to_exec(&file, &output_file, config)?;
+            }
+
+            if list_extern {
+                for (i, lib) in extern_libs.iter().enumerate() {
+                    print!("{}", lib);
+
+                    if i != extern_libs.len() - 1 {
+                        print!(",");
+                    }
+                }
             }
         }
         CompilerCommand::Run { file, program_args } => {

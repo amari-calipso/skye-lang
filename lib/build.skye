@@ -14,28 +14,63 @@ namespace build {
 
     fn system(const command: String) !void {
         @println("build::system: \"%\"", command);
-        return build::wrap("build::system: non-zero return code", std::os::system(command));
+        const exitCode = std::os::Command::new(command).status();
+        if exitCode != 0 {
+            @println("build::system: non-zero exit code: %", exitCode);
+            return (!void)::Error;
+        }
+
+        return (!void)::Ok;
     }
 
     fn removeFile(const file: String) !void {
         @println("build::removeFile: \"%\"", file);
         return build::wrap("build::removeFile", std::os::removeFile(file));
     }
+    
+    struct Conf {
+        checks: core::compiler::Checks,
+        externLibs: ?&Array[char]
+    }
 
-    fn compileSkye(const input: String, const output: String, const checks: core::compiler::Checks) !void {
+    impl build::Conf {
+        fn default() Self {
+            return Self.{ checks: core::compiler::Checks::Debug, externLibs: (?&Array[char])::None };
+        }
+    }
+
+    fn compileSkyeToC(const input: String, const output: String, const conf: build::Conf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
         @format(&buf, " compile % --emit-c -o %", input, output);
 
-        switch checks {
+        switch conf.checks {
             core::compiler::Checks::Debug {}
             core::compiler::Checks::Release       -> @format(&buf, " -c release");
             core::compiler::Checks::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
-            default -> @unreachable;
+            else -> @unreachable;
         }
 
-        try build::system(buf.asString());
+        if conf.externLibs.isSome() {
+            buf += " --list-extern";
+            @println("build::compileSkyeToC: \"%\"", buf);
+
+            const result = std::os::Command::new(buf.asString()).output(conf.externLibs.Some);
+            if result.isError() {
+                @println("build::compileSkyeToC: failed to execute command");
+                return (!void)::Error;
+            }
+
+            if result.Ok != 0 {
+                @println("build::compileSkyeToC: non-zero exit code: %", result.Ok);
+                return (!void)::Error;
+            }
+        } else {
+            try build::system(buf.asString());
+        }
+
+        return (!void)::Ok;
     }
 
     fn cc() String!void {
@@ -49,19 +84,12 @@ namespace build {
         if cc.isSome() {
             build::__cc = (?String)::Some(cc.Some);
             return CCResult::Ok(build::__cc.Some);
-        } else {
-            if @UNIX_LIKE && build::system("cc --version").isOk() {
+        } else if @UNIX_LIKE {
+            if build::system("cc --version").isOk() {
                 build::__cc = (?String)::Some("cc");
                 return CCResult::Ok(build::__cc.Some);
             }
 
-            if !@MAC_OS && build::system("c99 --version").isOk() {
-                build::__cc = (?String)::Some("c99");
-                return CCResult::Ok(build::__cc.Some);
-            }
-        }
-
-        if @UNIX_LIKE {
             @println("Could not find C compiler. Install a default C compiler or set the CC environment variable");
         } else {
             @println("Could not find C compiler. Is the CC environment variable set?");
@@ -70,18 +98,65 @@ namespace build {
         return CCResult::Error;
     }
 
-    fn compileCDefault(const input: String, const output: String) !void {
+    fn compileC(const input: String, const output: String, const externLibs: ?String) !void {
         let buf = core::Array::new[char]();
         defer buf.free();
 
         const cc = try build::cc();
-        @format(&buf, "% ", cc);
-        if (cc != "c99") buf.pushString("--std=c99 ");
-        @format(&buf, "-w % ", input);
+        @format(&buf, "% -w % ", cc, input);
+
+        // TODO: once we have a mechanism to conditionally define extern libs 
+        //       (we just need better platform information, see https://github.com/amari-calipso/skye-lang/issues/50)
+        //       make this an extern declaration in the stdlib
         if (!@WINDOWS) buf.pushString("-lm ");
+
+        if externLibs.isSome() {
+            let a = 0usz;
+            for let b = 0usz; b < externLibs.Some.length; b++ {
+                if externLibs.Some[b] == ',' {
+                    @format(&buf, "-l% ", externLibs.Some.slice(a, b));
+                    a = b;
+                }
+            }
+        }
+
         @format(&buf, "-o %", output);
         try build::system(buf.asString());
     }
+
+    fn compileSkye(const input: String, const output: String, const conf: build::Conf) !void {
+        let buf = core::Array::from(core::compiler::@EXECUTABLE);
+        defer buf.free();
+
+        @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input, output);
+
+        switch conf.checks {
+            core::compiler::Checks::Debug {}
+            core::compiler::Checks::Release       -> @format(&buf, " -c release");
+            core::compiler::Checks::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
+            else -> @unreachable;
+        }
+
+        @println("build::compileSkye: \"%\"", buf);
+
+        let externBuf = core::Array::new[char]();
+        defer externBuf.free();
+
+        const result = std::os::Command::new(buf.asString()).output(&externBuf);
+        if result.isError() {
+            @println("build::compileSkye: failed to execute command");
+            return (!void)::Error;
+        }
+
+        if result.Ok != 0 {
+            @println("build::compileSkye: non-zero exit code: %", result.Ok);
+            return (!void)::Error;
+        }
+
+        try build::compileC("tmp.c", output, (?String)::Some(externBuf.asString()));
+        let _ = build::removeFile("tmp.c");
+        return (!void)::Ok;
+    }    
 }
 
 #init fn _SKYE_BUILD_INIT() {

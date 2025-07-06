@@ -40,11 +40,11 @@ impl<'a> Scanner<'a> {
         keywords.insert(    "macro", TokenType::Macro);
         keywords.insert(    "union", TokenType::Union);
         keywords.insert(    "while", TokenType::While);
+        keywords.insert(   "extern", TokenType::Extern);
         keywords.insert(   "import", TokenType::Import);
         keywords.insert(   "return", TokenType::Return);
         keywords.insert(   "struct", TokenType::Struct);
         keywords.insert(   "switch", TokenType::Switch);
-        keywords.insert(  "default", TokenType::Default);
         keywords.insert( "continue", TokenType::Continue);
         keywords.insert("interface", TokenType::Interface);
         keywords.insert("namespace", TokenType::Namespace);

@@ -386,89 +386,29 @@ namespace core {
                 self.push(string[i]);
             }
         }
+    }
 
-        fn stripRight(self) Self[char, U] {
-            let i = self.length;
-
-            while i-- > 0 {
-                switch self.array[i] {
-                    ' ' | '\n' | '\t' | '\r' {}
-                    default {
-                        break;
-                    }
-                }
-            }
-
-            return Self::initFrom(self.slice(0, i + 1), self.allocator);
-        }
-
-        fn stripLeft(self) Self[char, U] {
-            let i = 0usz;
-
-            while i < self.length {
-                switch self.array[i] {
-                    ' ' | '\n' | '\t' | '\r' {
-                        i++;
-                    }
-                    default {
-                        break;
-                    }
-                }
-            }
-
-            return Self::initFrom(self.slice(i, self.length), self.allocator);
-        }
-
-        fn strip(self) Self[char, U] {
+    impl String {
+        fn split[A = core::mem::HeapAllocator](const self, const buf: &core::Array[String, A], const ch: char) {
             let a = 0usz;
-
-            while a < self.length {
-                switch self.array[a] {
-                    ' ' | '\n' | '\t' | '\r' {
-                        a++;
-                    }
-                    default {
-                        break;
-                    }
-                }
-            }
-
-            let b = self.length;
-
-            while b-- > 0 {
-                switch self.array[b] {
-                    ' ' | '\n' | '\t' | '\r' {}
-                    default {
-                        break;
-                    }
-                }
-            }
-
-            return Self::initFrom(self.slice(a, b + 1), self.allocator);
-        }
-
-        fn split[A = core::mem::HeapAllocator](self, const buf: &core::Array[Self[char, U], A], const ch: char) {
-            buf.push(Self::init[char, U](self.allocator));
-
-            for let i = 0usz; i < self.length; i++ {
-                if self.array[i] == ch {
-                    buf.push(Self::init[char, U](self.allocator));
-                } else {
-                    buf.last().unwrap().push(self.array[i]);
+            for let b = 0usz; b < self.length; b++ {
+                if self[b] == ch {
+                    buf.push(self.slice(a, b));
+                    a = b;
                 }
             }
         }
 
-        fn allocSplit[A = core::mem::HeapAllocator](self, const alloc: &A, const ch: char) core::Array[Self[char, U], A] {
-            let buf = core::Array::init[Self[char, U], A](alloc);
+        fn allocSplit[A = core::mem::HeapAllocator](const self, const alloc: &A, const ch: char) core::Array[String, A] {
+            let buf = core::Array::init[String, A](alloc);
             self.split(&buf, ch);
             return buf;
         }
 
-        fn __parseIntInternal[T](self, doMinus: bool) ?T {
+        fn __parseIntInternal[T](const self, doMinus: bool) ?T {
             let i = self.length;
 
-            if i == 0 || ((self.array[0] < '0' || self.array[0] > '9') && self.array[0] != '-') {
+            if i == 0 || ((self[0] < '0' || self[0] > '9') && self[0] != '-') {
                 return (?T)::None;
             }
 
@@ -476,12 +416,12 @@ namespace core {
             let result: T = 0;
 
             while i-- > 0 {
-                const ch = self.array[i];
+                const ch = self[i];
 
                 if '0' <= ch && ch <= '9' {
                     result += @cast(T, ch - 48) * @cast(T, pow(10f64, e++));
                 } else if doMinus && ch == '-' {
-                    if result == 0 || self.array[0] != '-' {
+                    if result == 0 || self[0] != '-' {
                         return (?T)::None;
                     }
 
@@ -495,17 +435,13 @@ namespace core {
             return (?T)::Some(result);
         }
 
-        fn parseInt[T](self) ?T {
-            let buf = self.strip();
-            defer buf.free();
-            return buf.__parseIntInternal[T](true);
+        fn parseInt[T](const self) ?T {
+            let string = self.strip();
+            return string.__parseIntInternal[T](true);
         }
 
-        fn parseFloat[T](self) ?T {
-            let stripped = self.strip();
-            defer stripped.free();
-
-            let splitted = stripped.split('.');
+        fn parseFloat[T](const self) ?T {
+            let splitted = self.strip().allocSplit(core::mem::heapAllocator, '.');
             defer splitted.free();
 
             if splitted.length > 2 {
@@ -537,6 +473,37 @@ namespace core {
             }
         }
     }
+
+    impl[U = core::mem::HeapAllocator] core::Array[char, U] {
+        fn stripRight(const self) String {
+            return self.asString().stripRight();
+        }
+
+        fn stripLeft(const self) String {
+            return self.asString().stripLeft();
+        }
+
+        fn strip(const self) String {
+            return self.asString().strip();
+        }
+
+        fn parseInt[T](const self) ?T {
+            return self.asString().parseInt[T]();
+        }
+
+        fn split[A = core::mem::HeapAllocator](const self, const buf: &core::Array[String, A], const ch: char) {
+            self.asString().split(buf, ch);
+        }
+
+        fn allocSplit[A = core::mem::HeapAllocator](const self, const alloc: &A, const ch: char) core::Array[String, A] {
+            return self.asString().allocSplit(alloc, ch);
+        }
+
+        fn parseFloat[T](const self) ?T {
+            return self.asString().parseFloat[T]();
+        }
+    }
+
 
     impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
         fn __setadd__[S: T | Self[T, U] | Slice[T]](self, const other: &const S) Self[T, U] {
@@ -670,7 +637,7 @@ impl core::io::File {
                 @sizeOf(char), 1
             );
 
-            if amtRead != 1 || buf.array[buf.length] == '\n' {
+            if amtRead != 1 || buf.array[buf.length] == '\n' || buf.array[buf.length] == @EOF {
                 break;
             }
 
@@ -684,6 +651,34 @@ impl core::io::File {
     fn allocReadLine[U = core::mem::HeapAllocator](self, const alloc: &U) core::Array[char, U] {
         let buf = core::Array::init[char, U](alloc);
         self.readLine(&buf);
+        return buf;
+    }
+
+    fn readAll[A = core::mem::HeapAllocator](self, const buf: &core::Array[char, A]) usz {
+        let r = 0usz;
+
+        while true {
+            buf.grow(1);
+
+            const amtRead = self.readRaw(
+                @cast(voidptr, buf.array.ptr + buf.length),
+                @sizeOf(char), 1
+            );
+
+            if amtRead != 1 || buf.array[buf.length] == @EOF {
+                break;
+            }
+
+            buf.length++;
+            r++;
+        }
+
+        return r;
+    }
+
+    fn allocReadAll[U = core::mem::HeapAllocator](self, const alloc: &U) core::Array[char, U] {
+        let buf = core::Array::init[char, U](alloc);
+        self.readAll(&buf);
         return buf;
     }
 }

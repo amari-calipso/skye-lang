@@ -177,7 +177,7 @@ switch a {
     // you can use an arrow instead of a block if you want to use a single statement for a case
     0 -> @println("Still nope");
     2 -> @println("Here!");
-    default {
+    else {
         @println("Something else");
     }
 }
@@ -515,7 +515,7 @@ fn which32[T: u32 | i32 | f32](x: T) {
         u32 -> @println("got a u32");
         i32 -> @println("got a i32");
         f32 -> @println("got a f32");
-        default -> @unreachable;
+        else -> @unreachable;
     }
 }
 ```

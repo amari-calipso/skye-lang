@@ -126,7 +126,12 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
     }
 }
 
-pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler_conf: CompilerConfig) -> Option<String> {
+pub struct CompilationResult {
+    pub code: String,
+    pub extern_libs: Vec<Rc<str>>
+}
+
+pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler_conf: CompilerConfig) -> Option<CompilationResult> {
     let mut statements = parse(source, Rc::clone(&filename))?;
     prepare_base_imports(&mut statements, source, filename, &compiler_conf);
 
@@ -166,7 +171,8 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
     }
 
     let mut codegen = CodeGen::new();
-    codegen.generate(IrGen::get_definitions(irgen.definitions))
+    let code = codegen.generate(IrGen::get_definitions(irgen.definitions))?;
+    Some(CompilationResult { code, extern_libs: IrGen::get_extern(irgen.extern_libs) })
 }
 
 pub fn parse_file(path: &OsStr) -> Result<Vec<Statement>, Error> {
@@ -181,7 +187,7 @@ pub fn parse_file(path: &OsStr) -> Result<Vec<Statement>, Error> {
     }
 }
 
-pub fn compile_file(path: &OsStr, compiler_conf: CompilerConfig) -> Result<String, Error> {
+pub fn compile_file(path: &OsStr, compiler_conf: CompilerConfig) -> Result<CompilationResult, Error> {
     let mut f = File::open(path)?;
     let mut input = String::new();
     f.read_to_string(&mut input)?;
@@ -190,61 +196,54 @@ pub fn compile_file(path: &OsStr, compiler_conf: CompilerConfig) -> Result<Strin
         .ok_or(Error::other("Compilation failed"))
 }
 
-pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<(), Error> {
-    let code = compile_file(input, compiler_conf)?;
+pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<Vec<Rc<str>>, Error> {
+    let result = compile_file(input, compiler_conf)?;
     let mut f = File::create(output)?;
-    f.write_all(code.as_bytes())?;
-    Ok(())
+    f.write_all(result.code.as_bytes())?;
+    Ok(result.extern_libs)
 }
 
-pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
-    let mut needs_std = true;
+pub fn compile_c(input: &OsStr, output: &OsStr, extern_libs: &Vec<Rc<str>>) -> Result<(), Error> {
     let mut command = 'cc_command: {
         match std::env::var("CC") {
             Ok(cc) => Command::new(cc),
             Err(e) => {
-                if cfg!(unix) && 
-                    Command::new("cc").arg("--version")
-                        .output()?.status.success() 
-                {
-                    break 'cc_command Command::new("cc");
-                }
-
-                if cfg!(not(target_os = "macos")) && 
-                    Command::new("c99").arg("--version")
-                        .output()?.status.success() 
-                {
-                    needs_std = false;
-                    break 'cc_command Command::new("c99");
-                }
-
                 if cfg!(unix) {
+                    if Command::new("cc").arg("--version")
+                        .output()?.status.success() 
+                    {
+                        break 'cc_command Command::new("cc");
+                    }
+
                     return Err(Error::other(format!(
                         concat!(
                             "Could not find C compiler: {}\n",
                             "Install a default C compiler or set the CC environment variable"
                         ), e
                     ).as_str()));
-                } else {
-                    return Err(Error::other(format!(
-                        concat!(
-                            "Could not find C compiler: {}\n",
-                            "Is the CC environment variable set?"
-                        ), e
-                    ).as_str()));
                 }
+
+                return Err(Error::other(format!(
+                    concat!(
+                        "Could not find C compiler: {}\n",
+                        "Is the CC environment variable set?"
+                    ), e
+                ).as_str()));
             }
         }
     };
 
-    if needs_std {
-        command.arg("--std=c99");
-    }
-
     command.arg("-w").arg(input);
 
+    // TODO: once we have a mechanism to conditionally define extern libs 
+    //       (we just need better platform information, see https://github.com/amari-calipso/skye-lang/issues/50)
+    //       make this an extern declaration in the stdlib
     if cfg!(not(windows)) {
         command.arg("-lm");
+    }
+
+    for lib in extern_libs {
+        command.arg(format!("-l{lib}"));
     }
 
     command.arg("-o").arg(output);
@@ -256,15 +255,14 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn compile_file_to_exec(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<(), Error> {
+pub fn compile_file_to_exec(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<Vec<Rc<str>>, Error> {
     let buf = compiler_conf.skye_path.join("tmp.c");
     let tmp_c = OsStr::new(buf.to_str().expect("Couldn't convert PathBuf to &str"));
 
-    compile_file_to_c(input, tmp_c, compiler_conf)?;
-    println!("Skye compilation was successful. Calling C compiler...\n");
-    basic_compile_c(tmp_c, output)?;
+    let extern_libs = compile_file_to_c(input, tmp_c, compiler_conf)?;
+    compile_c(tmp_c, output, &extern_libs)?;
     remove_file(tmp_c)?;
-    Ok(())
+    Ok(extern_libs)
 }
 
 pub fn run_skye(file: OsString, program_args: &Option<Vec<String>>, compiler_conf: CompilerConfig) -> Result<(), Error> {

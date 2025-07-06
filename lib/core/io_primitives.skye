@@ -27,6 +27,8 @@ macro stdout -> *CFile;
 macro stderr -> *CFile;
 macro stdin  -> *CFile;
 
+macro EOF -> char;
+
 let errno: i32;
 
 namespace core {

@@ -60,6 +60,8 @@ pub struct IrGen {
     pub definitions: Vec<Rc<RefCell<IrStatement>>>,
     curr_definition: Option<Rc<RefCell<IrStatement>>>,
 
+    pub extern_libs: HashMap<Rc<str>, Token>,
+
     string_type: Option<SkyeType>,
     tmp_var_cnt: usize,
 
@@ -104,6 +106,7 @@ impl IrGen {
 
         IrGen {
             definitions,
+            extern_libs: HashMap::new(),
             curr_definition: None,
             curr_name: String::new(),
             environment: Rc::clone(&globals),
@@ -7692,6 +7695,20 @@ impl IrGen {
                     let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
                 }
             }
+            Statement::Extern { kw, libraries } => {
+                if matches!(self.curr_function, CurrentFn::Some { .. }) {
+                    token_error!(self, kw, "Extern declarations are only allowed in the global scope");
+                }
+
+                for library in libraries {
+                    if let Some(existing) = self.extern_libs.get(&library.lexeme) {
+                        token_error!(self, library, "Cannot declare library as extern multiple times");
+                        token_note!(existing, "Previously declared here");
+                    } else {
+                        self.extern_libs.insert(Rc::clone(&library.lexeme), library.clone());
+                    }
+                }
+            }
         }
 
         Ok(None)
@@ -7711,5 +7728,9 @@ impl IrGen {
 
         definitions.retain(|x| !x.contains_unknown());
         definitions
+    }
+
+    pub fn get_extern(extern_libs: HashMap<Rc<str>, Token>) -> Vec<Rc<str>> {
+        extern_libs.into_iter().map(|(x, _)| x).collect()
     }
 }

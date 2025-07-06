@@ -494,6 +494,10 @@ pub enum Statement {
         name: Token,
         declarations: Option<Vec<Statement>>,
         types: Option<Vec<Expression>>
+    },
+    Extern {
+        kw: Token,
+        libraries: Vec<Token>
     }
 }
 
@@ -530,7 +534,8 @@ impl Ast for Statement {
             Statement::Union { name: tok, .. } |
             Statement::Macro { name: tok, .. } |
             Statement::Foreach { kw: tok, .. } |
-            Statement::Interface { name: tok, .. } => {
+            Statement::Interface { name: tok, .. } |
+            Statement::Extern { kw: tok, .. } => {
                 AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
             }
         }
@@ -538,8 +543,11 @@ impl Ast for Statement {
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Statement {
         match self {
-            Statement::Empty | Statement::Break(_) | Statement::Continue(_) |
-            Statement::Import { .. } => self.clone(),
+            Statement::Empty | 
+            Statement::Break(_) | 
+            Statement::Continue(_) |
+            Statement::Import { .. } | 
+            Statement::Extern { .. } => self.clone(),
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),
             Statement::VarDecl { name: var_name, initializer, type_, is_const, qualifiers } => {
