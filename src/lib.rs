@@ -48,7 +48,7 @@ pub fn parse(source: &String, filename: Rc<str>) -> Option<Vec<Statement>> {
 }
 
 #[derive(ValueEnum, Clone, Copy, Default, Debug)]
-pub enum CompileMode {
+pub enum Checks {
     #[default]
     Debug,
     Release,
@@ -56,14 +56,25 @@ pub enum CompileMode {
 }
 
 #[derive(Clone)]
-pub struct CompilerFlags {
+pub struct CompilerConfig {
+    pub skye_path: PathBuf,
+    pub skyec: PathBuf,
     pub no_builtins: bool, 
     pub no_panic: bool,
     pub primitives: String,
-    pub compile_mode: CompileMode
+    pub checks: Checks
 }
 
-fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filename: Rc<str>, compiler_flags: &CompilerFlags) {
+impl CompilerConfig {
+    pub fn new(skyec: PathBuf, skye_path: PathBuf, primitives: String, no_builtins: bool, no_panic: bool) -> Self {
+        CompilerConfig { 
+            skye_path, skyec, primitives, no_builtins, no_panic, 
+            checks: Checks::Debug
+        }
+    }
+}
+
+fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filename: Rc<str>, compiler_conf: &CompilerConfig) {
     statements.insert(
         0,
         Statement::Import { path: Token::new(
@@ -75,7 +86,7 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
         ), type_: ImportType::Default }
     );
 
-    if compiler_flags.no_builtins {
+    if compiler_conf.no_builtins {
         return;
     }
 
@@ -85,7 +96,7 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
             Rc::from(source.as_ref()),
             Rc::clone(&filename),
             TokenType::Identifier,
-            Rc::from(compiler_flags.primitives.as_ref()),
+            Rc::from(compiler_conf.primitives.as_ref()),
             0, 1, 0
         ), type_: ImportType::Default }
     );
@@ -101,7 +112,7 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
         ), type_: ImportType::Default }
     );
 
-    if !compiler_flags.no_panic {
+    if !compiler_conf.no_panic {
         statements.insert(
             3,
             Statement::Import { path: Token::new(
@@ -115,11 +126,11 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
     }
 }
 
-pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler_flags: CompilerFlags, skye_path: PathBuf) -> Option<String> {
+pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler_conf: CompilerConfig) -> Option<String> {
     let mut statements = parse(source, Rc::clone(&filename))?;
-    prepare_base_imports(&mut statements, source, filename, &compiler_flags);
+    prepare_base_imports(&mut statements, source, filename, &compiler_conf);
 
-    let mut import_processor = ImportProcessor::new(path, skye_path.clone());
+    let mut import_processor = ImportProcessor::new(path, compiler_conf.skye_path.clone());
     import_processor.process(&mut statements);
 
     if import_processor.errors != 0 {
@@ -133,7 +144,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
         return None;
     }
 
-    let mut macro_expander = MacroExpander::new(compiler_flags.compile_mode);
+    let mut macro_expander = MacroExpander::new(compiler_conf.clone());
     macro_expander.expand(&mut statements);
 
     if macro_expander.errors != 0 {
@@ -147,7 +158,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
         return None;
     }
 
-    let mut irgen = IrGen::new(path, compiler_flags.compile_mode, skye_path);
+    let mut irgen = IrGen::new(path, compiler_conf);
     irgen.compile(statements);
 
     if irgen.errors != 0 {
@@ -170,17 +181,17 @@ pub fn parse_file(path: &OsStr) -> Result<Vec<Statement>, Error> {
     }
 }
 
-pub fn compile_file(path: &OsStr, compiler_flags: CompilerFlags, skye_path: PathBuf) -> Result<String, Error> {
+pub fn compile_file(path: &OsStr, compiler_conf: CompilerConfig) -> Result<String, Error> {
     let mut f = File::open(path)?;
     let mut input = String::new();
     f.read_to_string(&mut input)?;
 
-    compile(&input, PathBuf::from(path).parent(), Rc::from(path.to_str().unwrap()), compiler_flags, skye_path)
+    compile(&input, PathBuf::from(path).parent(), Rc::from(path.to_str().unwrap()), compiler_conf)
         .ok_or(Error::other("Compilation failed"))
 }
 
-pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compiler_flags: CompilerFlags, skye_path: PathBuf) -> Result<(), Error> {
-    let code = compile_file(input, compiler_flags, skye_path)?;
+pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<(), Error> {
+    let code = compile_file(input, compiler_conf)?;
     let mut f = File::create(output)?;
     f.write_all(code.as_bytes())?;
     Ok(())
@@ -232,22 +243,22 @@ pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn compile_file_to_exec(input: &OsStr, output: &OsStr, compiler_flags: CompilerFlags, skye_path: PathBuf) -> Result<(), Error> {
-    let buf = skye_path.join("tmp.c");
+pub fn compile_file_to_exec(input: &OsStr, output: &OsStr, compiler_conf: CompilerConfig) -> Result<(), Error> {
+    let buf = compiler_conf.skye_path.join("tmp.c");
     let tmp_c = OsStr::new(buf.to_str().expect("Couldn't convert PathBuf to &str"));
 
-    compile_file_to_c(input, tmp_c, compiler_flags, skye_path)?;
+    compile_file_to_c(input, tmp_c, compiler_conf)?;
     println!("Skye compilation was successful. Calling C compiler...\n");
     basic_compile_c(tmp_c, output)?;
     remove_file(tmp_c)?;
     Ok(())
 }
 
-pub fn run_skye(file: OsString, program_args: &Option<Vec<String>>, compiler_flags: CompilerFlags, skye_path: PathBuf) -> Result<(), Error> {
-    let buf = skye_path.join("tmp");
+pub fn run_skye(file: OsString, program_args: &Option<Vec<String>>, compiler_conf: CompilerConfig) -> Result<(), Error> {
+    let buf = compiler_conf.skye_path.join("tmp");
     let tmp = OsStr::new(buf.to_str().expect("Couldn't convert PathBuf to OsStr"));
 
-    compile_file_to_exec(&file, &OsString::from(tmp), compiler_flags, skye_path)?;
+    compile_file_to_exec(&file, &OsString::from(tmp), compiler_conf)?;
     let mut com = Command::new(tmp);
 
     if let Some(args) = program_args {

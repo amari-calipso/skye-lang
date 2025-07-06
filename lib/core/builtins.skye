@@ -63,7 +63,7 @@ namespace core {
 
         fn __subscript__(self, const offs: usz) *T {
             const r = self.ptr + offs;
-            if @COMPILE_MODE == 2 || self.min <= r && r <= self.max {
+            if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || self.min <= r && r <= self.max {
                 return r;
             } else {
                 @panic("Ptr: out of bounds access");
@@ -72,7 +72,7 @@ namespace core {
 
         fn __constsubscript__(const self, const offs: usz) *const T {
             const r = self.ptr + offs;
-            if @COMPILE_MODE == 2 || self.min <= r && r <= self.max {
+            if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || self.min <= r && r <= self.max {
                 return r;
             } else {
                 @panic("Ptr: out of bounds access");
@@ -315,7 +315,7 @@ namespace core {
         }
 
         fn __subscript__(self, const idx: usz) *T {
-            if @COMPILE_MODE == 2 || idx < self.length {
+            if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || idx < self.length {
                 return &self.array[idx];
             } else {
                 @panic("Array: out of bounds access");
@@ -323,7 +323,7 @@ namespace core {
         }
 
         fn __constsubscript__(const self, const idx: usz) *const T {
-            if @COMPILE_MODE == 2 || idx < self.length {
+            if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || idx < self.length {
                 return &const self.array[idx];
             } else {
                 @panic("Array: out of bounds access");
@@ -331,7 +331,7 @@ namespace core {
         }
 
         fn slice(const self, const a: usz, const b: usz) core::Slice[T] {
-            if @COMPILE_MODE == 2 || a < self.length && b <= self.length {
+            if core::compiler::@CHECKS == core::compiler::Checks::ReleaseUnsafe || a < self.length && b <= self.length {
                 return core::Slice::new(self.array.ptr + a, b - a);
             } else {
                 @panic("Array::slice: out of bounds access");
@@ -343,7 +343,7 @@ namespace core {
         }
 
         fn swap(self, const a: usz, const b: usz) {
-            if @COMPILE_MODE != 2 && (a > self.length || b > self.length) {
+            if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && (a > self.length || b > self.length) {
                 @panic("Array::swap: out of bounds access");
             }
 
@@ -576,7 +576,7 @@ namespace core {
         }
 
         fn floatToString[T: AnyFloat, U](const buf: &core::Array[char, U], const value: T, const decPrecision: usz) {
-            if @COMPILE_MODE == 0 && decPrecision < 0 {
+            if core::compiler::@CHECKS == core::compiler::Checks::Debug && decPrecision < 0 {
                 @panic("core::fmt::floatToString: Negative precision");
             }
 

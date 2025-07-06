@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, CompileMode
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -55,7 +55,7 @@ struct CurrLoop {
 
 pub struct IrGen {
     source_path: Option<Box<PathBuf>>,
-    skye_path:   PathBuf,
+    config: CompilerConfig,
 
     pub definitions: Vec<Rc<RefCell<IrStatement>>>,
     curr_definition: Option<Rc<RefCell<IrStatement>>>,
@@ -71,12 +71,11 @@ pub struct IrGen {
     curr_name:     String,
     curr_loop:     Option<CurrLoop>,
 
-    pub errors:   usize,
-    compile_mode: CompileMode
+    pub errors: usize
 }
 
 impl IrGen {
-    pub fn new(path: Option<&Path>, compile_mode: CompileMode, skye_path: PathBuf) -> Self {
+    pub fn new(path: Option<&Path>, config: CompilerConfig) -> Self {
         let globals = Rc::new(RefCell::new(Environment::new()));
         globals.borrow_mut().define(
             Rc::from("voidptr"),
@@ -112,7 +111,7 @@ impl IrGen {
             curr_function: CurrentFn::None,
             string_type: None, tmp_var_cnt: 0,
             curr_loop: None, errors: 0,
-            compile_mode, globals, skye_path,
+            globals, config,
             source_path: path.map(|x| Box::new(PathBuf::from(x))),
         }
     }
@@ -556,7 +555,7 @@ impl IrGen {
 
                                     ast_note!(portion_expr, "Implement a \"asString\" or \"toString\" method to be able to print this type");
                                     token_note!(tok, "This error occurred while evaluating this interpolated string");
-                                    Expression::VoidLiteral(tok.clone())
+                                    Expression::StringLiteral { value: Rc::from(""), tok: tok.clone(), kind: StringKind::Slice }
                                 }
                             }
                         } else {
@@ -952,8 +951,11 @@ impl IrGen {
                     let new_arg = {
                         if is_self {
                             arg
-                        } else if let SkyeType::Pointer(.., is_reference) = &params[i].type_ {
-                            if *is_reference && !matches!(arg.ir_value.type_, SkyeType::Pointer(..)) {
+                        } else if let SkyeType::Pointer(param_inner_type, _, is_reference) = &params[i].type_ {
+                            if *is_reference && 
+                                !matches!(arg.ir_value.type_, SkyeType::Pointer(..)) && 
+                                param_inner_type.equals(&arg.ir_value.type_, EqualsLevel::Strict) 
+                            {
                                 // automatically create reference for pass-by-reference params
                                 let arg_pos = arguments[i - arguments_mod].get_pos();
                                 let custom_tok = Token::new(
@@ -962,9 +964,13 @@ impl IrGen {
                                     arg_pos.start, arg_pos.end, arg_pos.line
                                 );
 
-                                let ref_expr = Expression::Unary { op: custom_tok, expr: Box::new(Expression::Grouping(
+                                let ref_expr = Expression::Unary { 
+                                    op: custom_tok, 
+                                    expr: Box::new(Expression::Grouping(
                                         Box::new(arguments[i - arguments_mod].clone())
-                                    )), is_prefix: true };
+                                    )), 
+                                    is_prefix: true 
+                                };
 
                                 ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
                             } else {
@@ -1098,8 +1104,11 @@ impl IrGen {
                             if is_self {
                                 call_evaluated
                             } else if let SkyeType::Type(inner_type) = &def_type {
-                                if let SkyeType::Pointer(.., is_reference) = &**inner_type {
-                                    if *is_reference && !matches!(call_evaluated.ir_value.type_, SkyeType::Pointer(..)) {
+                                if let SkyeType::Pointer(param_inner_type, _, is_reference) = &**inner_type {
+                                    if *is_reference && 
+                                        !matches!(call_evaluated.ir_value.type_, SkyeType::Pointer(..))  && 
+                                        param_inner_type.equals(&call_evaluated.ir_value.type_, EqualsLevel::Strict) 
+                                    {
                                         // automatically create reference for pass-by-reference params
                                         let arg_pos = arguments[i - arguments_mod].get_pos();
                                         let custom_tok = Token::new(
@@ -1108,9 +1117,13 @@ impl IrGen {
                                             arg_pos.start, arg_pos.end, arg_pos.line
                                         );
 
-                                        let ref_expr = Expression::Unary { op: custom_tok, expr: Box::new(Expression::Grouping(
+                                        let ref_expr = Expression::Unary { 
+                                            op: custom_tok, 
+                                            expr: Box::new(Expression::Grouping(
                                                 Box::new(arguments[i - arguments_mod].clone())
-                                            )), is_prefix: true };
+                                            )), 
+                                            is_prefix: true 
+                                        };
 
                                         ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
                                     } else {
@@ -1585,7 +1598,7 @@ impl IrGen {
                                 curr_expr = curr_expr.replace_variable(&params[i].lexeme, &arguments[i]);
                             }
 
-                            if matches!(self.compile_mode, CompileMode::Debug) {
+                            if matches!(self.config.checks, Checks::Debug) {
                                 let panic_pos = callee_expr.get_pos();
 
                                 curr_expr = curr_expr.replace_variable(
@@ -2016,7 +2029,7 @@ impl IrGen {
     }
 
     async fn zero_check(&mut self, value: &SkyeValue, tok: &Token, msg: &str, ctx: &mut reblessive::Stk) -> IrValue {
-        if matches!(self.compile_mode, CompileMode::Debug) {
+        if matches!(self.config.checks, Checks::Debug) {
             let type_ = value.ir_value.type_.clone();
             let tmp_var = self.make_temporary_var(value.ir_value.clone(), tok.get_pos());
 
@@ -6288,18 +6301,14 @@ impl IrGen {
 
                 drop(env);
 
-                if body.len() == 0 {
-                    token_error!(self, name, "Cannot create an empty namespace");
-                } else {
-                    let previous_name = self.curr_name.clone();
-                    self.curr_name = full_name.to_string();
+                let previous_name = self.curr_name.clone();
+                self.curr_name = full_name.to_string();
 
-                    ctx.run(|ctx| self.execute_block(
-                        body, Rc::clone(&self.globals), true, ctx
-                    )).await;
+                ctx.run(|ctx| self.execute_block(
+                    body, Rc::clone(&self.globals), true, ctx
+                )).await;
 
-                    self.curr_name = previous_name;
-                }
+                self.curr_name = previous_name;
             }
             Statement::Use { use_expr, as_name: identifier, typedef, bind } => {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
@@ -7043,7 +7052,7 @@ impl IrGen {
                 assert!(extension != "skye", "missing import processor step: extension is skye");
 
                 if *import_type == ImportType::Lib {
-                    path = self.skye_path.join("lib").join(path)
+                    path = self.config.skye_path.join("lib").join(path)
                 } else if path.is_relative() && self.source_path.is_some() && *import_type != ImportType::Ang {
                     path = PathBuf::from((**self.source_path.as_ref().unwrap()).clone()).join(path);
                 } else {

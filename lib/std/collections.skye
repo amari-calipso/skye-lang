@@ -26,7 +26,7 @@ namespace std {
         }
 
         fn moveLeft[T](const array: &T, from: usz, const to: usz) {
-            if @COMPILE_MODE != 2 && from < to {
+            if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && from < to {
                 @panic("std::collections::moveLeft: cannot move to right");
             }
 
@@ -38,7 +38,7 @@ namespace std {
         }
 
         fn moveRight[T](const array: &T, from: usz, const to: usz) {
-            if @COMPILE_MODE != 2 && to < from {
+            if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && to < from {
                 @panic("std::collections::moveRight: cannot move to left");
             }
 
@@ -104,7 +104,7 @@ impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
     }
 
     fn moveLeft(self, const from: usz, const to: usz) {
-        if @COMPILE_MODE != 2 && (from >= self.length || to >= self.length) {
+        if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && (from >= self.length || to >= self.length) {
             @panic("Array::moveLeft: out of bounds access");
         }
 
@@ -112,7 +112,7 @@ impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
     }
 
     fn moveRight(self, const from: usz, const to: usz) {
-        if @COMPILE_MODE != 2 && (from >= self.length || to >= self.length) {
+        if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && (from >= self.length || to >= self.length) {
             @panic("Array::moveRight: out of bounds access");
         }
 
@@ -125,7 +125,7 @@ impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
     }
 
     fn blockSwap(self, const a: usz, const b: usz, const len: usz) {
-        if @COMPILE_MODE != 2 && (
+        if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && (
             a > self.length || 
             b > self.length || 
             a + len > self.length || 
@@ -138,7 +138,7 @@ impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
     }
 
     fn rotate(self, const a: usz, const m: usz, const b: usz) {
-        if @COMPILE_MODE != 2 && (a > self.length || m > self.length || b > self.length) {
+        if core::compiler::@CHECKS != core::compiler::Checks::ReleaseUnsafe && (a > self.length || m > self.length || b > self.length) {
             @panic("Array::rotate: out of bounds access");
         }
 

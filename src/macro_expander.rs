@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Bits, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, CompileMode};
+use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -9,7 +9,7 @@ pub struct MacroExpander {
     in_impl:      bool,
     in_interface: bool,
     in_function:  bool,
-    compile_mode: CompileMode,
+    config: CompilerConfig,
 
     pub errors: usize,
 }
@@ -58,24 +58,40 @@ macro_rules! at_operator {
 }
 
 impl MacroExpander {
-    pub fn new(compile_mode: CompileMode) -> Self {
+    pub fn new(config: CompilerConfig) -> Self {
         let mut globals = HashMap::new();
+
+        let expand_compiler_info = Rc::from("_SKYE_EXPAND_COMPILER_INFO");
         globals.insert(
-            Rc::from("COMPILE_MODE"),
+            Rc::clone(&expand_compiler_info),
             SkyeType::Type(
                 Box::new(SkyeType::Macro(
-                    Rc::from("COMPILE_MODE"),
+                    expand_compiler_info,
                     MacroParams::None,
-                    MacroBody::Expression({
-                        let value = {
-                            match compile_mode {
-                                CompileMode::Debug         => 0,
-                                CompileMode::Release       => 1,
-                                CompileMode::ReleaseUnsafe => 2
+                    MacroBody::Block({
+                        let checks = {
+                            match config.checks {
+                                Checks::Debug => "core::compiler::Checks::Debug",
+                                Checks::Release => "core::compiler::Checks::Release",
+                                Checks::ReleaseUnsafe => "core::compiler::Checks::ReleaseUnsafe",
                             }
                         };
 
-                        Expression::SignedIntLiteral { value, tok: Token::dummy(Rc::from("")), bits: Bits::Any }
+                        let executable = config.skyec.as_os_str().to_str().unwrap();
+
+                        parse(
+                            &format!(
+                                r#"
+                                namespace core {{
+                                    namespace compiler {{
+                                        macro CHECKS {checks};
+                                        macro EXECUTABLE "{executable}";
+                                    }}
+                                }}
+                                "#
+                            ), 
+                            Rc::from("<skye>")
+                        ).expect("syntax error in compiler-injected code")
                     })
                 ))
             )
@@ -83,7 +99,7 @@ impl MacroExpander {
 
 
         MacroExpander {
-            globals, compile_mode,
+            globals, config,
             curr_name: String::new(),
             in_impl: false,
             in_interface: false,
@@ -328,7 +344,7 @@ impl MacroExpander {
                                     if name.as_ref() == "panic" {
                                         // panic also includes position information
 
-                                        if matches!(self.compile_mode, CompileMode::Debug) {
+                                        if matches!(self.config.checks, Checks::Debug) {
                                             let panic_pos = callee_expr.get_pos();
 
                                             return_expr = return_expr.replace_variable(

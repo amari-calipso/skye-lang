@@ -77,13 +77,24 @@ namespace core {
         fn floatMod[T: AnyFloat](x: T, y: T) T;
         fn __setFloatMod[T: AnyFloat](const target: &T, value: T) T;
     }
+
+    namespace compiler {
+        enum Checks {
+            Debug, 
+            Release, 
+            ReleaseUnsafe
+        }
+    }
 }
+
+// compiler-injected code about compiler information
+use @_SKYE_EXPAND_COMPILER_INFO as _;
 
 fn __panicHandler(const at: String, const msg: String);
 
 macro panic(msg) __panicHandler(PANIC_POS, msg);
 macro unreachable @panic("Entered unreachable code");
-macro assert(x) @COMPILE_MODE != 0 || x ? void : @panic("Assertion failed");
+macro assert(x) core::compiler::@CHECKS != core::compiler::Checks::Debug || x ? void : @panic("Assertion failed");
 macro todo(msg) @panic(@concat("Not implemented yet: \"", msg, "\""));
 
 namespace core {
@@ -171,7 +182,7 @@ impl[T] core::Slice[T] {
     }
 
     fn __constsubscript__(const self, idx: usz) *const T {
-        if @COMPILE_MODE != 0 || idx < self.length {
+        if core::compiler::@CHECKS != core::compiler::Checks::Debug || idx < self.length {
             return self.ptr + idx;
         } else {
             @panic("Slice: out of bounds access");
