@@ -199,28 +199,41 @@ pub fn compile_file_to_c(input: &OsStr, output: &OsStr, compiler_conf: CompilerC
 
 pub fn basic_compile_c(input: &OsStr, output: &OsStr) -> Result<(), Error> {
     let mut needs_std = true;
-    let mut command = {
-        if cfg!(target_os = "macos") {
-            Command::new("cc")
-        } else if cfg!(unix) {
-            // while c99 is in the posix standard, some platforms still don't support it,
-            // using "cc" instead
-            if Command::new("cc").arg("--version")
-                .output()?.status.success()
-            {
-                Command::new("cc")
-            } else {
-                needs_std = false;
-                Command::new("c99")
+    let mut command = 'cc_command: {
+        match std::env::var("CC") {
+            Ok(cc) => Command::new(cc),
+            Err(e) => {
+                if cfg!(unix) && 
+                    Command::new("cc").arg("--version")
+                        .output()?.status.success() 
+                {
+                    break 'cc_command Command::new("cc");
+                }
+
+                if cfg!(not(target_os = "macos")) && 
+                    Command::new("c99").arg("--version")
+                        .output()?.status.success() 
+                {
+                    needs_std = false;
+                    break 'cc_command Command::new("c99");
+                }
+
+                if cfg!(unix) {
+                    return Err(Error::other(format!(
+                        concat!(
+                            "Could not find C compiler: {}\n",
+                            "Install a default C compiler or set the CC environment variable"
+                        ), e
+                    ).as_str()));
+                } else {
+                    return Err(Error::other(format!(
+                        concat!(
+                            "Could not find C compiler: {}\n",
+                            "Is the CC environment variable set?"
+                        ), e
+                    ).as_str()));
+                }
             }
-        } else {
-            Command::new(std::env::var("CC")
-                .map_err(|e| Error::other(format!(
-                    concat!(
-                        "Could not find C compiler: {}\n",
-                        "Is the CC environment variable set?"
-                    ), e
-                ).as_str()))?)
         }
     };
 

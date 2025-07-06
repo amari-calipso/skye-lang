@@ -45,25 +45,29 @@ namespace build {
             return CCResult::Ok(build::__cc.Some);
         }
 
-        if @MAC_OS {
-            build::__cc = (?String)::Some("cc");
-        } else if @UNIX_LIKE {
-            if build::system("cc --version").isOk() {
-                build::__cc = (?String)::Some("cc");
-            } else {
-                build::__cc = (?String)::Some("c99");
-            }
+        const cc = std::os::env::var("CC");
+        if cc.isSome() {
+            build::__cc = (?String)::Some(cc.Some);
+            return CCResult::Ok(build::__cc.Some);
         } else {
-            const cc = std::os::env::var("CC");
-            if cc.isNone() {
-                @println("Could not find C compiler. Is the CC environment variable set?");
-                return CCResult::Error;
+            if @UNIX_LIKE && build::system("cc --version").isOk() {
+                build::__cc = (?String)::Some("cc");
+                return CCResult::Ok(build::__cc.Some);
             }
 
-            build::__cc = (?String)::Some(cc.Some);
+            if !@MAC_OS && build::system("c99 --version").isOk() {
+                build::__cc = (?String)::Some("c99");
+                return CCResult::Ok(build::__cc.Some);
+            }
         }
 
-        return CCResult::Ok(build::__cc.Some);
+        if @UNIX_LIKE {
+            @println("Could not find C compiler. Install a default C compiler or set the CC environment variable");
+        } else {
+            @println("Could not find C compiler. Is the CC environment variable set?");
+        }
+        
+        return CCResult::Error;
     }
 
     fn compileCDefault(const input: String, const output: String) !void {
