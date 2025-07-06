@@ -79,7 +79,7 @@ namespace core {
     }
 
     namespace compiler {
-        enum Checks {
+        enum Checks as u8 {
             Debug, 
             Release, 
             ReleaseUnsafe

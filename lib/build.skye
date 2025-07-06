@@ -3,12 +3,6 @@ import "std/os";
 namespace build {
     let __cc: ?String;
 
-    enum Mode as u8 {
-        Debug,
-        Release,
-        ReleaseUnsafe
-    }
-
     fn wrap[T](const source: String, const result: T) !void {
         if result.isError() {
             @println("%: %", source, result.Error);
@@ -28,16 +22,16 @@ namespace build {
         return build::wrap("build::removeFile", std::os::removeFile(file));
     }
 
-    fn compileSkye(const input: String, const output: String, const compileMode: build::Mode) !void {
+    fn compileSkye(const input: String, const output: String, const checks: core::compiler::Checks) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
         @format(&buf, " compile % --emit-c -o %", input, output);
 
-        switch compileMode {
-            build::Mode::Debug {}
-            build::Mode::Release       -> @format(&buf, " -c release");
-            build::Mode::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
+        switch checks {
+            core::compiler::Checks::Debug {}
+            core::compiler::Checks::Release       -> @format(&buf, " -c release");
+            core::compiler::Checks::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
             default -> @unreachable;
         }
 

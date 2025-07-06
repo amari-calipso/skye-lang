@@ -7,9 +7,10 @@ use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_pack
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BUILD_FILE_INIT: &[u8] = concat!(
-    "import \"build\";\n\n",
+    "import \"build\";\n",
+    "use core::compiler::Checks;\n\n",
     "fn main() !void {\n",
-    "    try build::compileSkye(\"src/main.skye\", \"tmp.c\", build::Mode::Debug);\n",
+    "    try build::compileSkye(\"src/main.skye\", \"tmp.c\", Checks::Debug);\n",
     "    try build::compileCDefault(\"tmp.c\", \"helloworld\");\n",
     "    try build::removeFile(\"tmp.c\");\n\n",
     "    return (!void)::Ok;\n",
