@@ -478,6 +478,11 @@ import "anotherFile.h";
 import <"math.h">; // using angular brackets is equivalent to doing the same in C through an #include
 import <<"core/internals.h">>; // using double angular brackets forces the import to address to the installed packages
 ```
+
+You can also use `extern` to define libraries to link with.
+```
+extern pthread; // will automatically pass -lpthread
+```
 # Generics
 Structs, sum type enums, and functions can use generics to accept multiple types
 ```
