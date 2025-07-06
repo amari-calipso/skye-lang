@@ -150,7 +150,6 @@ impl FnQualifier {
 pub enum IrStatementData {
     Break,
     Define { name: Rc<str>, value: IrValue, typedef: bool },
-    Undefine { name: Rc<str> },
     VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue>, qualifiers: Vec<VarQualifier> },
     If { condition: IrValue, then_branch: Box<IrStatement>, else_branch: Option<Box<IrStatement>> },
     Scope { statements: Rc<RefCell<Vec<IrStatement>>> },

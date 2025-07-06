@@ -404,7 +404,6 @@ impl MacroBody {
 pub enum Statement {
     Empty, // placeholder
     Expression(Expression),
-    Undef(Rc<str>), // internal
     Break(Token), // kw
     Continue(Token), // kw
     Block(Token, Vec<Statement>), // kw statements
@@ -504,7 +503,7 @@ impl Ast for Statement {
     fn get_pos(&self) -> AstPos {
         match self {
             Statement::ImportedBlock { source, .. } => source.clone(), 
-            Statement::Empty | Statement::Undef(_) => {
+            Statement::Empty => {
                 AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0)
             }
             Statement::Expression(expr) |
@@ -539,7 +538,7 @@ impl Ast for Statement {
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Statement {
         match self {
-            Statement::Empty | Statement::Undef(_) |  Statement::Break(_) | Statement::Continue(_) |
+            Statement::Empty | Statement::Break(_) | Statement::Continue(_) |
             Statement::Import { .. } => self.clone(),
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),

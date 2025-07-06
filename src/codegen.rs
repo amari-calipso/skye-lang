@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, collections::{HashMap, HashSet}, rc::Rc};
+use std::{cell::{OnceCell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
@@ -333,6 +333,8 @@ pub struct CodeGen {
     typedefs:     HashMap<Rc<str>, TypeOutput>,
     fndefs:       Vec<CodeOutput>,
 
+    deferred: Rc<RefCell<Vec<Vec<String>>>>,
+
     in_function: bool,
 }
 
@@ -347,6 +349,7 @@ impl CodeGen {
             declarations: HashMap::new(),
             typedefs: HashMap::new(),
             fndefs: Vec::new(),
+            deferred: Rc::new(RefCell::new(Vec::new())),
             in_function: false,
         }
     }
@@ -733,16 +736,35 @@ impl CodeGen {
         }
     }
 
+    fn begin_scope_state(&mut self) {
+        self.deferred.borrow_mut().push(Vec::new());
+    }
+
     fn begin_scope(&mut self) {
         self.fndefs.last_mut().unwrap().push_indent();
         self.fndefs.last_mut().unwrap().push("{\n");
         self.fndefs.last_mut().unwrap().inc_indent();
+        self.begin_scope_state();
     }
 
-    fn end_scope(&mut self) {
+    fn end_scope_state(&mut self) {
+        if let Some(statements) = self.deferred.borrow_mut().pop() {
+            for statement in statements.into_iter().rev() {
+                self.fndefs.last_mut().unwrap().push_indent();
+                self.fndefs.last_mut().unwrap().push(&statement);
+            }
+        }
+    }
+
+    fn end_scope_without_state(&mut self) {
         self.fndefs.last_mut().unwrap().dec_indent();
         self.fndefs.last_mut().unwrap().push_indent();
         self.fndefs.last_mut().unwrap().push("}\n");
+    }
+
+    fn end_scope(&mut self) {
+        self.end_scope_state();
+        self.end_scope_without_state();
     }
 
     async fn generate_statement(&mut self, statement: IrStatement, ctx: &mut reblessive::Stk) {
@@ -777,12 +799,6 @@ impl CodeGen {
                 self.fndefs.last_mut().unwrap().push("goto ");
                 self.fndefs.last_mut().unwrap().push(&prepare_name(label));
                 self.fndefs.last_mut().unwrap().push(";\n");
-            }
-            IrStatementData::Undefine { name } => {
-                self.fndefs.last_mut().unwrap().push_indent();
-                self.fndefs.last_mut().unwrap().push("#undef ");
-                self.fndefs.last_mut().unwrap().push(&prepare_name(name));
-                self.fndefs.last_mut().unwrap().push("\n");
             }
             IrStatementData::Expression { value } => {
                 let generated = ctx.run(|ctx| self.generate_value(value, ctx)).await;
@@ -859,24 +875,31 @@ impl CodeGen {
                 }
             }
             IrStatementData::Include { path, is_ang } => {
-                self.includes.push_indent();
-                self.includes.push("#include ");
+                let mut buf = String::from("#include ");
 
                 if is_ang {
-                    self.includes.push("<")
+                    buf.push('<')
                 } else {
-                    self.includes.push("\"");
+                    buf.push('"');
                 }
 
-                self.includes.push(&path);
+                buf.push_str(&path);
 
                 if is_ang {
-                    self.includes.push(">")
+                    buf.push('>')
                 } else {
-                    self.includes.push("\"");
+                    buf.push('"');
                 }
 
-                self.includes.push("\n");
+                buf.push('\n');
+
+                if self.in_function {
+                    self.fndefs.last_mut().unwrap().push_indent();
+                    self.fndefs.last_mut().unwrap().push(&buf);
+                } else {
+                    self.includes.push_indent();
+                    self.includes.push(&buf);
+                }
             }
             IrStatementData::VarDecl { name, type_, initializer, qualifiers } => {
                 let prepared_name = prepare_name(name);
@@ -935,6 +958,8 @@ impl CodeGen {
                 if self.in_function {
                     self.fndefs.last_mut().unwrap().push_indent();
                     self.fndefs.last_mut().unwrap().push(&buf);
+
+                    self.deferred.borrow_mut().last_mut().unwrap().push(format!("#undef {}\n", prepared_name));
                 } else {
                     let mut decl_buf = CodeOutput::new();
                     decl_buf.push_indent();
@@ -1236,6 +1261,8 @@ impl CodeGen {
 
                         buf.push(" {\n");
                         buf.inc_indent();
+                        self.begin_scope_state();
+
                         self.fndefs.push(buf);
                         self.in_function = true;
 
@@ -1296,7 +1323,7 @@ impl CodeGen {
                     self.fndefs.last_mut().unwrap().dec_indent();
                 }
 
-                self.end_scope();
+                self.end_scope_without_state();
             }
         }
     }

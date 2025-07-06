@@ -6328,11 +6328,6 @@ impl IrGen {
                             self.definitions.push(Rc::new(RefCell::new(statement)));
                         } else {
                             self.add_statement(statement);
-
-                            if !*typedef {
-                                self.deferred.borrow_mut().last_mut().unwrap()
-                                    .insert(0, Statement::Undef(Rc::clone(&identifier.lexeme)));
-                            }
                         }
                     }
 
@@ -6354,15 +6349,6 @@ impl IrGen {
                         )
                     );
                 }
-            }
-            Statement::Undef(name) => {
-                self.add_statement(IrStatement { 
-                    pos: stmt.get_pos(),
-                    data: IrStatementData::Undefine { name: Rc::clone(&name) }    
-                });
-
-                let mut env = self.environment.borrow_mut();
-                env.undef(Rc::clone(name));
             }
             Statement::Enum { name, kind_type: type_expr, variants, is_simple, has_body, binding, generics_names: generics, bind_typedefed } => {
                 let base_name = self.get_name(&name.lexeme);
