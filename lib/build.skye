@@ -98,7 +98,7 @@ namespace build {
         return CCResult::Error;
     }
 
-    fn pushAllExtern(const buf: &core::Array[char], const externLibs: &const Array[char]) {
+    fn pushAllExtern(const buf: &core::Array[char], const externLibs: String) {
         let a = 0usz;
         let b = 0usz;
         while b < externLibs.length {
