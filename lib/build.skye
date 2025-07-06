@@ -29,10 +29,10 @@ namespace build {
     }
 
     fn compileSkye(const input: String, const output: String, const compileMode: build::Mode) !void {
-        let buf = core::Array::new();
+        let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
-        @format(&buf, "% compile % --emit-c -o %", core::compiler::@EXECUTABLE, input, output);
+        @format(&buf, " compile % --emit-c -o %", input, output);
 
         switch compileMode {
             build::Mode::Debug {}

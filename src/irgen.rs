@@ -1107,7 +1107,7 @@ impl IrGen {
                                 if let SkyeType::Pointer(param_inner_type, _, is_reference) = &**inner_type {
                                     if *is_reference && 
                                         !matches!(call_evaluated.ir_value.type_, SkyeType::Pointer(..))  && 
-                                        param_inner_type.equals(&call_evaluated.ir_value.type_, EqualsLevel::Strict) 
+                                        param_inner_type.equals(&call_evaluated.ir_value.type_, EqualsLevel::Permissive) 
                                     {
                                         // automatically create reference for pass-by-reference params
                                         let arg_pos = arguments[i - arguments_mod].get_pos();
