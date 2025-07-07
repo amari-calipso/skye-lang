@@ -19,7 +19,7 @@ struct CDirent: dirent {
 
 namespace std {
     namespace os {
-        macro SEPARATOR @WINDOWS ? '\\' : '/';
+        macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
 
         struct Command {
             command: String
