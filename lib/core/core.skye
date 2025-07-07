@@ -110,7 +110,7 @@ impl core::compiler::TargetOS {
 
         switch *self {
             TargetOS::Linux   -> return "linux";
-            TargetOS::MacOS   -> return "macos";
+            TargetOS::MacOS   -> return "mac-os";
             TargetOS::Windows -> return "windows";
             TargetOS::Unknown -> return "unknown";
             else -> @unreachable;
