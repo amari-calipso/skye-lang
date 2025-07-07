@@ -44,11 +44,6 @@ macro U64_MIN 0;
 macro I64_MAX 9223372036854775807;
 macro I64_MIN -9223372036854775808;
 
-macro WINDOWS -> bool;
-macro LINUX -> bool;
-macro MAC_OS -> bool;
-macro UNIX_LIKE -> bool;
-
 macro empty(T) -> T;
 macro sizeOf(E) -> usz;
 
