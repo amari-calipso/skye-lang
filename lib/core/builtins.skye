@@ -415,20 +415,16 @@ namespace core {
         }
 
         fn __parseIntInternal[T](const self, doMinus: bool) ?T {
-            let i = self.length;
-
-            if i == 0 || ((self[0] < '0' || self[0] > '9') && self[0] != '-') {
+            if self.length == 0 || ((self[0] < '0' || self[0] > '9') && self[0] != '-') {
                 return (?T)::None;
             }
 
-            let e = 0f64;
             let result: T = 0;
-
-            while i-- > 0 {
+            for let i = 0usz; i < self.length; i++ {
                 const ch = self[i];
 
                 if '0' <= ch && ch <= '9' {
-                    result += @cast(T, ch - 48) * @cast(T, pow(10f64, e++));
+                    result = result * 10 + @cast(T, ch - '0');
                 } else if doMinus && ch == '-' {
                     if result == 0 || self[0] != '-' {
                         return (?T)::None;
@@ -445,8 +441,7 @@ namespace core {
         }
 
         fn parseInt[T](const self) ?T {
-            let string = self.strip();
-            return string.__parseIntInternal[T](true);
+            return self.strip().__parseIntInternal[T](true);
         }
 
         fn parseFloat[T](const self) ?T {
