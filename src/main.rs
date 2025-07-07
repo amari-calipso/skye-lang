@@ -3,7 +3,7 @@ use std::{collections::HashMap, env, ffi:: OsString, fs::{self, create_dir, remo
 use clap::{Parser, Subcommand};
 use scopeguard::defer;
 use serde_json::Value;
-use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, Checks, CompilerConfig, MAX_PACKAGE_SIZE_BYTES};
+use skye::{compile_file_to_c, compile_file_to_exec, copy_dir_recursive, get_package_data, run_skye, write_package, Checks, CompilerConfig, TargetOS, MAX_PACKAGE_SIZE_BYTES};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BUILD_FILE_INIT: &[u8] = concat!(
@@ -42,7 +42,15 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     /// If set, a custom panic handler must be provided
-    no_panic: bool
+    no_panic: bool,
+
+    #[arg(long, default_value_t = 0)]
+    /// Sets the pointer size for the architecture, in bytes
+    ptr_size: u8,
+
+    #[arg(long, default_value_t, value_enum)]
+    /// Sets the target operating system
+    target_os: TargetOS,
 }
 
 #[derive(Subcommand, Debug)]
@@ -152,7 +160,9 @@ fn main() -> Result<(), Error> {
     };
 
     let args = Args::parse();
-    let mut config = CompilerConfig::new(skyec, skye_path, args.primitives, args.no_builtins, args.no_panic);
+    let mut config = CompilerConfig::new(
+        skyec, skye_path, args.primitives, args.no_builtins, args.no_panic, args.ptr_size, args.target_os
+    );
 
     match args.command {
         CompilerCommand::Compile { file, emit_c, checks, output, list_extern } => {
@@ -391,21 +401,22 @@ fn main() -> Result<(), Error> {
 mod tests {
     use std::{ffi::OsStr, fs, path::PathBuf};
 
-    use skye::{Checks, CompilerConfig};
+    use skye::{Checks, CompilerConfig, TargetOS};
 
     use crate::get_skyec;
 
     #[test]
     fn test_can_compile_examples() {
         let output = OsStr::new("tmp");
-        let mut config = CompilerConfig { 
-            no_builtins: false, 
-            no_panic: false, 
-            primitives: String::from("core/io_primitives"), 
-            checks: Checks::Debug,
-            skye_path: PathBuf::from("."),
-            skyec: get_skyec()
-        };
+        let mut config = CompilerConfig::new(
+            get_skyec(), 
+            PathBuf::from("."), 
+            String::from("core/io_primitives"),
+            false,
+            false,
+            0,
+            TargetOS::Current
+        );
         
         for file in fs::read_dir("examples").expect("Couldn't read examples dir") {
             let path = file.expect("Couldn't read file").path();

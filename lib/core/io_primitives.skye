@@ -4,6 +4,10 @@ import <"string.h">;
 import <"math.h">;
 import <"errno.h">;
 
+if !core::compiler::os::@WINDOWS {
+    extern m;
+}
+
 #bind fn pow(base: f64, exp: f64) f64;
 #bind fn fmod(x: f64, y: f64) f64;
 
@@ -100,12 +104,14 @@ namespace core {
             ReadAppendBin
         }
 
-        fn fileOpenModeToCMode(const mode: core::io::FileOpenMode) *const char {
-            return {
-                 `r\0`,   `w\0`,   `a\0`,  `r+\0`,
-                `w+\0`,  `a+\0`,  `rb\0`,  `wb\0`,
-                `ab\0`, `rb+\0`, `wb+\0`, `ab+\0`
-            }.ptr[@cast(u8, mode)];
+        impl core::io::FileOpenMode {
+            fn toCMode(const self) *const char {
+                return {
+                     `r\0`,   `w\0`,   `a\0`,  `r+\0`,
+                    `w+\0`,  `a+\0`,  `rb\0`,  `wb\0`,
+                    `ab\0`, `rb+\0`, `wb+\0`, `ab+\0`
+                }.ptr[@cast(u8, *self)];
+            }
         }
 
         struct File {
@@ -124,7 +130,7 @@ namespace core {
                 core::mem::typedBlockCopy(filename.ptr, buf, filename.length);
                 buf[filename.length] = '\0';
 
-                const cFile = fopen(buf, core::io::fileOpenModeToCMode(mode));
+                const cFile = fopen(buf, mode.toCMode());
 
                 if cFile == @nullptr {
                     const ptr = strerror(errno);

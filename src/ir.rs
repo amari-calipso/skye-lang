@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{AstPos, Bits, Expression}, skye_type::SkyeType, tokens::Token};
+use crate::{ast::{AstPos, Bits, Expression, StringKind}, skye_type::SkyeType, tokens::Token};
 
 #[derive(Clone, Debug)]
 pub struct IrStatement {
@@ -329,6 +329,26 @@ impl IrValue {
 
                 false
             }
+            _ => false
+        }
+    }
+
+    pub fn is_valid_assignment_target(&self) -> bool {
+        match &self.data {
+            IrValueData::Grouping(inner) => inner.is_valid_assignment_target(),
+            IrValueData::Literal { value } => {
+                if let Expression::StringLiteral { kind, .. } = value {
+                    matches!(kind, StringKind::Slice | StringKind::Raw)
+                } else {
+                    false
+                }
+            }
+            IrValueData::Variable { .. } |
+            IrValueData::Subscript { .. } |
+            IrValueData::Dereference { .. } |
+            IrValueData::Get { .. } |
+            IrValueData::DereferenceGet { .. } |
+            IrValueData::CompoundLiteral { .. } => true,
             _ => false
         }
     }

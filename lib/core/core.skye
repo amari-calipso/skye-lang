@@ -84,6 +84,13 @@ namespace core {
             Release, 
             ReleaseUnsafe
         }
+
+        enum TargetOS as u8 {
+            Linux,
+            MacOS,
+            Windows,
+            Unknown
+        }
     }
 }
 
@@ -96,6 +103,25 @@ macro panic(msg) __panicHandler(PANIC_POS, msg);
 macro unreachable @panic("Entered unreachable code");
 macro assert(x) core::compiler::@CHECKS != core::compiler::Checks::Debug || x ? void : @panic("Assertion failed");
 macro todo(msg) @panic(@concat("Not implemented yet: \"", msg, "\""));
+
+impl core::compiler::TargetOS {
+    fn isUnixLike(const self) bool {
+        use core::compiler::TargetOS;
+        return self == TargetOS::Linux || self == TargetOS::MacOS;
+    }
+
+    fn toString(const self) String {
+        use core::compiler::TargetOS;
+
+        switch *self {
+            TargetOS::Linux   -> return "linux";
+            TargetOS::MacOS   -> return "macos";
+            TargetOS::Windows -> return "windows";
+            TargetOS::Unknown -> return "unknown";
+            else -> @unreachable;
+        }
+    }
+}
 
 namespace core {
     enum Option[T] {

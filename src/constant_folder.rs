@@ -1,6 +1,7 @@
 use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement}, ast_error, ast_note, astpos_note, tokens::TokenType};
 
 pub struct ConstantFolder {
+    ptr_size: u8,
     pub errors: usize
 }
 
@@ -60,8 +61,8 @@ macro_rules! unsigned_op_for_bits {
 }
 
 impl ConstantFolder {
-    pub fn new() -> Self {
-        ConstantFolder { errors: 0 }
+    pub fn new(ptr_size: u8) -> Self {
+        ConstantFolder { ptr_size, errors: 0 }
     }
 
     pub fn reset(&mut self) {
@@ -70,6 +71,18 @@ impl ConstantFolder {
 
     async fn fold_expression(&mut self, expr: &mut Expression, ctx: &mut reblessive::Stk) {
         match expr {
+            Expression::UnsignedIntLiteral { bits, .. } => {
+                if matches!(bits, Bits::Bsz) {
+                    *bits = {
+                        match self.ptr_size {
+                            1 => Bits::B8,
+                            2 => Bits::B16,
+                            3 | 4 => Bits::B32,
+                            _ => Bits::B64
+                        }
+                    };
+                }
+            }
             Expression::Grouping(inner) |
             Expression::Get(inner, _) | 
             Expression::StaticGet(inner, ..) => {
@@ -194,7 +207,6 @@ impl ConstantFolder {
                                     Bits::B16 => *value = (!(*value as u16)) as u64,
                                     Bits::B32 => *value = (!(*value as u32)) as u64,
                                     Bits::B64 => *value = !*value,
-                                    Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
                                     _ => unreachable!()
                                 }
 
@@ -399,7 +411,6 @@ impl ConstantFolder {
                                                 Bits::B16 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u16),
                                                 Bits::B32 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u32),
                                                 Bits::B64 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_add_signed, u64),
-                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
                                                 _ => unreachable!()
                                             }
                                         };
@@ -423,7 +434,6 @@ impl ConstantFolder {
                                                         0
                                                     }
                                                 }
-                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
                                                 _ => unreachable!()
                                             }
                                         };
@@ -541,7 +551,6 @@ impl ConstantFolder {
                                     //             Bits::B16 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u16),
                                     //             Bits::B32 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u32),
                                     //             Bits::B64 => unsigned_op_signed_for_bits!(self, left_value, right_value, expr, checked_sub_signed, u64),
-                                    //             Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
                                     //             _ => unreachable!()
                                     //         }
                                     //     };
@@ -565,7 +574,6 @@ impl ConstantFolder {
                                                         0
                                                     }
                                                 }
-                                                Bits::Bsz => return, // if the type is usz, we cannot determine this at comptime
                                                 _ => unreachable!()
                                             }
                                         };

@@ -581,13 +581,13 @@ namespace core {
         }
 
         fn intToBuf[T: AnyInt, U](const buf: &U, const value: T) {
-            const string = core::fmt::allocIntToString(&core::mem::heapAllocator, value);
+            let string = core::fmt::allocIntToString(&core::mem::heapAllocator, value);
             defer string.free();
             buf.pushString(string.asString());
         }
 
         fn floatToBuf[T: AnyFloat, U](const buf: &U, const value: T) {
-            const string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value, 4);
+            let string = core::fmt::allocFloatToString(&core::mem::heapAllocator, value, 4);
             defer string.free();
             buf.pushString(string.asString());
         }

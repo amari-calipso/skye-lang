@@ -1,17 +1,22 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
 
-use crate::{skye_type::SkyeType, tokens::Token};
+use crate::{skye_type::{SkyeType, ValueFrom}, tokens::Token};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeVariable {
     pub type_: SkyeType,
     pub is_const: bool,
+    pub from: ValueFrom,
     pub tok: Option<Box<Token>>
 }
 
 impl SkyeVariable {
     pub fn new(type_: SkyeType, is_const: bool, tok: Option<Box<Token>>) -> Self {
-        SkyeVariable { type_, is_const, tok }
+        SkyeVariable { type_, is_const, tok, from: ValueFrom::Default }
+    }
+
+    pub fn with_from(type_: SkyeType, is_const: bool, tok: Option<Box<Token>>, from: ValueFrom) -> Self {
+        SkyeVariable { type_, is_const, tok, from }
     }
 }
 

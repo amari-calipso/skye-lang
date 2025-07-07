@@ -55,6 +55,16 @@ pub enum Checks {
     ReleaseUnsafe
 }
 
+#[derive(ValueEnum, Clone, Copy, Default, Debug)]
+pub enum TargetOS {
+    Linux,
+    MacOS,
+    Windows,
+    Unknown,
+    #[default]
+    Current
+}
+
 #[derive(Clone)]
 pub struct CompilerConfig {
     pub skye_path: PathBuf,
@@ -62,13 +72,38 @@ pub struct CompilerConfig {
     pub no_builtins: bool, 
     pub no_panic: bool,
     pub primitives: String,
-    pub checks: Checks
+    pub checks: Checks,
+    pub ptr_size: u8,
+    pub target_os: TargetOS
 }
 
 impl CompilerConfig {
-    pub fn new(skyec: PathBuf, skye_path: PathBuf, primitives: String, no_builtins: bool, no_panic: bool) -> Self {
+    pub fn new(skyec: PathBuf, skye_path: PathBuf, primitives: String, no_builtins: bool, no_panic: bool, ptr_size: u8, target_os: TargetOS) -> Self {
         CompilerConfig { 
-            skye_path, skyec, primitives, no_builtins, no_panic, 
+            skye_path, 
+            skyec, 
+            primitives,
+            no_builtins, 
+            no_panic,
+            ptr_size: {
+                if ptr_size == 0 {
+                    std::mem::size_of::<usize>() as u8
+                } else {
+                    ptr_size
+                }
+            },
+            target_os: {
+                if matches!(target_os, TargetOS::Current) {
+                    match std::env::consts::OS {
+                        "linux"   => TargetOS::Linux,
+                        "windows" => TargetOS::Windows,
+                        "macos"   => TargetOS::MacOS,
+                        _         => TargetOS::Unknown
+                    }
+                } else {
+                    target_os
+                }
+            },
             checks: Checks::Debug
         }
     }
@@ -142,7 +177,7 @@ pub fn compile(source: &String, path: Option<&Path>, filename: Rc<str>, compiler
         return None;
     }
 
-    let mut constant_folder = ConstantFolder::new();
+    let mut constant_folder = ConstantFolder::new(compiler_conf.ptr_size);
     constant_folder.fold(&mut statements);
 
     if constant_folder.errors != 0 {
@@ -234,13 +269,6 @@ pub fn compile_c(input: &OsStr, output: &OsStr, extern_libs: &Vec<Rc<str>>) -> R
     };
 
     command.arg("-w").arg(input);
-
-    // TODO: once we have a mechanism to conditionally define extern libs 
-    //       (we just need better platform information, see https://github.com/amari-calipso/skye-lang/issues/50)
-    //       make this an extern declaration in the stdlib
-    if cfg!(not(windows)) {
-        command.arg("-lm");
-    }
 
     for lib in extern_libs {
         command.arg(format!("-l{lib}"));

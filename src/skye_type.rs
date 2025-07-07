@@ -77,41 +77,83 @@ pub enum EqualsLevel {
     Permissive
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ValueFrom {
+    Default,
+    Define,
+    Enum
+}
+
+#[derive(Clone, Debug)]
 pub struct SkyeValue {
     pub ir_value: IrValue,
     pub is_const: bool,
-    pub self_info: Option<IrValue>
+    pub self_info: Option<IrValue>,
+    pub from: ValueFrom
 }
 
 impl SkyeValue {
     pub fn new(ir_value: IrValue, is_const: bool) -> Self {
-        SkyeValue { ir_value, is_const, self_info: None }
+        SkyeValue { ir_value, is_const, self_info: None, from: ValueFrom::Default }
     }
 
     pub fn special(type_: SkyeType) -> Self {
-        SkyeValue { ir_value: IrValue::empty_with_type(type_), is_const: true, self_info: None }
+        SkyeValue { ir_value: IrValue::empty_with_type(type_), is_const: true, self_info: None, from: ValueFrom::Default }
     }
 
     pub fn with_self_info(ir_value: IrValue, is_const: bool, self_info: IrValue) -> Self {
-        SkyeValue { ir_value, is_const, self_info: Some(self_info) }
+        SkyeValue { ir_value, is_const, self_info: Some(self_info), from: ValueFrom::Default }
+    }
+
+    pub fn with_from(ir_value: IrValue, is_const: bool, from: ValueFrom) -> Self {
+        SkyeValue { ir_value, is_const, self_info: None, from }
+    }
+
+    fn follow_reference_internal(&self, d: usize, zero_check: &mut Box<impl FnMut(SkyeValue) -> IrValue>) -> SkyeValue {
+        match &self.ir_value.type_ {
+            SkyeType::Pointer(inner_type, is_const, is_reference) => {
+                if *is_reference {
+                    let mut inner_value = self.clone();
+                    inner_value.ir_value.type_ = *inner_type.clone();
+                    inner_value.is_const = *is_const;
+                    let value = inner_value.follow_reference_internal(d + 1, zero_check);
+
+                    let mut tmp_var_type = value.ir_value.type_.clone();
+                    for _ in 0 ..= d {
+                        tmp_var_type = SkyeType::Pointer(Box::new(tmp_var_type), false, false);
+                    }
+
+                    let final_value = zero_check(SkyeValue::new(IrValue { type_: tmp_var_type, data: value.ir_value.data }, value.is_const));
+                    SkyeValue::new(
+                        IrValue::new(
+                            IrValueData::Dereference { value: Box::new(final_value) }, 
+                            value.ir_value.type_
+                        ), 
+                        value.is_const
+                    )
+                } else {
+                    self.clone()
+                }
+            }
+            _ => self.clone()
+        }
     }
 
     pub fn follow_reference(&self, mut zero_check: Box<impl FnMut(SkyeValue) -> IrValue>) -> Self {
-        self.ir_value.type_.follow_reference(self.is_const, &self.ir_value, &mut zero_check)
+        self.follow_reference_internal(0, &mut zero_check)
     }
 
     pub fn get_unknown() -> SkyeValue {
-        SkyeValue { ir_value: IrValue::empty_with_type(SkyeType::get_unknown()), is_const: false, self_info: None }
+        SkyeValue { ir_value: IrValue::empty_with_type(SkyeType::get_unknown()), is_const: false, self_info: None, from: ValueFrom::Default }
     }
 
     pub fn get_unknown_type() -> SkyeValue {
-        SkyeValue { ir_value: IrValue::empty_with_type(SkyeType::get_unknown_type()), is_const: false, self_info: None }
+        SkyeValue { ir_value: IrValue::empty_with_type(SkyeType::get_unknown_type()), is_const: false, self_info: None, from: ValueFrom::Default }
     }
 }
 
 const ALL_INTS: &[SkyeType] = &[
-    SkyeType::U8, SkyeType::U16, SkyeType::U32, SkyeType::U64, SkyeType::Usz,
+    SkyeType::U8, SkyeType::U16, SkyeType::U32, SkyeType::U64,
     SkyeType::I8, SkyeType::I16, SkyeType::I32, SkyeType::I64, SkyeType::AnyInt
 ];
 
@@ -124,7 +166,7 @@ pub struct SkyeField {
 
 #[derive(Clone, PartialEq)]
 pub enum SkyeType {
-    U8, U16, U32, U64, Usz,
+    U8, U16, U32, U64,
     I8, I16, I32, I64, AnyInt,
     F32, F64, AnyFloat,
     Char,
@@ -152,7 +194,6 @@ impl std::fmt::Debug for SkyeType {
             Self::U16 => write!(f, "U16"),
             Self::U32 => write!(f, "U32"),
             Self::U64 => write!(f, "U64"),
-            Self::Usz => write!(f, "Usz"),
             Self::I8 => write!(f, "I8"),
             Self::I16 => write!(f, "I16"),
             Self::I32 => write!(f, "I32"),
@@ -190,7 +231,6 @@ impl SkyeType {
             SkyeType::U64 => String::from("u64"),
             SkyeType::I64 => String::from("i64"),
             SkyeType::F64 => String::from("f64"),
-            SkyeType::Usz => String::from("usz"),
             SkyeType::I32 => String::from("i32"),
             SkyeType::F32 => String::from("f32"),
             SkyeType::AnyInt   => String::from("AnyInt"),
@@ -280,7 +320,6 @@ impl SkyeType {
             SkyeType::U64 => String::from("u64"),
             SkyeType::I64 => String::from("i64"),
             SkyeType::F64 => String::from("f64"),
-            SkyeType::Usz => String::from("usz"),
             SkyeType::I32 | SkyeType::AnyInt   => String::from("i32"),
             SkyeType::F32 | SkyeType::AnyFloat => String::from("f32"),
 
@@ -348,7 +387,6 @@ impl SkyeType {
             SkyeType::I32 => matches!(other, SkyeType::I32 | SkyeType::AnyInt),
             SkyeType::U64 => matches!(other, SkyeType::U64 | SkyeType::AnyInt),
             SkyeType::I64 => matches!(other, SkyeType::I64 | SkyeType::AnyInt),
-            SkyeType::Usz => matches!(other, SkyeType::Usz | SkyeType::AnyInt),
             SkyeType::F32 => matches!(other, SkyeType::F32 | SkyeType::AnyFloat),
             SkyeType::F64 => matches!(other, SkyeType::F64 | SkyeType::AnyFloat),
             SkyeType::AnyInt   => matches!(other, SkyeType::AnyInt)   || (!matches!(other, SkyeType::AnyFloat) && other.equals(self, level)),
@@ -582,7 +620,7 @@ impl SkyeType {
                         GetResultInternal::FieldNotFound
                     }
                 } else {
-                    GetResultInternal::InvalidType
+                    GetResultInternal::FieldNotFound
                 }
             }
             _ => GetResultInternal::InvalidType
@@ -639,42 +677,6 @@ impl SkyeType {
         }
     }
 
-    fn get_self_internal(&self, from: &IrValue, d: usize, zero_check: &mut Box<impl FnMut(SkyeValue) -> IrValue>) -> Option<IrValue> {
-        match self {
-            SkyeType::Pointer(ptr_type, is_const, _) => {
-                let inner = ptr_type.get_self_internal(from, d + 1, zero_check)?;
-
-                if d == 0 {
-                    Some(IrValue::new(inner.data, SkyeType::Pointer(Box::new(inner.type_), *is_const, true)))
-                } else {
-                    let mut tmp_var_type = inner.type_.clone();
-                    for _ in 0 ..= d {
-                        tmp_var_type = SkyeType::Pointer(Box::new(tmp_var_type), false, false);
-                    }
-
-                    let inner_final = zero_check(SkyeValue::new(IrValue { type_: tmp_var_type, data: inner.data }, *is_const));
-                    Some(IrValue::new(
-                        IrValueData::Dereference { value: Box::new(inner_final) },
-                        inner.type_
-                    ))
-                }
-            }
-            SkyeType::Struct(..) | SkyeType::Enum(..) => Some(IrValue::new(from.data.clone(), self.clone())),
-            _ => None
-        }
-    }
-
-    pub fn get_self(&self, from: &IrValue, is_source_const: bool, mut zero_check: Box<impl FnMut(SkyeValue) -> IrValue>) -> Option<IrValue> {
-        if let SkyeType::Pointer(..) = self {
-            self.get_self_internal(from, 0, &mut zero_check)
-        } else {
-            Some(IrValue::new(
-                IrValueData::Reference { value: Box::new(from.clone()) }, 
-                SkyeType::Pointer(Box::new(self.clone()), is_source_const, true)
-            ))
-        }
-    }
-
     fn infer_type_from_similar_internal(&self, other: &SkyeType, data: Rc<RefCell<HashMap<Rc<str>, SkyeType>>>) -> Option<()> {
         if !self.equals(other, EqualsLevel::Permissive) {
             return None;
@@ -683,7 +685,7 @@ impl SkyeType {
         match self {
             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-            SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
+            SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
             SkyeType::AnyFloat | SkyeType::Char | SkyeType::Void |
             SkyeType::Group(..) | SkyeType::Namespace(_) | SkyeType::Template(..) |
             SkyeType::Macro(..) => (),
@@ -840,7 +842,7 @@ impl SkyeType {
 
             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-            SkyeType::Usz | SkyeType::AnyInt => {
+            SkyeType::AnyInt => {
                 match op {
                     Operator::Subscript | Operator::Deref | Operator::ConstDeref => ImplementsHow::No,
                     _ => ImplementsHow::Native(vec![SkyeType::Char])
@@ -869,7 +871,7 @@ impl SkyeType {
         match self {
             SkyeType::Type(inner) => inner.check_completeness(),
 
-            SkyeType::U8  | SkyeType::U16 | SkyeType::U32 | SkyeType::U64 | SkyeType::Usz |
+            SkyeType::U8  | SkyeType::U16 | SkyeType::U32 | SkyeType::U64 |
             SkyeType::I8  | SkyeType::I16 | SkyeType::I32 | SkyeType::I64 | SkyeType::AnyInt |
             SkyeType::F32 | SkyeType::F64 | SkyeType::AnyFloat |
             SkyeType::Char | SkyeType::Void | SkyeType::Unknown(_) |
@@ -913,7 +915,7 @@ impl SkyeType {
             }
             SkyeType::U8 | SkyeType::U16 | SkyeType::U32 | SkyeType::U64 |
             SkyeType::I8 | SkyeType::I16 | SkyeType::I32 | SkyeType::I64 |
-            SkyeType::AnyInt | SkyeType::Usz => {
+            SkyeType::AnyInt => {
                 if matches!(
                     cast_to,
                     SkyeType::F32 |
@@ -934,7 +936,7 @@ impl SkyeType {
             }
 
             SkyeType::Pointer(_, self_is_const, _) => {
-                if matches!(cast_to, SkyeType::Usz) {
+                if matches!(cast_to, SkyeType::U8 | SkyeType::U16 | SkyeType::U32 | SkyeType::U64) {
                     CastableHow::Yes
                 } else if let SkyeType::Pointer(_, cast_to_const, _) = cast_to {
                     if *cast_to_const || !*self_is_const {
@@ -967,37 +969,6 @@ impl SkyeType {
                 }
             }
         }
-    }
-
-    fn follow_reference_internal(&self, is_source_const: bool, from: &IrValue, d: usize, zero_check: &mut Box<impl FnMut(SkyeValue) -> IrValue>) -> SkyeValue {
-        match self {
-            SkyeType::Pointer(inner_type, is_const, is_reference) => {
-                if *is_reference {
-                    let value = inner_type.follow_reference_internal(*is_const, from, d + 1, zero_check);
-
-                    let mut tmp_var_type = value.ir_value.type_.clone();
-                    for _ in 0 ..= d {
-                        tmp_var_type = SkyeType::Pointer(Box::new(tmp_var_type), false, false);
-                    }
-
-                    let final_value = zero_check(SkyeValue::new(IrValue { type_: tmp_var_type, data: value.ir_value.data }, value.is_const));
-                    SkyeValue::new(
-                        IrValue::new(
-                            IrValueData::Dereference { value: Box::new(final_value) }, 
-                            value.ir_value.type_
-                        ), 
-                        value.is_const
-                    )
-                } else {
-                    SkyeValue::new(IrValue::new(from.data.clone(), self.clone()), is_source_const)
-                }
-            }
-            _ => SkyeValue::new(IrValue::new(from.data.clone(), self.clone()), is_source_const)
-        }
-    }
-
-    pub fn follow_reference(&self, is_source_const: bool, from: &IrValue, zero_check: &mut Box<impl FnMut(SkyeValue) -> IrValue>) -> SkyeValue {
-        self.follow_reference_internal(is_source_const, from, 0, zero_check)
     }
 
     pub fn can_be_instantiated(&self, as_type: bool) -> bool {

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig};
+use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -71,11 +71,26 @@ impl MacroExpander {
                     MacroBody::Block({
                         let checks = {
                             match config.checks {
-                                Checks::Debug => "core::compiler::Checks::Debug",
-                                Checks::Release => "core::compiler::Checks::Release",
+                                Checks::Debug         => "core::compiler::Checks::Debug",
+                                Checks::Release       => "core::compiler::Checks::Release",
                                 Checks::ReleaseUnsafe => "core::compiler::Checks::ReleaseUnsafe",
                             }
                         };
+
+                        let target_os = {
+                            match config.target_os {
+                                TargetOS::Linux   => "core::compiler::TargetOS::Linux",
+                                TargetOS::MacOS   => "core::compiler::TargetOS::MacOS",
+                                TargetOS::Windows => "core::compiler::TargetOS::Windows",
+                                TargetOS::Current | // this shouldn't happen, but if it does say it's unknown
+                                TargetOS::Unknown => "core::compiler::TargetOS::Unknown",
+                            }
+                        };
+
+                        // TODO: remove these when we have better constant folding
+                        let linux   = matches!(config.target_os, TargetOS::Linux)   as u8;
+                        let macos   = matches!(config.target_os, TargetOS::MacOS)   as u8;
+                        let windows = matches!(config.target_os, TargetOS::Windows) as u8;
 
                         let executable = config.skyec.as_os_str().to_str().unwrap();
 
@@ -85,7 +100,14 @@ impl MacroExpander {
                                 namespace core {{
                                     namespace compiler {{
                                         macro CHECKS {checks};
+                                        macro TARGET_OS {target_os};
                                         macro EXECUTABLE "{executable}";
+
+                                        namespace os {{
+                                            macro LINUX {linux};
+                                            macro MAC_OS {macos};
+                                            macro WINDOWS {windows};
+                                        }}
                                     }}
                                 }}
                                 "#

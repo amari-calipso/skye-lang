@@ -159,7 +159,6 @@ fn stringify_type(type_: &SkyeType) -> String {
         SkyeType::U64 => String::from("u64"),
         SkyeType::I64 => String::from("i64"),
         SkyeType::F64 => String::from("f64"),
-        SkyeType::Usz => String::from("usz"),
         SkyeType::I32 | SkyeType::AnyInt   => String::from("i32"),
         SkyeType::F32 | SkyeType::AnyFloat => String::from("f32"),
 

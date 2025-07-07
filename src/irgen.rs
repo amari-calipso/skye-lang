@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, Checks, CompilerConfig
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -300,23 +300,62 @@ impl IrGen {
         res.into()
     }
 
-    fn make_temporary_var(&mut self, value: IrValue, pos: AstPos) -> Rc<str> {
-        if let IrValueData::Variable { name } = value.data {
-            name
-        } else {
-            let tmp_var = self.get_temporary_var();
+    fn make_temporary_var(&mut self, value: SkyeValue, pos: AstPos) -> Rc<str> {
+        // https://github.com/amari-calipso/skye-lang/issues/61
+        if matches!(value.ir_value.data, IrValueData::Variable { .. }) && matches!(value.from, ValueFrom::Default) {
+            if let IrValueData::Variable { name } = value.ir_value.data {
+                return name;
+            } else {
+                unreachable!()
+            }
+        }
+        
+        let tmp_var = self.get_temporary_var();
 
-            self.add_statement(IrStatement {
-                pos,
-                data: IrStatementData::VarDecl { 
-                    name: Rc::clone(&tmp_var), 
-                    type_: value.type_.clone(), 
-                    initializer: Some(value),
-                    qualifiers: Vec::new()
+        self.add_statement(IrStatement {
+            pos,
+            data: IrStatementData::VarDecl { 
+                name: Rc::clone(&tmp_var), 
+                type_: value.ir_value.type_.clone(), 
+                initializer: Some(value.ir_value),
+                qualifiers: Vec::new()
+            }
+        });
+
+        tmp_var
+    }
+
+    fn get_self_from_value_internal(&mut self, mut from: SkyeValue, d: usize, tok: &Token) -> Option<IrValue> {
+        match from.ir_value.type_ {
+            SkyeType::Pointer(ptr_type, is_const, _) => {
+                from.ir_value.type_ = *ptr_type;
+                let inner = self.get_self_from_value_internal(from, d + 1, tok)?;
+
+                if d == 0 {
+                    Some(IrValue::new(inner.data, SkyeType::Pointer(Box::new(inner.type_), is_const, true)))
+                } else {
+                    let mut tmp_var_type = inner.type_.clone();
+                    for _ in 0 ..= d {
+                        tmp_var_type = SkyeType::Pointer(Box::new(tmp_var_type), false, false);
+                    }
+
+                    let inner_final = self.external_zero_check(tok)(SkyeValue::new(IrValue { type_: tmp_var_type, data: inner.data }, is_const));
+                    Some(IrValue::new(
+                        IrValueData::Dereference { value: Box::new(inner_final) },
+                        inner.type_
+                    ))
                 }
-            });
+            }
+            SkyeType::Struct(..) | SkyeType::Enum(..) => Some(from.ir_value),
+            _ => None
+        }
+    }
 
-            tmp_var
+    fn get_self_from_value(&mut self, from: SkyeValue, tok: &Token) -> Option<IrValue> {
+        if let SkyeType::Pointer(..) = &from.ir_value.type_ {
+            self.get_self_from_value_internal(from, 0, tok)
+        } else {
+            Some(self.get_reference(from, tok).ir_value)
         }
     }
 
@@ -333,11 +372,8 @@ impl IrGen {
                         var.type_
                     ),
                     true,
-                    object.ir_value.type_.get_self(
-                        &object.ir_value,
-                        object.is_const,
-                        self.external_zero_check(name)
-                    ).expect("get_self failed")
+                    self.get_self_from_value(object.clone(), name)
+                        .expect("get_self_from_value failed")
                 ));
             }
         }
@@ -726,7 +762,7 @@ impl IrGen {
                                         if let SkyeType::Type(inner_option_type) = option_type.ir_value.type_ {
                                             let mangled_option_type = inner_option_type.mangle();
 
-                                            let tmp_var = self.make_temporary_var(to_cast.ir_value.clone(), callee_expr.get_pos());
+                                            let tmp_var = self.make_temporary_var(to_cast.clone(), callee_expr.get_pos());
 
                                             // tmp.kind == kind_we_are_trying_to_cast_to ? Some(tmp.Variant) : None
                                             return Some(SkyeValue::new(
@@ -2034,7 +2070,7 @@ impl IrGen {
     async fn zero_check(&mut self, value: &SkyeValue, tok: &Token, msg: &str, ctx: &mut reblessive::Stk) -> IrValue {
         if matches!(self.config.checks, Checks::Debug) {
             let type_ = value.ir_value.type_.clone();
-            let tmp_var = self.make_temporary_var(value.ir_value.clone(), tok.get_pos());
+            let tmp_var = self.make_temporary_var(value.clone(), tok.get_pos());
 
             let scope = IrStatement::empty_scope(tok.get_pos());
 
@@ -2160,7 +2196,7 @@ impl IrGen {
                     };
 
                     let left_type = left.ir_value.type_.clone();
-                    let tmp_var = self.make_temporary_var(left.ir_value, expr.get_pos());
+                    let tmp_var = self.make_temporary_var(left, expr.get_pos());
                     let left_expr_pos = left_expr.get_pos();
 
                     let tmp_var_tok = Token::new(
@@ -2269,11 +2305,61 @@ impl IrGen {
         }
     }
 
+    fn get_reference(&mut self, value: SkyeValue, op: &Token) -> SkyeValue {
+        match value.ir_value.type_ {
+            SkyeType::Type(type_type) => {
+                SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, true))))
+            }
+            SkyeType::Unknown(_) => {
+                SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(value.ir_value.type_), false, true))))
+            }
+            _ => {
+                let new_inner = value.follow_reference(self.external_zero_check(op));
+
+                match new_inner.ir_value.type_.implements_op(Operator::Ref) {
+                    ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
+                        let value = {
+                            if new_inner.ir_value.is_valid_assignment_target() && matches!(new_inner.from, ValueFrom::Default) {
+                                new_inner.ir_value.clone()
+                            } else {
+                                let tmp_var = self.make_temporary_var(new_inner.clone(), op.get_pos());
+
+                                IrValue::new(
+                                    IrValueData::Variable { name: tmp_var },
+                                    new_inner.ir_value.type_.clone()
+                                )
+                            }
+                        };
+
+                        SkyeValue::new(
+                            IrValue::new(
+                                IrValueData::Reference { value: Box::new(value) },
+                                SkyeType::Pointer(Box::new(new_inner.ir_value.type_), new_inner.is_const, true)
+                            ),
+                            true
+                        )
+                    }
+                    ImplementsHow::No => {
+                        token_error!(
+                            self, op,
+                            format!(
+                                "Type {} cannot use '&' operator",
+                                value.ir_value.type_.stringify()
+                            ).as_ref()
+                        );
+
+                        SkyeValue::get_unknown()
+                    }
+                }
+            }
+        }
+    }
+
     async fn evaluate(&mut self, expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         match expr {
             Expression::Grouping(inner_expr) => {
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, allow_unknown, ctx)).await;
-                SkyeValue::new(
+                SkyeValue::with_from(
                     {
                         if inner.ir_value.is_empty() {
                             inner.ir_value
@@ -2284,7 +2370,8 @@ impl IrGen {
                             }
                         }
                     }, 
-                    inner.is_const
+                    inner.is_const,
+                    inner.from
                 )
             }
             Expression::InMacro { inner: inner_expr, source } => {
@@ -2371,7 +2458,7 @@ impl IrGen {
                 }
             }
             Expression::Array { item: item_expr, size: size_expr, .. } => {
-                let item = ctx.run(|ctx| self.evaluate(&item_expr, allow_unknown, ctx)).await;
+                let mut item = ctx.run(|ctx| self.evaluate(&item_expr, allow_unknown, ctx)).await;
 
                 let size = {
                     match size_expr.get_inner() {
@@ -2402,13 +2489,8 @@ impl IrGen {
                     return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
                 } 
 
-                let value = self.make_temporary_var(
-                    IrValue::new(
-                        item.ir_value.data.clone(),
-                        type_.clone()
-                    ), 
-                    item_expr.get_pos()
-                );
+                item.ir_value.type_ = type_.clone();
+                let value = self.make_temporary_var(item, item_expr.get_pos());
 
                 let mut items = Vec::new();
                 for _ in 0 .. size {
@@ -2474,8 +2556,7 @@ impl IrGen {
                     Bits::B16 => SkyeValue::new(IrValue::new(data, SkyeType::U16), true),
                     Bits::B32 => SkyeValue::new(IrValue::new(data, SkyeType::U32), true),
                     Bits::B64 => SkyeValue::new(IrValue::new(data, SkyeType::U64), true),
-                    Bits::Bsz => SkyeValue::new(IrValue::new(data, SkyeType::Usz), true),
-                    Bits::Any => unreachable!()
+                    Bits::Any | Bits::Bsz => unreachable!()
                 }
             }
             Expression::FloatLiteral { bits, .. } => {
@@ -2638,55 +2719,7 @@ impl IrGen {
                                 op, allow_unknown, ctx
                             )).await
                         }
-                        TokenType::BitwiseAnd => {
-                            match inner.ir_value.type_ {
-                                SkyeType::Type(type_type) => {
-                                    SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, true))))
-                                }
-                                SkyeType::Unknown(_) => {
-                                    SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(Box::new(inner.ir_value.type_), false, true))))
-                                }
-                                _ => {
-                                    let new_inner = inner.follow_reference(self.external_zero_check(op));
-
-                                    match new_inner.ir_value.type_.implements_op(Operator::Ref) {
-                                        ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
-                                            let value = {
-                                                if inner_expr.is_valid_assignment_target() {
-                                                    new_inner.ir_value.clone()
-                                                } else {
-                                                    let tmp_var = self.make_temporary_var(new_inner.ir_value.clone(), expr.get_pos());
-
-                                                    IrValue::new(
-                                                        IrValueData::Variable { name: tmp_var },
-                                                        new_inner.ir_value.type_.clone()
-                                                    )
-                                                }
-                                            };
-
-                                            SkyeValue::new(
-                                                IrValue::new(
-                                                    IrValueData::Reference { value: Box::new(value) },
-                                                    SkyeType::Pointer(Box::new(new_inner.ir_value.type_), new_inner.is_const, true)
-                                                ),
-                                                true
-                                            )
-                                        }
-                                        ImplementsHow::No => {
-                                            token_error!(
-                                                self, op,
-                                                format!(
-                                                    "Type {} cannot use '&' operator",
-                                                    inner.ir_value.type_.stringify()
-                                                ).as_ref()
-                                            );
-
-                                            SkyeValue::get_unknown()
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        TokenType::BitwiseAnd => self.get_reference(inner, op),
                         TokenType::RefConst => {
                             match inner.ir_value.type_ {
                                 SkyeType::Type(type_type) => {
@@ -2701,10 +2734,10 @@ impl IrGen {
                                     match new_inner.ir_value.type_.implements_op(Operator::ConstRef) {
                                         ImplementsHow::Native(_) | ImplementsHow::ThirdParty => {
                                             let value = {
-                                                if inner_expr.is_valid_assignment_target() {
+                                                if new_inner.ir_value.is_valid_assignment_target() && matches!(new_inner.from, ValueFrom::Default) {
                                                     new_inner.ir_value.clone()
                                                 } else {
-                                                    let tmp_var = self.make_temporary_var(new_inner.ir_value.clone(), expr.get_pos());
+                                                    let tmp_var = self.make_temporary_var(new_inner.clone(), expr.get_pos());
 
                                                     IrValue::new(
                                                         IrValueData::Variable { name: tmp_var },
@@ -2915,7 +2948,7 @@ impl IrGen {
                                     }
                                 };
 
-                                let tmp_var_name = self.make_temporary_var(inner.ir_value.clone(), expr.get_pos());
+                                let tmp_var_name = self.make_temporary_var(inner.clone(), expr.get_pos());
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -3355,13 +3388,7 @@ impl IrGen {
                                     } 
                                 });
 
-                                let left_tmp = self.make_temporary_var(
-                                    IrValue::new(
-                                        new_left.ir_value.data,
-                                        result_type.clone()
-                                    ), 
-                                    expr.get_pos()
-                                );
+                                let left_tmp = self.make_temporary_var(new_left, expr.get_pos());
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -3491,13 +3518,7 @@ impl IrGen {
                                     } 
                                 });
 
-                                let left_tmp = self.make_temporary_var(
-                                    IrValue::new(
-                                        new_left.ir_value.data,
-                                        result_type.clone()
-                                    ), 
-                                    expr.get_pos()
-                                );
+                                let left_tmp = self.make_temporary_var(new_left, expr.get_pos());
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
@@ -3768,12 +3789,13 @@ impl IrGen {
             }
             Expression::Variable(name) => {
                 if let Some(var_info) = self.environment.borrow().get(&name) {
-                    return SkyeValue::new(
+                    return SkyeValue::with_from(
                         IrValue::new(
                             IrValueData::Variable { name: Rc::clone(&name.lexeme) },
                             var_info.type_
                         ), 
-                        var_info.is_const
+                        var_info.is_const,
+                        var_info.from
                     );
                 } else if name.lexeme.as_ref() == "main" {
                     if let Some(var_info) = self.globals.borrow().get(&Token::dummy(Rc::from("_SKYE_MAIN"))) {
@@ -3943,7 +3965,7 @@ impl IrGen {
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
+                    SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -4526,7 +4548,7 @@ impl IrGen {
                         match arg.ir_value.type_ {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                            SkyeType::Usz | SkyeType::AnyInt => {
+                            SkyeType::AnyInt => {
                                 let subscripted_value = ctx.run(|ctx| self.zero_check(&subscripted, paren, "Null pointer dereference", ctx)).await;
                                 
                                 return SkyeValue::new(
@@ -4564,7 +4586,7 @@ impl IrGen {
                         match arg.ir_value.type_ {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                            SkyeType::Usz | SkyeType::AnyInt => {
+                            SkyeType::AnyInt => {
                                 let index = {
                                     match arguments[0].get_inner() {
                                         Expression::SignedIntLiteral { value, .. } => Some(value as usize),
@@ -5001,12 +5023,13 @@ impl IrGen {
                             };
                             return ctx.run(|ctx| self.evaluate(&output_expr, allow_unknown, ctx)).await;
                         } else {
-                            return SkyeValue::new(
+                            return SkyeValue::with_from(
                                 IrValue::new(
                                     IrValueData::Variable { name: full_name },
                                     var.type_
                                 ),
-                                var.is_const
+                                var.is_const,
+                                var.from
                             );
                         }
                     } else if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
@@ -5014,12 +5037,13 @@ impl IrGen {
                             search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
 
                             if let Some(var) = env.get(&search_tok) {
-                                return SkyeValue::new(
+                                return SkyeValue::with_from(
                                     IrValue::new(
                                         IrValueData::Variable { name: search_tok.lexeme },
                                         var.type_
                                     ),
-                                    var.is_const
+                                    var.is_const,
+                                    var.from
                                 );
                             } 
                         }
@@ -5366,28 +5390,33 @@ impl IrGen {
                 }
             }
             Statement::Block(kw, statements) => {
-                if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this block inside a function");
-                }
+                let toplevel = matches!(self.curr_function, CurrentFn::None);
+
+                let env = {
+                    if toplevel {
+                        Rc::clone(&self.environment)
+                    } else {
+                        Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(&self.environment))))
+                    }
+                };
                 
-                let scope = IrStatement::empty_scope(kw.get_pos());
-                self.add_statement(scope.clone());
-
-                let previous_definition = self.curr_definition.clone();
-                self.curr_definition = Some(Rc::new(RefCell::new(scope)));
-
-                ctx.run(|ctx| self.execute_block(
-                    statements,
-                    Rc::new(RefCell::new(
-                        Environment::with_enclosing(
-                            Rc::clone(&self.environment)
-                        )
-                    )),
-                    false, ctx
-                )).await;
-
-                self.curr_definition = previous_definition;
+                let previous_definition = {
+                    if toplevel {
+                        None
+                    } else {
+                        let previous = self.curr_definition.clone();
+                        let scope = IrStatement::empty_scope(kw.get_pos());
+                        self.add_statement(scope.clone());
+                        self.curr_definition = Some(Rc::new(RefCell::new(scope)));
+                        previous
+                    }
+                };
+                
+                ctx.run(|ctx| self.execute_block(statements, env, toplevel, ctx)).await;
+                
+                if !toplevel {
+                    self.curr_definition = previous_definition;
+                }
             }
             Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind, init } => {
                 let (mut full_name, has_unknown) = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
@@ -5617,7 +5646,7 @@ impl IrGen {
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
+                    SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5674,7 +5703,7 @@ impl IrGen {
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
+                    SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5770,7 +5799,7 @@ impl IrGen {
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
+                    SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5881,7 +5910,7 @@ impl IrGen {
                 match cond.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::AnyInt | SkyeType::Unknown(_) => (),
+                    SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
                         ast_error!(
                             self, cond_expr,
@@ -5991,7 +6020,7 @@ impl IrGen {
                         let type_ = final_value.ir_value.type_.clone();
 
                         // return value is saved in a temporary variable so deferred statements get executed after evaluation
-                        let tmp_var_name = self.make_temporary_var(final_value.ir_value, kw.get_pos());
+                        let tmp_var_name = self.make_temporary_var(final_value, kw.get_pos());
 
                         return Err(ExecutionInterrupt::Return(IrStatement { 
                             pos: kw.get_pos(),
@@ -6317,11 +6346,19 @@ impl IrGen {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
 
                 if identifier.lexeme.as_ref() != "_" {
+                    let full_name = {
+                        if matches!(self.curr_function, CurrentFn::None) {
+                            self.get_name(&identifier.lexeme)
+                        } else {
+                            Rc::clone(&identifier.lexeme)
+                        }
+                    };
+
                     if !*bind && !use_value.ir_value.is_empty() && use_value.ir_value.type_.can_be_instantiated(false) {
                         let statement = IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
-                                name: Rc::clone(&identifier.lexeme), 
+                                name: Rc::clone(&full_name), 
                                 value: use_value.ir_value.clone(), 
                                 typedef: *typedef 
                             }
@@ -6336,7 +6373,7 @@ impl IrGen {
 
                     let mut env = self.environment.borrow_mut();
 
-                    if let Some(existing) = env.get(&identifier) {
+                    if let Some(existing) = env.get(&Token::dummy(Rc::clone(&full_name))) {
                         token_error!(self, identifier, "Cannot redefine identifiers");
 
                         if let Some(token) = &existing.tok {
@@ -6345,10 +6382,17 @@ impl IrGen {
                     }
 
                     env.define(
-                        Rc::clone(&identifier.lexeme),
-                        SkyeVariable::new(
+                        Rc::clone(&full_name),
+                        SkyeVariable::with_from(
                             use_value.ir_value.type_, use_value.is_const,
-                            Some(Box::new(identifier.clone()))
+                            Some(Box::new(identifier.clone())),
+                            {
+                                if *typedef {
+                                    ValueFrom::Default
+                                } else {
+                                    ValueFrom::Define
+                                }
+                            }
                         )
                     );
                 }
@@ -6363,8 +6407,7 @@ impl IrGen {
                     if let SkyeType::Type(inner_type) = &enum_type {
                         match **inner_type {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
-                            SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                            SkyeType::Usz => *inner_type.clone(),
+                            SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 => *inner_type.clone(),
                             _ => {
                                 ast_error!(
                                     self, type_expr,
@@ -6535,17 +6578,19 @@ impl IrGen {
                             if binding.is_some() {
                                 env.define(
                                     Rc::clone(&variant.name.lexeme),
-                                    SkyeVariable::new(
+                                    SkyeVariable::with_from(
                                         simple_enum_type.clone(), true,
-                                        Some(Box::new(variant.name.clone()))
+                                        Some(Box::new(variant.name.clone())),
+                                        ValueFrom::Enum
                                     )
                                 );
                             } else {
                                 env.define(
                                     Rc::from(format!("{}_DOT_{}", simple_enum_full_name, variant.name.lexeme)),
-                                    SkyeVariable::new(
+                                    SkyeVariable::with_from(
                                         simple_enum_type.clone(), true,
-                                        Some(Box::new(variant.name.clone()))
+                                        Some(Box::new(variant.name.clone())),
+                                        ValueFrom::Enum
                                     )
                                 );
                             }
@@ -6644,10 +6689,11 @@ impl IrGen {
 
                                     env.define(
                                         Rc::clone(&enum_variant_init_alias),
-                                        SkyeVariable::new(
+                                        SkyeVariable::with_from(
                                             struct_output_type.clone(),
                                             true,
-                                            Some(Box::new(variant.name.clone()))
+                                            Some(Box::new(variant.name.clone())),
+                                            ValueFrom::Define
                                         )
                                     );
 
@@ -6671,9 +6717,10 @@ impl IrGen {
 
                                     env.define(
                                         Rc::clone(&enum_variant_init_fn_name),
-                                        SkyeVariable::new(
+                                        SkyeVariable::with_from(
                                             function_type, true,
-                                            Some(Box::new(variant.name.clone()))
+                                            Some(Box::new(variant.name.clone())),
+                                            ValueFrom::Define
                                         )
                                     );
 
@@ -6835,7 +6882,7 @@ impl IrGen {
                 match &switch.ir_value.type_ {
                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                    SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
+                    SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
                     SkyeType::AnyFloat | SkyeType::Char | SkyeType::Unknown(_) => (),
                     SkyeType::Type(inner) => {
                         is_classic = false;
@@ -6883,7 +6930,7 @@ impl IrGen {
                                 match &real_case_evaluated.ir_value.type_ {
                                     SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
-                                    SkyeType::Usz | SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
+                                    SkyeType::F32 | SkyeType::F64 | SkyeType::AnyInt |
                                     SkyeType::AnyFloat | SkyeType::Char | SkyeType::Unknown(_) => (),
                                     SkyeType::Enum(_, variants, _) => {
                                         if variants.is_some() {
@@ -7270,7 +7317,7 @@ impl IrGen {
                     return Ok(None);
                 }
 
-                let tmp_iter_var_name = self.make_temporary_var(iterator_raw.ir_value.clone(), iterator_expr.get_pos());
+                let tmp_iter_var_name = self.make_temporary_var(iterator_raw.clone(), iterator_expr.get_pos());
                 
                 let iterator = SkyeValue::new(
                     IrValue::new(

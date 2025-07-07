@@ -1,6 +1,7 @@
 import "std/os";
 
 namespace build {
+    use core::compiler::TargetOS;
     let __cc: ?String;
 
     fn wrap[T](const source: String, const result: T) !void {
@@ -27,21 +28,64 @@ namespace build {
         @println("build::removeFile: \"%\"", file);
         return build::wrap("build::removeFile", std::os::removeFile(file));
     }
+
+    struct Platform {
+        targetOS: build::TargetOS,
+        ptrSize: u8
+    }
+
+    impl build::Platform {
+        fn linux64bit() Self {
+            return Self.{ targetOS: build::TargetOS::Linux, ptrSize: 8 };
+        }
+
+        fn linux32bit() Self {
+            return Self.{ targetOS: build::TargetOS::Linux, ptrSize: 4 };
+        }
+
+        fn macOS64bit() Self {
+            return Self.{ targetOS: build::TargetOS::MacOS, ptrSize: 8 };
+        }
+
+        fn macOS32bit() Self {
+            return Self.{ targetOS: build::TargetOS::MacOS, ptrSize: 4 };
+        }
+
+        fn windows64bit() Self {
+            return Self.{ targetOS: build::TargetOS::Windows, ptrSize: 8 };
+        }
+
+        fn windows32bit() Self {
+            return Self.{ targetOS: build::TargetOS::Windows, ptrSize: 4 };
+        }
+    }
     
     struct Conf {
         checks: core::compiler::Checks,
+        platform: ?build::Platform,
         externLibs: ?&Array[char]
     }
 
     impl build::Conf {
         fn default() Self {
-            return Self.{ checks: core::compiler::Checks::Debug, externLibs: (?&Array[char])::None };
+            return Self.{ 
+                checks: core::compiler::Checks::Debug,
+                platform: (?build::Platform)::None,
+                externLibs: (?&Array[char])::None 
+            };
         }
     }
 
     fn compileSkyeToC(const input: String, const output: String, const conf: build::Conf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
+
+        if conf.platform.isSome() {
+            @format(
+                &buf, " --target-os % --ptr-size %", 
+                conf.platform.Some.targetOS, conf.platform.Some.ptrSize
+            );
+        }
 
         @format(&buf, " compile % --emit-c -o %", input, output);
 
@@ -84,7 +128,7 @@ namespace build {
         if cc.isSome() {
             build::__cc = (?String)::Some(cc.Some);
             return CCResult::Ok(build::__cc.Some);
-        } else if @UNIX_LIKE {
+        } else if core::compiler::@TARGET_OS.isUnixLike() {
             if build::system("cc --version").isOk() {
                 build::__cc = (?String)::Some("cc");
                 return CCResult::Ok(build::__cc.Some);
@@ -122,11 +166,6 @@ namespace build {
         const cc = try build::cc();
         @format(&buf, "% -w % ", cc, input);
 
-        // TODO: once we have a mechanism to conditionally define extern libs 
-        //       (we just need better platform information, see https://github.com/amari-calipso/skye-lang/issues/50)
-        //       make this an extern declaration in the stdlib
-        if (!@WINDOWS) buf.pushString("-lm ");
-        
         if (externLibs.isSome()) build::pushAllExtern(&buf, externLibs.Some);
         @format(&buf, "-o %", output);
         try build::system(buf.asString());
@@ -135,6 +174,13 @@ namespace build {
     fn compileSkye(const input: String, const output: String, const conf: build::Conf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
+
+        if conf.platform.isSome() {
+            @format(
+                &buf, " --target-os % --ptr-size %", 
+                conf.platform.Some.targetOS, conf.platform.Some.ptrSize
+            );
+        }
 
         @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input, output);
 
