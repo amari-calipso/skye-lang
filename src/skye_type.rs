@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, tokens::Token};
+use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, tokens::Token, utils::OrderedNamedMap};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeFunctionParam {
@@ -179,11 +179,11 @@ pub enum SkyeType {
     Type(Box<SkyeType>),
     Group(Box<SkyeType>, Box<SkyeType>), // left right
     Function(Vec<SkyeFunctionParam>, Box<SkyeType>, bool), // params return_type has_body
-    Struct(Rc<str>, Option<HashMap<Rc<str>, SkyeField>>, Rc<str>), // name fields base_name
+    Struct(Rc<str>, Option<OrderedNamedMap<SkyeField>>, Rc<str>), // name fields base_name
     Namespace(Rc<str>), // name
-    Enum(Rc<str>, Option<HashMap<Rc<str>, SkyeType>>, Rc<str>), // name variants base_name
+    Enum(Rc<str>, Option<OrderedNamedMap<SkyeType>>, Rc<str>), // name variants base_name
     Template(Rc<str>, Statement, Vec<Generic>, Vec<Token>, String, Rc<RefCell<Environment>>), // name definition generics generics_names curr_name environment
-    Union(Rc<str>, Option<HashMap<Rc<str>, SkyeField>>), // name fields
+    Union(Rc<str>, Option<OrderedNamedMap<SkyeField>>), // name fields
     Macro(Rc<str>, MacroParams, MacroBody), // name params body
 }
 
@@ -583,7 +583,7 @@ impl SkyeType {
             SkyeType::Struct(_, fields, _) |
             SkyeType::Union(_, fields) => {
                 if let Some(defined_fields) = fields {
-                    if let Some(field) = defined_fields.get(&name.lexeme) {
+                    if let Some(field) = defined_fields.map.get(&name.lexeme) {
                         if d == 0 {
                             GetResultInternal::Ok(
                                 IrValue::new(
@@ -604,7 +604,7 @@ impl SkyeType {
             }
             SkyeType::Enum(_, fields, _) => {
                 if let Some(defined_fields) = fields {
-                    if let Some(field) = defined_fields.get(&name.lexeme) {
+                    if let Some(field) = defined_fields.map.get(&name.lexeme) {
                         if d == 0 {
                             GetResultInternal::Ok(
                                 IrValue::new(
@@ -728,7 +728,7 @@ impl SkyeType {
                 if let SkyeType::Struct(_, other_fields, _) = other {
                     if let Some(real_self_fields) = self_fields {
                         if let Some(real_other_fields) = other_fields {
-                            for (key, self_field) in real_self_fields {
+                            for (key, self_field) in &real_self_fields.map {
                                 if let Some(other_field) = real_other_fields.get(key) {
                                     self_field.type_.infer_type_from_similar_internal(&other_field.type_, Rc::clone(&data))?;
                                 }
@@ -744,7 +744,7 @@ impl SkyeType {
                     SkyeType::Union(_, other_fields) => {
                         if let Some(real_self_fields) = self_fields {
                             if let Some(real_other_fields) = other_fields {
-                                for (key, self_field) in real_self_fields {
+                                for (key, self_field) in &real_self_fields.map {
                                     if let Some(other_field) = real_other_fields.get(key) {
                                         self_field.type_.infer_type_from_similar_internal(&other_field.type_, Rc::clone(&data))?;
                                     }
@@ -762,7 +762,7 @@ impl SkyeType {
                         if let Some(real_self_fields) = self_fields {
                             if let Some(real_other_fields) = other_fields {
                                 if real_self_fields.len() >= real_other_fields.len() {
-                                    for (key, value) in real_self_fields {
+                                    for (key, value) in &real_self_fields.map {
                                         if let Some(field) = real_other_fields.get(key) {
                                             value.infer_type_from_similar_internal(field, Rc::clone(&data))?;
                                         } else {
@@ -771,7 +771,7 @@ impl SkyeType {
                                         }
                                     }
                                 } else {
-                                    for (key, value) in real_other_fields {
+                                    for (key, value) in &real_other_fields.map {
                                         if let Some(field) = real_self_fields.get(key) {
                                             value.infer_type_from_similar_internal(field, Rc::clone(&data))?;
                                         } else {
@@ -1010,7 +1010,7 @@ impl SkyeType {
             SkyeType::Struct(_, fields, _) |
             SkyeType::Union(_, fields) => {
                 if let Some(fields) = fields {
-                    for (_, field) in fields {
+                    for (_, field) in &fields.map {
                         if field.type_.contains_unknown() {
                             return true;
                         }
@@ -1021,7 +1021,7 @@ impl SkyeType {
             }
             SkyeType::Enum(_, variants, _) => {
                 if let Some(variants) = variants {
-                    for (_, variant) in variants {
+                    for (_, variant) in &variants.map {
                         if variant.contains_unknown() {
                             return true;
                         }
@@ -1048,7 +1048,7 @@ impl SkyeType {
                 }
 
                 if let Some(fields) = fields {
-                    for (_, field) in fields {
+                    for (_, field) in &fields.map {
                         if field.type_.is_recursive_inner(main_name.clone()) {
                             return true;
                         }
@@ -1067,7 +1067,7 @@ impl SkyeType {
                 }
 
                 if let Some(variants) = variants {
-                    for (_, variant) in variants {
+                    for (_, variant) in &variants.map {
                         if variant.is_recursive_inner(main_name.clone()) {
                             return true;
                         }

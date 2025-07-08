@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{AstPos, Bits, Expression, StringKind}, skye_type::SkyeType, tokens::Token};
+use crate::{ast::{AstPos, Bits, Expression, StringKind}, skye_type::SkyeType, tokens::Token, utils::OrderedNamedMap};
 
 #[derive(Clone, Debug)]
 pub struct IrStatement {
@@ -43,7 +43,7 @@ impl IrStatement {
                 false
             }
             IrStatementData::TaggedUnion { fields, .. } => {
-                for (_, field) in fields {
+                for (_, field) in &fields.map {
                     if field.contains_unknown() {
                         return true;
                     }
@@ -160,7 +160,7 @@ pub enum IrStatementData {
     Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType, qualifiers: Vec<FnQualifier> },
     Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
-    TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: HashMap<Rc<str>, SkyeType> },
+    TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: OrderedNamedMap<SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },
     Include { path: Rc<str>, is_ang: bool },

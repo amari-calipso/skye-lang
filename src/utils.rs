@@ -1,8 +1,51 @@
-use std::{cmp::max, rc::Rc};
+use std::{cmp::max, collections::HashMap, rc::Rc};
 
 use colored::{ColoredString, Colorize};
 
 use crate::{ast::Expression, tokens::Token};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderedNamedMap<T> {
+    pub map: HashMap<Rc<str>, T>,
+    pub order: Vec<Rc<str>>
+}
+
+impl<T> OrderedNamedMap<T> {
+    pub fn new() -> Self {
+        Self { 
+            map: HashMap::new(), 
+            order: Vec::new() 
+        }
+    }
+
+    pub fn get(&self, k: &str) -> Option<&T> {
+        self.map.get(k)
+    }
+
+    pub fn contains_key(&self, k: &str) -> bool {
+        self.map.contains_key(k)
+    }
+
+    pub fn len(&self) -> usize {
+        let len = self.order.len();
+        debug_assert_eq!(len, self.map.len());
+        len
+    }
+
+    pub fn insert(&mut self, k: Rc<str>, v: T) -> Option<T> {
+        let old = self.map.insert(Rc::clone(&k), v);
+
+        // if the key was already there, removal is O(n). 
+        // this shouldn't be used where you expect duplicates (which we don't)
+        if old.is_some() {
+            self.order.retain(|x| x.as_ref() != k.as_ref());
+        }
+
+        self.order.push(k);
+        old
+    }
+}
+
 
 pub fn substring(string: &String, a: usize, b: usize) -> String {
     string.chars().skip(a).take(b - a).collect()

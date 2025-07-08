@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::escape_string, Checks, CompilerConfig
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -6121,7 +6121,7 @@ impl IrGen {
 
                 let type_ = {
                     if *has_body {
-                        let mut output_fields = HashMap::new();
+                        let mut output_fields = OrderedNamedMap::new();
                         for field in fields {
                             let field_type = {
                                 let tmp = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await.ir_value.type_;
@@ -6534,7 +6534,7 @@ impl IrGen {
 
                         let write_output = binding.is_none() && !*is_simple;
 
-                        let mut output_fields = HashMap::new();
+                        let mut output_fields = OrderedNamedMap::new();
                         let mut evaluated_variants = Vec::with_capacity(variants.len());
                         for variant in variants {
                             let variant_type = {
@@ -7176,7 +7176,7 @@ impl IrGen {
 
                 let type_ = {
                     if *has_body {
-                        let mut output_fields = HashMap::new();
+                        let mut output_fields = OrderedNamedMap::new();
                         for field in fields {
                             let field_type = {
                                 let inner_field_type = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await.ir_value.type_;

@@ -203,7 +203,7 @@ fn get_type_dependencies_inner(type_: &SkyeType, toplevel: bool, declarations: b
             // if we're just declaring the struct/union, fields aren't defined yet, and hence we don't depend on them
             if !declarations {
                 if let Some(fields) = fields {
-                    for (_, field) in fields {
+                    for (_, field) in &fields.map {
                         dependencies.extend(get_type_dependencies_inner(&field.type_, false, declarations));
                     }
                 }
@@ -221,7 +221,7 @@ fn get_type_dependencies_inner(type_: &SkyeType, toplevel: bool, declarations: b
             // if we're just declaring the tagged union, fields aren't defined yet, and hence we don't depend on them
             if !declarations {
                 if let Some(variants) = variants {
-                    for (_, variant) in variants {
+                    for (_, variant) in &variants.map {
                         dependencies.extend(get_type_dependencies_inner(&variant, false, declarations));
                     }
                 }
@@ -988,7 +988,9 @@ impl CodeGen {
                         buf.push(" {\n");
                         buf.inc_indent();
 
-                        for (name, field) in fields {
+                        for name in fields.order {
+                            let field = fields.map.get(&name).unwrap();
+
                             buf.push_indent();
                             buf.push(&stringify_type(&field.type_));
                             buf.push(" ");
@@ -1034,7 +1036,9 @@ impl CodeGen {
                         buf.push(" {\n");
                         buf.inc_indent();
 
-                        for (name, field) in fields {
+                        for name in fields.order {
+                            let field = fields.map.get(&name).unwrap();
+
                             buf.push_indent();
                             buf.push(&stringify_type(&field.type_));
                             buf.push(" ");
@@ -1083,11 +1087,12 @@ impl CodeGen {
 
                 let mut dependencies = HashSet::new();
 
-                for (name, type_) in fields {
-                    dependencies.extend(get_type_dependencies_definitions_from_within(&type_));
+                for name in fields.order {
+                    let type_ = fields.map.get(&name).unwrap();
+                    dependencies.extend(get_type_dependencies_definitions_from_within(type_));
 
                     buf.push_indent();
-                    buf.push(&stringify_type(&type_));
+                    buf.push(&stringify_type(type_));
                     buf.push(" ");
                     buf.push(&prepare_name(name));
                     buf.push(";\n");
