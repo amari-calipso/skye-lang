@@ -405,8 +405,7 @@ mod tests {
 
     use crate::get_skyec;
 
-    #[test]
-    fn test_can_compile_examples() {
+    fn compile_everything_in_folder(folder: &str) {
         let output = OsStr::new("tmp");
         let mut config = CompilerConfig::new(
             get_skyec(), 
@@ -418,7 +417,7 @@ mod tests {
             TargetOS::Current
         );
         
-        for file in fs::read_dir("examples").expect("Couldn't read examples dir") {
+        for file in fs::read_dir(folder).expect("Couldn't read provided directory") {
             let path = file.expect("Couldn't read file").path();
             let input = path.as_os_str();
 
@@ -432,5 +431,11 @@ mod tests {
         }
 
         let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_can_compile_test_files_and_examples() {
+        compile_everything_in_folder("examples");
+        compile_everything_in_folder("tests");
     }
 }
