@@ -3788,6 +3788,7 @@ impl IrGen {
                 }
             }
             Expression::Variable(name) => {
+                // first, attempt to resolve the variable globally/locally, as the programmer typed it
                 if let Some(var_info) = self.environment.borrow().get(&name) {
                     return SkyeValue::with_from(
                         IrValue::new(
@@ -3797,7 +3798,23 @@ impl IrGen {
                         var_info.is_const,
                         var_info.from
                     );
-                } else if name.lexeme.as_ref() == "main" {
+                }
+
+                // if it's not found, attempt finding it within the current namespace
+                let namespaced_name = self.get_name(&name.lexeme);
+                if let Some(var_info) = self.environment.borrow().get(&Token::dummy(namespaced_name)) {
+                    return SkyeValue::with_from(
+                        IrValue::new(
+                            IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                            var_info.type_
+                        ), 
+                        var_info.is_const,
+                        var_info.from
+                    );
+                }
+                
+                // last attempt: the variable might be "main", which is internally renamed to "_SKYE_MAIN", so try looking for that
+                if name.lexeme.as_ref() == "main" {
                     if let Some(var_info) = self.globals.borrow().get(&Token::dummy(Rc::from("_SKYE_MAIN"))) {
                         return SkyeValue::new(
                             IrValue::new(
@@ -5001,38 +5018,58 @@ impl IrGen {
                 SkyeValue::get_unknown()
             }
             Expression::StaticGet(object_expr, name, gets_macro) => {
-                let object = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
+                let mut search_tok = name.clone();
 
-                if let Some(full_name) = object.ir_value.type_.static_get(name) {
-                    let mut search_tok = name.clone();
+                let mut object = None;
+                if let Some(object_expr) = object_expr {
+                    let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
+
+                    if let Some(full_name) = obj.ir_value.type_.static_get(name) {
+                        search_tok.set_lexeme(&full_name);
+                        object = Some(obj);
+                    } else {
+                        ast_error!(
+                            self, object_expr,
+                            format!(
+                                "Can only statically access namespaces, structs, enums and instances (got {})",
+                                obj.ir_value.type_.stringify()
+                            ).as_ref()
+                        );
+
+                        return SkyeValue::get_unknown();
+                    }
+                } else {
+                    let full_name = self.get_name(&name.lexeme);
                     search_tok.set_lexeme(&full_name);
+                }
 
-                    let env = self.globals.borrow();
+                let env = self.globals.borrow();
 
-                    if let Some(var) = env.get(&search_tok) {
-                        if *gets_macro {
-                            drop(env);
+                if let Some(var) = env.get(&search_tok) {
+                    if *gets_macro {
+                        drop(env);
 
-                            let mut operator_token = name.clone();
-                            operator_token.set_type(TokenType::At);
+                        let mut operator_token = name.clone();
+                        operator_token.set_type(TokenType::At);
 
-                            let output_expr = Expression::Unary { 
-                                op: operator_token, 
-                                expr: Box::new(Expression::Variable(search_tok)), 
-                                is_prefix: true 
-                            };
-                            return ctx.run(|ctx| self.evaluate(&output_expr, allow_unknown, ctx)).await;
-                        } else {
-                            return SkyeValue::with_from(
-                                IrValue::new(
-                                    IrValueData::Variable { name: full_name },
-                                    var.type_
-                                ),
-                                var.is_const,
-                                var.from
-                            );
-                        }
-                    } else if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
+                        let output_expr = Expression::Unary { 
+                            op: operator_token, 
+                            expr: Box::new(Expression::Variable(search_tok)), 
+                            is_prefix: true 
+                        };
+                        return ctx.run(|ctx| self.evaluate(&output_expr, allow_unknown, ctx)).await;
+                    } else {
+                        return SkyeValue::with_from(
+                            IrValue::new(
+                                IrValueData::Variable { name: search_tok.lexeme },
+                                var.type_
+                            ),
+                            var.is_const,
+                            var.from
+                        );
+                    }
+                } else if let Some(object) = object {
+                    if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
                         if let SkyeType::Enum(enum_name, ..) = &**inner_type {
                             search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
 
@@ -5048,18 +5085,9 @@ impl IrGen {
                             } 
                         }
                     } 
-
-                    token_error!(self, name, "Undefined property");
-                } else {
-                    ast_error!(
-                        self, object_expr,
-                        format!(
-                            "Can only statically access namespaces, structs, enums and instances (got {})",
-                            object.ir_value.type_.stringify()
-                        ).as_ref()
-                    );
                 }
 
+                token_error!(self, name, "Undefined property");
                 SkyeValue::get_unknown()
             }
         }
@@ -6372,9 +6400,8 @@ impl IrGen {
                     }
 
                     let mut env = self.environment.borrow_mut();
-
-                    if let Some(existing) = env.get(&Token::dummy(Rc::clone(&full_name))) {
-                        token_error!(self, identifier, "Cannot redefine identifiers");
+                    if let Some(existing) = env.get_in_scope(&Token::dummy(Rc::clone(&full_name))) {
+                        token_error!(self, identifier, "Cannot define identifier with same name as existing symbol defined in the same scope");
 
                         if let Some(token) = &existing.tok {
                             token_note!(*token, "Previously defined here");
@@ -7591,11 +7618,11 @@ impl IrGen {
                                             cases.push(SwitchCase::new(
                                                 Some(vec![
                                                     Expression::StaticGet(
-                                                        Box::new(Expression::StaticGet(
-                                                            Box::new(Expression::Variable(self_type_tok.clone())),
+                                                        Some(Box::new(Expression::StaticGet(
+                                                            Some(Box::new(Expression::Variable(self_type_tok.clone()))),
                                                             kind_type_tok.clone(),
                                                             false
-                                                        )),
+                                                        ))),
                                                         name_tok.clone(),
                                                         false
                                                     )

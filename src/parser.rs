@@ -276,6 +276,12 @@ impl Parser {
             return Some(Expression::Variable(self.previous().clone()));
         }
 
+        if self.match_(&[TokenType::ColonColon]) {
+            let gets_macro = self.match_(&[TokenType::At]);
+            let name = self.consume(TokenType::Identifier, "Expecting identifier after ::")?.clone();
+            return Some(Expression::StaticGet(None, name, gets_macro));
+        }
+
         if self.match_(&[TokenType::LeftParen]) {
             let expr = self.expression()?;
             self.consume(TokenType::RightParen, "Expecting ')' after expression")?;
@@ -338,7 +344,7 @@ impl Parser {
         while self.match_(&[TokenType::ColonColon]) {
             let gets_macro = self.match_(&[TokenType::At]);
             let name = self.consume(TokenType::Identifier, "Expecting property name after '::'")?.clone();
-            expr = Expression::StaticGet(Box::new(expr), name, gets_macro);
+            expr = Expression::StaticGet(Some(Box::new(expr)), name, gets_macro);
         }
 
         Some(expr)

@@ -215,7 +215,14 @@ impl MacroExpander {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
-                return self.globals.get(&name.lexeme).cloned();
+                // first, attempt to resolve the variable globally/locally, as the programmer typed it
+                if let Some(result) = self.globals.get(&name.lexeme) {
+                    return Some(result.clone());
+                }
+
+                // if it's not found, attempt finding it within the current namespace
+                let full_name = self.get_name(&name.lexeme);
+                return self.globals.get(&full_name).cloned()
             }
             Expression::InMacro { inner, source } => {
                 let old_errors = self.errors;
@@ -278,26 +285,36 @@ impl MacroExpander {
                 }
             }
             Expression::StaticGet(object_expr, name, gets_macro) => {
-                let object = ctx.run(|ctx| self.expand_expression(object_expr, ctx)).await;
+                let value = 'value_blk: {
+                    if let Some(object_expr) = object_expr {
+                        let object = ctx.run(|ctx| self.expand_expression(object_expr, ctx)).await;
 
-                if let Some(object) = object {
-                    if let Some(value) = object.static_get(&name) {
-                        if let Some(var) = self.globals.get(&value) {
-                            if *gets_macro {
-                                at_operator!(self, Some(var.clone()), expr, name, expr_pos, ctx);
+                        if let Some(object) = object {
+                            if let Some(value) = object.static_get(&name) {
+                                break 'value_blk value;
+                            } else {
+                                ast_error!(
+                                    self, object_expr,
+                                    format!(
+                                        "Can only statically access namespaces, structs, enums and instances (got {})",
+                                        object.stringify()
+                                    ).as_ref()
+                                );
                             }
-
-                            return Some(var.clone());
                         }
+
+                        return None;
                     } else {
-                        ast_error!(
-                            self, object_expr,
-                            format!(
-                                "Can only statically access namespaces, structs, enums and instances (got {})",
-                                object.stringify()
-                            ).as_ref()
-                        );
+                        self.get_name(&name.lexeme)
                     }
+                };
+
+                if let Some(var) = self.globals.get(&value) {
+                    if *gets_macro {
+                        at_operator!(self, Some(var.clone()), expr, name, expr_pos, ctx);
+                    }
+
+                    return Some(var.clone());
                 }
             }
             Expression::Call(callee_expr, _, args, unpack) => {

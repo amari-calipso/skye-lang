@@ -443,9 +443,34 @@ instance::setMyField(&instance, result);
 # Namespaces
 Namespaces can be created to avoid name conflicts and organize code. They can be accessed through the `::` operator and defined like this:
 ```
+fn ambiguous() {
+    @println("I am the wrong one :c");
+}
+
 namespace myNamespace {
     fn test() {
         @println("test!");
+    }
+
+    fn callTest() {
+        test(); // test!
+    }
+
+    fn ambiguous() {
+        @println("I am the right one!");
+    }
+
+    fn callAmbiguous() {
+        // when something globally outside the namespace is called the same way
+        // as something inside your namespace, Skye will pick by default what's outside.
+        ambiguous(); // I am the wrong one :c
+
+        // if you want to disambiguate, specify the entire path!
+        myNamespace::ambiguous(); // I am the right one!
+
+        // you can also use this shorthand syntax, if the thing you want to refer to
+        // is defined in the same namespace
+        ::ambiguous(); // I am the right one!
     }
 }
 

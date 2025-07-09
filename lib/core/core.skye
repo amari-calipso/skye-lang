@@ -101,18 +101,15 @@ macro todo(msg) @panic(@concat("Not implemented yet: \"", msg, "\""));
 
 impl core::compiler::TargetOS {
     fn isUnixLike(const self) bool {
-        use core::compiler::TargetOS;
-        return self == TargetOS::Linux || self == TargetOS::MacOS;
+        return self == ::Linux || self == ::MacOS;
     }
 
     fn toString(const self) String {
-        use core::compiler::TargetOS;
-
         switch *self {
-            TargetOS::Linux   -> return "linux";
-            TargetOS::MacOS   -> return "mac-os";
-            TargetOS::Windows -> return "windows";
-            TargetOS::Unknown -> return "unknown";
+            ::Linux   -> return "linux";
+            ::MacOS   -> return "mac-os";
+            ::Windows -> return "windows";
+            ::Unknown -> return "unknown";
             else -> @unreachable;
         }
     }
@@ -126,7 +123,7 @@ namespace core {
 
     impl[T] core::Option[T] {
         fn or(const self, const value: T) T {
-            if self.kind == core::Option::Kind::Some {
+            if self.kind == ::Kind::Some {
                 return self.Some;
             } else {
                 return value;
@@ -134,11 +131,11 @@ namespace core {
         }
 
         fn isSome(const self) bool {
-            return self.kind == core::Option::Kind::Some;
+            return self.kind == ::Kind::Some;
         }
 
         fn isNone(const self) bool {
-            return self.kind == core::Option::Kind::None;
+            return self.kind == ::Kind::None;
         }
     }
 
@@ -149,7 +146,7 @@ namespace core {
 
     impl[T, U] core::Result[T, U] {
         fn or(const self, const value: T) T {
-            if self.kind == core::Result::Kind::Ok {
+            if self.kind == ::Kind::Ok {
                 return self.Ok;
             } else {
                 return value;
@@ -157,11 +154,11 @@ namespace core {
         }
 
         fn isOk(const self) bool {
-            return self.kind == core::Result::Kind::Ok;
+            return self.kind == ::Kind::Ok;
         }
 
         fn isError(const self) bool {
-            return self.kind == core::Result::Kind::Error;
+            return self.kind == ::Kind::Error;
         }
     }
 
@@ -340,7 +337,7 @@ impl[T] core::SliceIterator[T] {
 
 impl[T] core::Option[T] {
     fn expect(const self, msg: String) T {
-        if self.kind == core::Option::Kind::Some {
+        if self.kind == ::Kind::Some {
             switch T {
                 void -> return;
                 else -> return self.Some;
@@ -357,7 +354,7 @@ impl[T] core::Option[T] {
 
 impl[T, U] core::Result[T, U] {
     fn expect(const self, msg: String) T {
-        if self.kind == core::Result::Kind::Ok {
+        if self.kind == ::Kind::Ok {
             switch T {
                 void -> return;
                 else -> return self.Ok;

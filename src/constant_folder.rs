@@ -84,14 +84,18 @@ impl ConstantFolder {
                 }
             }
             Expression::Grouping(inner) |
-            Expression::Get(inner, _) | 
-            Expression::StaticGet(inner, ..) => {
+            Expression::Get(inner, _) => {
                 ctx.run(|ctx| self.fold_expression(inner, ctx)).await;
             }
             Expression::Assign { target: left, value: right, .. } | 
             Expression::Array { item: left, size: right, .. } => {
                 ctx.run(|ctx| self.fold_expression(left, ctx)).await;
                 ctx.run(|ctx| self.fold_expression(right, ctx)).await;
+            }
+            Expression::StaticGet(inner, ..) => {
+                if let Some(inner) = inner {
+                    ctx.run(|ctx| self.fold_expression(inner, ctx)).await;
+                }
             }
             Expression::Slice { items, .. } |
             Expression::ArrayLiteral { items, .. } => {
