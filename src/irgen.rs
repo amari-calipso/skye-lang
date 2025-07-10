@@ -2355,6 +2355,77 @@ impl IrGen {
         }
     }
 
+    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
+        // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
+        if self.environment.borrow().enclosing.is_some() {
+            if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
+        // if it's not found, attempt finding it within the current namespace (if any)
+        if !global_ns && self.curr_name != "" {
+            let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
+            if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: namespaced_name.lexeme },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
+        // if it's not found in the current namespace either, look for it in all environments, from innermost to topmost
+        if let Some(var_info) = self.environment.borrow().get(&name) {
+            return Some(SkyeValue::with_from(
+                IrValue::new(
+                    IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                    var_info.type_
+                ), 
+                var_info.is_const,
+                var_info.from
+            ));
+        }
+
+        // if, for some reason, the current environment is not connected to globals, also look in globals directly
+        if let Some(var_info) = self.globals.borrow().get(&name) {
+            return Some(SkyeValue::with_from(
+                IrValue::new(
+                    IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                    var_info.type_
+                ), 
+                var_info.is_const,
+                var_info.from
+            ));
+        }
+        
+        // last attempt: the variable might be "main", which is internally renamed to "_SKYE_MAIN", so try looking for that
+        if name.lexeme.as_ref() == "main" {
+            let skye_main = Token::dummy(Rc::from("_SKYE_MAIN"));
+            if let Some(var_info) = self.globals.borrow().get(&skye_main) {
+                return Some(SkyeValue::new(
+                    IrValue::new(
+                        IrValueData::Variable { name: skye_main.lexeme },
+                        var_info.type_
+                    ), 
+                    var_info.is_const
+                ));
+            }
+        }
+
+        return None;
+    }
+
     async fn evaluate(&mut self, expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
         match expr {
             Expression::Grouping(inner_expr) => {
@@ -3788,42 +3859,8 @@ impl IrGen {
                 }
             }
             Expression::Variable(name) => {
-                // first, attempt to resolve the variable globally/locally, as the programmer typed it
-                if let Some(var_info) = self.environment.borrow().get(&name) {
-                    return SkyeValue::with_from(
-                        IrValue::new(
-                            IrValueData::Variable { name: Rc::clone(&name.lexeme) },
-                            var_info.type_
-                        ), 
-                        var_info.is_const,
-                        var_info.from
-                    );
-                }
-
-                // if it's not found, attempt finding it within the current namespace
-                let namespaced_name = self.get_name(&name.lexeme);
-                if let Some(var_info) = self.environment.borrow().get(&Token::dummy(namespaced_name)) {
-                    return SkyeValue::with_from(
-                        IrValue::new(
-                            IrValueData::Variable { name: Rc::clone(&name.lexeme) },
-                            var_info.type_
-                        ), 
-                        var_info.is_const,
-                        var_info.from
-                    );
-                }
-                
-                // last attempt: the variable might be "main", which is internally renamed to "_SKYE_MAIN", so try looking for that
-                if name.lexeme.as_ref() == "main" {
-                    if let Some(var_info) = self.globals.borrow().get(&Token::dummy(Rc::from("_SKYE_MAIN"))) {
-                        return SkyeValue::new(
-                            IrValue::new(
-                                IrValueData::Variable { name: Rc::clone(&name.lexeme) },
-                                var_info.type_
-                            ), 
-                            var_info.is_const
-                        );
-                    }
+                if let Some(value) = self.resolve_variable(name, false) {
+                    return value;
                 }
 
                 if allow_unknown {
@@ -5021,6 +5058,7 @@ impl IrGen {
                 let mut search_tok = name.clone();
 
                 let mut object = None;
+                let global_ns = object_expr.is_none();
                 if let Some(object_expr) = object_expr {
                     let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
 
@@ -5028,27 +5066,22 @@ impl IrGen {
                         search_tok.set_lexeme(&full_name);
                         object = Some(obj);
                     } else {
-                        ast_error!(
-                            self, object_expr,
-                            format!(
-                                "Can only statically access namespaces, structs, enums and instances (got {})",
-                                obj.ir_value.type_.stringify()
-                            ).as_ref()
-                        );
-
+                        if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
+                            ast_error!(
+                                self, object_expr,
+                                format!(
+                                    "Can only statically access namespaces, structs, enums and instances (got {})",
+                                    obj.ir_value.type_.stringify()
+                                ).as_ref()
+                            );
+                        }
+                        
                         return SkyeValue::get_unknown();
                     }
-                } else {
-                    let full_name = self.get_name(&name.lexeme);
-                    search_tok.set_lexeme(&full_name);
                 }
-
-                let env = self.globals.borrow();
-
-                if let Some(var) = env.get(&search_tok) {
+                
+                if let Some(value) = self.resolve_variable(&search_tok, global_ns) {
                     if *gets_macro {
-                        drop(env);
-
                         let mut operator_token = name.clone();
                         operator_token.set_type(TokenType::At);
 
@@ -5057,36 +5090,25 @@ impl IrGen {
                             expr: Box::new(Expression::Variable(search_tok)), 
                             is_prefix: true 
                         };
+                        
                         return ctx.run(|ctx| self.evaluate(&output_expr, allow_unknown, ctx)).await;
-                    } else {
-                        return SkyeValue::with_from(
-                            IrValue::new(
-                                IrValueData::Variable { name: search_tok.lexeme },
-                                var.type_
-                            ),
-                            var.is_const,
-                            var.from
-                        );
                     }
-                } else if let Some(object) = object {
+
+                    return value;
+                }
+
+                if let Some(object) = object {
                     if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
                         if let SkyeType::Enum(enum_name, ..) = &**inner_type {
                             search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
 
-                            if let Some(var) = env.get(&search_tok) {
-                                return SkyeValue::with_from(
-                                    IrValue::new(
-                                        IrValueData::Variable { name: search_tok.lexeme },
-                                        var.type_
-                                    ),
-                                    var.is_const,
-                                    var.from
-                                );
-                            } 
+                            if let Some(value) = self.resolve_variable(&search_tok, global_ns) {
+                                return value;
+                            }
                         }
                     } 
                 }
-
+                
                 token_error!(self, name, "Undefined property");
                 SkyeValue::get_unknown()
             }
@@ -5616,7 +5638,7 @@ impl IrGen {
                     return Ok(Some(type_));
                 }
 
-                let mut fn_environment = Some(Environment::with_enclosing(Rc::clone(&self.environment)));
+                let mut fn_environment = Some(Environment::function(Rc::clone(&self.environment)));
 
                 for i in 0 .. params.len() {
                     fn_environment.as_mut().unwrap().define(

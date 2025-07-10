@@ -5,32 +5,6 @@ namespace core {
         }
     }
 
-    namespace mem {
-        impl core::mem::HeapAllocator {
-            fn alloc[T](self, amt: usz) core::Ptr[T, Self] {
-                const ptr = @cast(*T, self.allocRaw(amt * @sizeOf(T)));
-                return core::Ptr::new(ptr, ptr, ptr + amt, self);
-            }
-
-            fn realloc[T](self, const ptr: &core::Ptr[T, Self], size: usz) {
-                const rawptr = @cast(*T, self.reallocRaw(@cast(voidptr, ptr.ptr), size * @sizeOf(T)));
-                ptr.ptr = rawptr;
-                ptr.min = rawptr;
-                ptr.max = rawptr + size;
-            }
-
-            fn put[T](self, object: T) core::Ptr[T, Self] {
-                let ptr = self.alloc[T](1);
-                *ptr = object;
-                return ptr;
-            }
-
-            fn free[T](self, const ptr: &const core::Ptr[T, Self]) {
-                self.freeRaw(@cast(voidptr, ptr.ptr));
-            }
-        }
-    }
-
     struct Ptr[T, U = core::mem::HeapAllocator] {
         ptr: *T,
         min: *T,
@@ -46,10 +20,6 @@ namespace core {
 
         fn from(ptr: *T, alloc: &U) Self[T, U] {
             return Self.{ ptr, min: ptr, max: ptr, alloc };
-        }
-
-        fn free(self) {
-            self.alloc.free(self);
         }
 
         fn get(const self, const offs: usz) ?T {
@@ -86,6 +56,42 @@ namespace core {
         fn __constderef__(const self) *const T {
             return self.ptr;
         }
+    }
+
+    namespace mem {
+        impl core::mem::HeapAllocator {
+            fn alloc[T](self, amt: usz) core::Ptr[T, Self] {
+                const ptr = @cast(*T, self.allocRaw(amt * @sizeOf(T)));
+                return core::Ptr::new(ptr, ptr, ptr + amt, self);
+            }
+
+            fn realloc[T](self, const ptr: &core::Ptr[T, Self], size: usz) {
+                const rawptr = @cast(*T, self.reallocRaw(@cast(voidptr, ptr.ptr), size * @sizeOf(T)));
+                ptr.ptr = rawptr;
+                ptr.min = rawptr;
+                ptr.max = rawptr + size;
+            }
+
+            fn put[T](self, object: T) core::Ptr[T, Self] {
+                let ptr = self.alloc[T](1);
+                *ptr = object;
+                return ptr;
+            }
+
+            fn free[T](self, const ptr: &const core::Ptr[T, Self]) {
+                self.freeRaw(@cast(voidptr, ptr.ptr));
+            }
+        }
+    }
+
+    impl[T, U = core::mem::HeapAllocator] core::Ptr[T, U] {
+        fn free(self) {
+            self.alloc.free(self);
+        }
+    }
+
+    #init fn __builtinsInit() {
+        core::mem::heapAllocator = core::mem::HeapAllocator::new();
     }
 }
 
@@ -698,10 +704,6 @@ macro println(args+)  @fprintln(..@concat({&core::io::stdOut}, args));
 macro eprintln(args+) @fprintln(..@concat({&core::io::stdErr}, args));
 
 macro array(items+) core::Array::from(items);
-
-#init fn _SKYE_BUILTINS_INIT() {
-    core::mem::heapAllocator = core::mem::HeapAllocator::new();
-}
 
 fn _SKYE_CONVERT_ARGS(const argc: usz, const argv: **const char) core::Array[String] {
     use core::Array::free[String, core::mem::HeapAllocator] as _;

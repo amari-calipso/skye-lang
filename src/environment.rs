@@ -23,16 +23,21 @@ impl SkyeVariable {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
     types: HashMap<Rc<str>, SkyeVariable>,
-    pub enclosing: Option<Rc<RefCell<Environment>>>
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
+    pub is_function: bool
 }
 
 impl Environment {
     pub fn new() -> Self {
-        Environment { types: HashMap::new(), enclosing: None }
+        Environment { types: HashMap::new(), enclosing: None, is_function: false }
     }
 
     pub fn with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
-        Environment { types: HashMap::new(), enclosing: Some(enclosing) }
+        Environment { types: HashMap::new(), enclosing: Some(enclosing), is_function: false }
+    }
+
+    pub fn function(enclosing: Rc<RefCell<Environment>>) -> Self {
+        Environment { types: HashMap::new(), enclosing: Some(enclosing), is_function: true }
     }
 
     pub fn iter_local(&self) -> HashMap<Rc<str>, SkyeVariable> {
@@ -63,5 +68,17 @@ impl Environment {
         } else {
             None
         }
+    }
+
+    pub fn get_in_fn_scope(&self, name: &Token) -> Option<SkyeVariable> {
+        if let Some(var) = self.types.get(&name.lexeme) {
+            return Some(var.clone());
+        } else if !self.is_function {
+            if let Some(enclosing) = &self.enclosing {
+                return enclosing.borrow().get_in_fn_scope(name);
+            }
+        }
+
+        None
     }
 }

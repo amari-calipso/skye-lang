@@ -11,7 +11,7 @@ namespace std {
         }
 
         fn contains[T, U](const array: &const T, const len: usz, const item: &const U) bool {
-            return std::collections::linearSearch(array, len, item).isSome();
+            return linearSearch(array, len, item).isSome();
         }
 
         fn swap[T](const array: &T, const a: usz, const b: usz) {
@@ -22,7 +22,7 @@ namespace std {
 
         fn reverse[T](const array: &T, a: usz, b: usz) {
             b--;
-            while (a < b) std::collections::swap(array, a++, b--);
+            while (a < b) swap(array, a++, b--);
         }
 
         fn moveLeft[T](const array: &T, from: usz, const to: usz) {
@@ -50,16 +50,16 @@ namespace std {
         }
 
         fn move[T](const array: &T, const from: usz, const to: usz) {
-            if (from < to) std::collections::moveRight(array, from, to);
-            else           std::collections::moveLeft( array, from, to);
+            if (from < to) moveRight(array, from, to);
+            else           moveLeft( array, from, to);
         }
 
         fn blockSwap[T](const array: &T, a: usz, b: usz, len: usz) {
-            while (len--) std::collections::swap(array, a++, b++);
+            while (len--) swap(array, a++, b++);
         }
 
         fn blockSwapBW[T](const array: &T, a: usz, b: usz, len: usz) {
-            while (len--) std::collections::swap(array, a + len, b + len);
+            while (len--) swap(array, a + len, b + len);
         }
 
         fn rotate[T](const array: &T, a: usz, const m: usz, b: usz) {
@@ -68,18 +68,18 @@ namespace std {
 
             while rl > 1 && ll > 1 {
                 if rl < ll {
-                    std::collections::blockSwap(array, a, m, rl);
+                    blockSwap(array, a, m, rl);
                     a  += rl;
                     ll -= rl;
                 } else {
                     b  -= ll;
                     rl -= ll;
-                    std::collections::blockSwapBW(array, a, b, ll);
+                    blockSwapBW(array, a, b, ll);
                 }
             }
 
-            if      (rl == 1) std::collections::moveLeft(array, m, a);
-            else if (ll == 1) std::collections::moveRight(array, a, b - 1);
+            if      (rl == 1) moveLeft(array, m, a);
+            else if (ll == 1) moveRight(array, a, b - 1);
         }
     }
 }
@@ -121,7 +121,7 @@ impl[T, U = core::mem::HeapAllocator] core::Array[T, U] {
 
     fn move(self, const from: usz, const to: usz) {
         if (from < to) self.moveRight(from, to);
-        else            self.moveLeft(from, to);
+        else           self.moveLeft(from, to);
     }
 
     fn blockSwap(self, const a: usz, const b: usz, const len: usz) {

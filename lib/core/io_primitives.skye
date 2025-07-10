@@ -177,10 +177,10 @@ namespace core {
         let stdErr: core::io::File;
         let stdIn:  core::io::File;
     }
-}
 
-#init fn _SKYE_PRIMITIVES_INIT() {
-    core::io::stdOut = core::io::File::fromCFile(@stdout);
-    core::io::stdErr = core::io::File::fromCFile(@stderr);
-    core::io::stdIn  = core::io::File::fromCFile(@stdin);
+    #init fn __primitivesInit() {
+        core::io::stdOut = core::io::File::fromCFile(@stdout);
+        core::io::stdErr = core::io::File::fromCFile(@stderr);
+        core::io::stdIn  = core::io::File::fromCFile(@stdin);
+    }
 }

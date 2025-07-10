@@ -25,7 +25,7 @@ namespace std {
             command: String
         }
 
-        impl std::os::Command {
+        impl Command {
             fn new(command: String) Self {
                 return Self.{ command };
             }
@@ -75,7 +75,7 @@ namespace std {
             const dir: &const CDir
         }
 
-        impl std::os::DirectoryIterator {
+        impl DirectoryIterator {
             fn next(const self) ?(String!String) {
                 use String!String as NextResult;
                 use ?NextResult   as NextOption;
@@ -95,8 +95,8 @@ namespace std {
             }
         }
 
-        fn listDir(const path: String) std::os::DirectoryIterator!String {
-            use std::os::DirectoryIterator!String as ListDirResult;
+        fn listDir(const path: String) DirectoryIterator!String {
+            use DirectoryIterator!String as ListDirResult;
 
             let buf = core::Array::new[char]();
             defer buf.free();
@@ -105,7 +105,7 @@ namespace std {
             const dir = opendir(buf.array.ptr);
 
             if (@asPtr(dir) == @nullptr) return ListDirResult::Error(core::utils::cStringToString(strerror(errno)));
-            return ListDirResult::Ok(std::os::DirectoryIterator.{ dir });
+            return ListDirResult::Ok(DirectoryIterator.{ dir });
         }
 
         namespace env {

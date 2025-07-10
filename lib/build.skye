@@ -4,6 +4,10 @@ namespace build {
     use core::compiler::TargetOS;
     let __cc: ?String;
 
+    #init fn __init() {
+        __cc = (?String)::None;
+    }
+
     fn wrap[T](const source: String, const result: T) !void {
         if result.isError() {
             @println("%: %", source, result.Error);
@@ -26,57 +30,61 @@ namespace build {
 
     fn removeFile(const file: String) !void {
         @println("build::removeFile: \"%\"", file);
-        return build::wrap("build::removeFile", std::os::removeFile(file));
+        return wrap("build::removeFile", std::os::removeFile(file));
     }
 
     struct Platform {
-        targetOS: build::TargetOS,
+        targetOS: TargetOS,
         ptrSize: u8
     }
 
-    impl build::Platform {
+    impl Platform {
+        use core::compiler::TargetOS;
+
         fn linux64bit() Self {
-            return Self.{ targetOS: build::TargetOS::Linux, ptrSize: 8 };
+            return Self.{ targetOS: TargetOS::Linux, ptrSize: 8 };
         }
 
         fn linux32bit() Self {
-            return Self.{ targetOS: build::TargetOS::Linux, ptrSize: 4 };
+            return Self.{ targetOS: TargetOS::Linux, ptrSize: 4 };
         }
 
         fn macOS64bit() Self {
-            return Self.{ targetOS: build::TargetOS::MacOS, ptrSize: 8 };
+            return Self.{ targetOS: TargetOS::MacOS, ptrSize: 8 };
         }
 
         fn macOS32bit() Self {
-            return Self.{ targetOS: build::TargetOS::MacOS, ptrSize: 4 };
+            return Self.{ targetOS: TargetOS::MacOS, ptrSize: 4 };
         }
 
         fn windows64bit() Self {
-            return Self.{ targetOS: build::TargetOS::Windows, ptrSize: 8 };
+            return Self.{ targetOS: TargetOS::Windows, ptrSize: 8 };
         }
 
         fn windows32bit() Self {
-            return Self.{ targetOS: build::TargetOS::Windows, ptrSize: 4 };
+            return Self.{ targetOS: TargetOS::Windows, ptrSize: 4 };
         }
     }
     
     struct Conf {
         checks: core::compiler::Checks,
-        platform: ?build::Platform,
+        platform: ?Platform,
         externLibs: ?&Array[char]
     }
 
-    impl build::Conf {
+    impl Conf {
+        use ::build::Platform;
+
         fn default() Self {
             return Self.{ 
                 checks: core::compiler::Checks::Debug,
-                platform: (?build::Platform)::None,
+                platform: (?Platform)::None,
                 externLibs: (?&Array[char])::None 
             };
         }
     }
 
-    fn compileSkyeToC(const input: String, const output: String, const conf: build::Conf) !void {
+    fn compileSkyeToC(const input: String, const output: String, const conf: Conf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
@@ -111,7 +119,7 @@ namespace build {
                 return (!void)::Error;
             }
         } else {
-            try build::system(buf.asString());
+            try system(buf.asString());
         }
 
         return (!void)::Ok;
@@ -120,18 +128,18 @@ namespace build {
     fn cc() String!void {
         use String!void as CCResult;
 
-        if build::__cc.isSome() {
-            return CCResult::Ok(build::__cc.Some);
+        if __cc.isSome() {
+            return CCResult::Ok(__cc.Some);
         }
 
         const cc = std::os::env::var("CC");
         if cc.isSome() {
-            build::__cc = (?String)::Some(cc.Some);
-            return CCResult::Ok(build::__cc.Some);
+            __cc = (?String)::Some(cc.Some);
+            return CCResult::Ok(__cc.Some);
         } else if core::compiler::@TARGET_OS.isUnixLike() {
-            if build::system("cc --version").isOk() {
-                build::__cc = (?String)::Some("cc");
-                return CCResult::Ok(build::__cc.Some);
+            if system("cc --version").isOk() {
+                __cc = (?String)::Some("cc");
+                return CCResult::Ok(__cc.Some);
             }
 
             @println("Could not find C compiler. Install a default C compiler or set the CC environment variable");
@@ -163,15 +171,15 @@ namespace build {
         let buf = core::Array::new[char]();
         defer buf.free();
 
-        const cc = try build::cc();
+        const cc = try cc();
         @format(&buf, "% -w % ", cc, input);
 
-        if (externLibs.isSome()) build::pushAllExtern(&buf, externLibs.Some);
+        if (externLibs.isSome()) pushAllExtern(&buf, externLibs.Some);
         @format(&buf, "-o %", output);
-        try build::system(buf.asString());
+        try system(buf.asString());
     }
 
-    fn compileSkye(const input: String, const output: String, const conf: build::Conf) !void {
+    fn compileSkye(const input: String, const output: String, const conf: Conf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
@@ -207,12 +215,8 @@ namespace build {
             return (!void)::Error;
         }
 
-        try build::compileC("tmp.c", output, (?String)::Some(externBuf.asString()));
-        let _ = build::removeFile("tmp.c");
+        try compileC("tmp.c", output, (?String)::Some(externBuf.asString()));
+        let _ = removeFile("tmp.c");
         return (!void)::Ok;
     }    
-}
-
-#init fn _SKYE_BUILD_INIT() {
-    build::__cc = (?String)::None;
 }

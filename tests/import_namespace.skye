@@ -1,0 +1,6 @@
+import "std/collections" namespace foo;
+
+fn main() {
+    const items = {1, 2, 3};
+    @println("Does the slice contain 1? %", foo::std::collections::contains(items, items.length, 1));
+}

@@ -1381,8 +1381,25 @@ impl Parser {
             }
         }
 
+        let namespace = {
+            if self.match_(&[TokenType::Namespace]) {
+                Some(self.consume(TokenType::Identifier, "Expecting name after import namespace")?.clone())
+            } else {
+                None
+            }
+        };
+
         self.consume(TokenType::Semicolon, "Expecting ';' after import statement")?;
-        Some(Statement::Import { path, type_: import_type })
+
+        let import = Statement::Import { path, type_: import_type };
+        if let Some(namespace) = namespace {
+            Some(Statement::Namespace { 
+                name: namespace, 
+                body: vec![import] 
+            })
+        } else {
+            Some(import)
+        }
     }
 
     fn union_decl(&mut self) -> Option<Statement> {

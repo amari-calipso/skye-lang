@@ -444,7 +444,7 @@ instance::setMyField(&instance, result);
 Namespaces can be created to avoid name conflicts and organize code. They can be accessed through the `::` operator and defined like this:
 ```
 fn ambiguous() {
-    @println("I am the wrong one :c");
+    @println("I am the outside one!");
 }
 
 namespace myNamespace {
@@ -457,20 +457,17 @@ namespace myNamespace {
     }
 
     fn ambiguous() {
-        @println("I am the right one!");
+        @println("I am the inside one!");
     }
 
     fn callAmbiguous() {
         // when something globally outside the namespace is called the same way
-        // as something inside your namespace, Skye will pick by default what's outside.
-        ambiguous(); // I am the wrong one :c
+        // as something inside your namespace, Skye will pick by default what's inside.
+        ambiguous(); // I am the inside one!
 
-        // if you want to disambiguate, specify the entire path!
-        myNamespace::ambiguous(); // I am the right one!
-
-        // you can also use this shorthand syntax, if the thing you want to refer to
-        // is defined in the same namespace
-        ::ambiguous(); // I am the right one!
+        // if you want to refer to something outside, you can use a leading '::' 
+        // to specify you are in the global namespace
+        ::ambiguous(); // I am the outside one!
     }
 }
 
@@ -497,11 +494,22 @@ use addValue[f32] as _; // or, for instance, this syntax will create the necessa
 # Import
 The import statement can import both Skye packages and C libraries.
 ```
-import "os"; // using the name with no extension will assume this is an installed package
-import "otherFile.skye"; // using the full file name will search in the project folder
+// using the name with no extension will assume this is an installed package
+import "os"; 
+
+// using the full file name will search in the project folder
+import "otherFile.skye"; 
 import "anotherFile.h";
-import <"math.h">; // using angular brackets is equivalent to doing the same in C through an #include
-import <<"core/internals.h">>; // using double angular brackets forces the import to address to the installed packages
+
+// declaring a namespace will wrap the import in a namespace.
+// while very handy, be careful! files may use absolute paths and produce errors
+import "namespacedFile.skye" namespace myNamespace; 
+
+// using angular brackets is equivalent to doing the same in C through an #include
+import <"math.h">; 
+
+// using double angular brackets forces the import to address to the installed packages
+import <<"core/internals.h">>; 
 ```
 
 You can also use `extern` to define libraries to link with.
