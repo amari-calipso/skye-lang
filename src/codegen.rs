@@ -113,7 +113,6 @@ const I32_MAIN_PLUS_ARGS: &str = concat!(
     "}\n\n"
 );
 
-
 #[derive(Clone, Debug)]
 pub struct CodeOutput {
     pub code: String,
@@ -151,16 +150,16 @@ impl CodeOutput {
 
 fn stringify_type(type_: &SkyeType) -> String {
     match type_ {
-        SkyeType::U8  => String::from("u8"),
-        SkyeType::I8  => String::from("i8"),
-        SkyeType::U16 => String::from("u16"),
-        SkyeType::I16 => String::from("i16"),
-        SkyeType::U32 => String::from("u32"),
-        SkyeType::U64 => String::from("u64"),
-        SkyeType::I64 => String::from("i64"),
-        SkyeType::F64 => String::from("f64"),
-        SkyeType::I32 | SkyeType::AnyInt   => String::from("i32"),
-        SkyeType::F32 | SkyeType::AnyFloat => String::from("f32"),
+        SkyeType::U8  => String::from("uint8_t"),
+        SkyeType::I8  => String::from("int8_t"),
+        SkyeType::U16 => String::from("uint16_t"),
+        SkyeType::I16 => String::from("int16_t"),
+        SkyeType::U32 => String::from("uint32_t"),
+        SkyeType::U64 => String::from("uint64_t"),
+        SkyeType::I64 => String::from("int64_t"),
+        SkyeType::F64 => String::from("double"),
+        SkyeType::I32 | SkyeType::AnyInt   => String::from("int32_t"),
+        SkyeType::F32 | SkyeType::AnyFloat => String::from("float"),
 
         SkyeType::Char => String::from("char"),
 
@@ -339,12 +338,16 @@ pub struct CodeGen {
 
 impl CodeGen {
     pub fn new() -> Self {
+        let mut includes = CodeOutput::new();
+        includes.push_indent();
+        includes.push("#include <stdint.h>\n");
+
         CodeGen {
+            includes,
             strings: HashMap::new(),
             arrays: HashSet::new(),
             fnptrs: HashSet::new(),
             strings_code: CodeOutput::new(),
-            includes: CodeOutput::new(),
             declarations: HashMap::new(),
             typedefs: HashMap::new(),
             fndefs: Vec::new(),
