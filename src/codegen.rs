@@ -257,10 +257,7 @@ fn get_type_dependencies_inner(type_: &SkyeType, toplevel: bool, declarations: b
         SkyeType::Group(..) | 
         SkyeType::Namespace(_) | 
         SkyeType::Macro(..) |
-        SkyeType::Template(..) => {
-            println!("{:?}", type_);
-            unreachable!()
-        }
+        SkyeType::Template(..) => unreachable!(),
         _ => HashSet::new()
     }
 }
