@@ -1352,6 +1352,8 @@ impl Parser {
     }
 
     fn import_statement(&mut self) -> Option<Statement> {
+        let is_include = matches!(self.previous().type_, TokenType::Include);
+
         let import_type = {
             if self.match_(&[TokenType::Less]) {
                 ImportType::Ang
@@ -1391,7 +1393,7 @@ impl Parser {
 
         self.consume(TokenType::Semicolon, "Expecting ';' after import statement")?;
 
-        let import = Statement::Import { path, type_: import_type };
+        let import = Statement::Import { path, type_: import_type, is_include };
         if let Some(namespace) = namespace {
             Some(Statement::Namespace { 
                 name: namespace, 
@@ -1642,7 +1644,7 @@ impl Parser {
             return self.enum_decl(incoming_generics);
         }
 
-        if self.match_(&[TokenType::Import]) {
+        if self.match_(&[TokenType::Import, TokenType::Include]) {
             return self.import_statement();
         }
 

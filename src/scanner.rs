@@ -45,6 +45,7 @@ impl<'a> Scanner<'a> {
         keywords.insert(   "return", TokenType::Return);
         keywords.insert(   "struct", TokenType::Struct);
         keywords.insert(   "switch", TokenType::Switch);
+        keywords.insert(  "include", TokenType::Include);
         keywords.insert( "continue", TokenType::Continue);
         keywords.insert("interface", TokenType::Interface);
         keywords.insert("namespace", TokenType::Namespace);

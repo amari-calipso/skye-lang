@@ -34,7 +34,7 @@ pub enum TokenType {
     F32, F64, AnyFloat,
 
     Struct, Else, Fn, For, If, Return,
-    Let, While, Enum, Import, Defer,
+    Let, While, Enum, Import, Include, Defer,
     Impl, Void, Namespace, Switch, Continue,
     Break, Do, Macro, Const, Use, Try, As,
     Union, Interface, Extern,

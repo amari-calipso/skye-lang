@@ -112,13 +112,17 @@ impl CompilerConfig {
 fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filename: Rc<str>, compiler_conf: &CompilerConfig) {
     statements.insert(
         0,
-        Statement::Import { path: Token::new(
-            Rc::from(source.as_ref()),
-            Rc::clone(&filename),
-            TokenType::Identifier,
-            Rc::from("core/core"),
-            0, 1, 0
-        ), type_: ImportType::Default }
+        Statement::Import { 
+            path: Token::new(
+                Rc::from(source.as_ref()),
+                Rc::clone(&filename),
+                TokenType::Identifier,
+                Rc::from("core/core"),
+                0, 1, 0
+            ), 
+            type_: ImportType::Default,
+            is_include: false
+        }
     );
 
     if compiler_conf.no_builtins {
@@ -127,36 +131,48 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
 
     statements.insert(
         1,
-        Statement::Import { path: Token::new(
-            Rc::from(source.as_ref()),
-            Rc::clone(&filename),
-            TokenType::Identifier,
-            Rc::from(compiler_conf.primitives.as_ref()),
-            0, 1, 0
-        ), type_: ImportType::Default }
+        Statement::Import { 
+            path: Token::new(
+                Rc::from(source.as_ref()),
+                Rc::clone(&filename),
+                TokenType::Identifier,
+                Rc::from(compiler_conf.primitives.as_ref()),
+                0, 1, 0
+            ), 
+            type_: ImportType::Default,
+            is_include: false
+        }
     );
 
     statements.insert(
         2,
-        Statement::Import { path: Token::new(
-            Rc::from(source.as_ref()),
-            Rc::clone(&filename),
-            TokenType::Identifier,
-            Rc::from("core/builtins"),
-            0, 1, 0
-        ), type_: ImportType::Default }
+        Statement::Import {
+            path: Token::new(
+                Rc::from(source.as_ref()),
+                Rc::clone(&filename),
+                TokenType::Identifier,
+                Rc::from("core/builtins"),
+                0, 1, 0
+            ), 
+            type_: ImportType::Default,
+            is_include: false
+        }
     );
 
     if !compiler_conf.no_panic {
         statements.insert(
             3,
-            Statement::Import { path: Token::new(
-                Rc::from(source.as_ref()),
-                filename,
-                TokenType::Identifier,
-                Rc::from("core/panic"),
-                0, 1, 0
-            ), type_: ImportType::Default }
+            Statement::Import { 
+                path: Token::new(
+                    Rc::from(source.as_ref()),
+                    filename,
+                    TokenType::Identifier,
+                    Rc::from("core/panic"),
+                    0, 1, 0
+                ), 
+                type_: ImportType::Default,
+                is_include: false
+            }
         );
     }
 }

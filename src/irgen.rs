@@ -7129,7 +7129,7 @@ impl IrGen {
                     token_error!(self, kw, "Can only use continue inside loops");
                 }
             }
-            Statement::Import { path: path_tok, type_: import_type } => {
+            Statement::Import { path: path_tok, type_: import_type, .. } => {
                 // handle C imports
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
