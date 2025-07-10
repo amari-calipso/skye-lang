@@ -215,10 +215,12 @@ impl MacroExpander {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
-                // first, attempt finding the variable within the current namespace
-                let full_name = self.get_name(&name.lexeme);
-                if let Some(result) = self.globals.get(&full_name) {
-                    return Some(result.clone());
+                // first, attempt finding the variable within the current namespace (if any)
+                if self.curr_name != "" {
+                    let full_name = self.get_name(&name.lexeme);
+                    if let Some(result) = self.globals.get(&full_name) {
+                        return Some(result.clone());
+                    }
                 }
 
                 // if it's not found, try to look for it globally
