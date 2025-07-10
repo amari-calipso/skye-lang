@@ -424,9 +424,8 @@ mod tests {
             for mode in [Checks::Debug, Checks::Release, Checks::ReleaseUnsafe] {
                 config.checks = mode;
                 
-                skye::compile_file_to_exec(
-                    &input, output, config.clone()
-                ).expect(format!("Couldn't compile file with mode {:?}", mode).as_str());
+                skye::compile_file_to_exec(&input, output, config.clone())
+                    .expect(format!("Couldn't compile file with mode {:?}", mode).as_str());
             }
         }
 
