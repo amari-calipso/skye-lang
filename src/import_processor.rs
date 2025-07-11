@@ -1,18 +1,13 @@
 use std::{collections::HashMap, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
 
-use crate::{ast::{Ast, ImportType, MacroBody, Statement}, astpos_note, parse_file, token_error, token_note, tokens::Token};
-
-struct ImportInfo {
-    pub token: Token,
-    pub namespace: String,
-}
+use crate::{ast::{Ast, ImportType, MacroBody, Statement}, ast_note, astpos_note, parse_file, token_error, token_note, token_warning, tokens::Token};
 
 pub struct ImportProcessor {
     source_path: Option<Box<PathBuf>>,
     skye_path:   PathBuf,
 
     curr_name: String,
-    imports:   HashMap<PathBuf, ImportInfo>,
+    imports: HashMap<PathBuf, HashMap</* namespace */ String, Token>>,
 
     in_function: bool,
     in_impl: bool,
@@ -78,44 +73,56 @@ impl ImportProcessor {
                 };
 
                 if !*is_include {
-                    if let Some(info) = self.imports.get(&path) {
-                        token_error!(self, path_tok, "Cannot import the same file multiple times");
-                        token_note!(info.token, "This file was previously imported here");
-                        token_note!(path_tok, "If this is intentional, use an 'include' statement instead of 'import'");
+                    if let Some(info) = self.imports.get_mut(&path) {
+                        token_warning!(path_tok, "A duplicate import was performed");
 
-                        if info.namespace != self.curr_name {
-                            let prefix = {
-                                if self.curr_name == "" {
-                                    ""
-                                } else {
-                                    "::"
-                                }
-                            };
+                        for (_, import_tok) in info.iter() {
+                            token_note!(import_tok, "This file was previously imported here");
+                        }
+                        
+                        token_note!(path_tok, "If this is intentional, use an 'include' statement instead of 'import', otherwise remove this import");
 
-                            let namespace = info.namespace.replace("_DOT_", "::");
+                        if info.contains_key(&self.curr_name) {
+                            // if this import was previously performed in the same namespace as the current one, no need to perform the import again
+                            *stmt = Statement::Empty;
+                            return;
+                        } 
 
+                        if info.len() == 1 {
                             token_note!(
-                                info.token, 
-                                format!(
-                                    concat!(
-                                        "This import was performed behind the \"{}\" namespace. ",
-                                        "If you want to reuse it from this namespace, add \"use {}{}\" somewhere in your current namespace"
-                                    ),
-                                    namespace, prefix, namespace
-                                ).as_str()
+                                path_tok, 
+                                concat!(
+                                    "The previous import was performed behind another namespace. ",
+                                    "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
+                                )
+                            );
+                        } else {
+                            token_note!(
+                                path_tok, 
+                                concat!(
+                                    "The previous imports were performed behind other namespaces. ",
+                                    "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
+                                )
                             );
                         }
-
-                        return;
+                        
+                        info.insert(self.curr_name.clone(), path_tok.clone());
+                    } else {
+                        self.imports.insert(path.clone(), HashMap::from([(self.curr_name.clone(), path_tok.clone())]));
                     }
-
-                    self.imports.insert(path.clone(), ImportInfo { token: path_tok.clone(), namespace: self.curr_name.clone() });
                 }
 
                 if skye_import {
                     match parse_file(path.as_os_str()) {
                         Ok(mut statements) => {
+                            let old_errors = self.errors;
+
                             ctx.run(|ctx| self.process_many(&mut statements, ctx)).await;
+
+                            if self.errors != old_errors {
+                                ast_note!(stmt, "The error(s) were a result of this import");
+                            }
+
                             *stmt = Statement::ImportedBlock { statements, source: stmt.get_pos() };
                         }
                         Err(e) => {

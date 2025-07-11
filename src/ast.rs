@@ -416,6 +416,14 @@ impl MacroBody {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct FunctionInfo {
+    pub qualifiers: Vec<Token>,
+    pub bind: bool,
+    pub init: bool,
+    pub link_name: Option<Token>
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Statement {
     Empty, // placeholder
     Expression(Expression),
@@ -457,10 +465,8 @@ pub enum Statement {
         params: Vec<FunctionParam>,
         return_type: Expression,
         body: Option<Vec<Statement>>,
-        qualifiers: Vec<Token>,
         generics_names: Vec<Token>,
-        bind: bool,
-        init: bool,
+        info: FunctionInfo
     },
     Struct {
         name: Token,
@@ -614,16 +620,14 @@ impl Ast for Statement {
                     body: Box::new(body.replace_variable(name, replace_expr))
                 }
             }
-            Statement::Function { name: kw, params, return_type, body, qualifiers, generics_names, bind, init, } => {
+            Statement::Function { name: kw, params, return_type, body, generics_names, info: data } => {
                 Statement::Function {
                     name: kw.clone(),
                     params: params.iter().map(|x| FunctionParam::new(x.name.clone(), x.type_.replace_variable(name, replace_expr), x.is_const)).collect(),
                     return_type: return_type.replace_variable(name, replace_expr),
                     body: body.as_ref().map(|x| x.iter().map(|statement| statement.replace_variable(name, replace_expr)).collect()),
-                    qualifiers: qualifiers.clone(),
                     generics_names: generics_names.clone(),
-                    bind: *bind,
-                    init: *init
+                    info: data.clone()
                 }
             }
             Statement::Return { kw, value: return_expr } => {

@@ -1,25 +1,25 @@
-#bind fn system(const command: *const char) i32;
-#bind fn remove(const file: *const char) i32;
-#bind fn getenv(const name: *const char) *const char;
+// manually specify link names to make std/os namespace-compatible
+#bind #linkName(system) fn system(const command: *const char) i32;
+#bind #linkName(remove) fn remove(const file: *const char) i32;
+#bind #linkName(getenv) fn getenv(const name: *const char) *const char;
+#bind #linkName(popen)  fn popen(command: *const char, type: *const char) *CFile;
+#bind #linkName(pclose) fn pclose(stream: *CFile) i32;
 
 import <"dirent.h">;
-
-#typedef struct CDir: DIR;
-struct CDirent: dirent {
-    // other fields currently aren't relevant for us
-    const d_name: *const char
-}
-
-#bind fn opendir(const path: *const char) &CDir;
-#bind fn readdir(const dir: *const CDir) &CDirent;
-#bind fn closedir(const dir: *const CDir) i32;
-
-#bind fn popen(command: *const char, type: *const char) *CFile;
-#bind fn pclose(stream: *CFile) i32;
 
 namespace std {
     namespace os {
         macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
+
+        #typedef struct CDir: DIR;
+        struct CDirent: dirent {
+            // other fields currently aren't relevant for us
+            const d_name: *const char
+        }
+
+        #bind #linkName(opendir)  fn opendir(const path: *const char) &CDir;
+        #bind #linkName(readdir)  fn readdir(const dir: *const CDir) &CDirent;
+        #bind #linkName(closedir) fn closedir(const dir: *const CDir) i32;
 
         struct Command {
             command: String

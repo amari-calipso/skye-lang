@@ -512,6 +512,8 @@ import <"math.h">;
 import <<"core/internals.h">>; 
 ```
 
+Note that you can't `import` a file multiple times. If you want to do that, use the `include` keyword instead.
+
 You can also use `extern` to define libraries to link with.
 ```
 extern pthread; // will automatically pass -lpthread

@@ -5468,12 +5468,24 @@ impl IrGen {
                     self.curr_definition = previous_definition;
                 }
             }
-            Statement::Function { name, params, return_type: return_type_expr, body, qualifiers, generics_names: generics, bind, init } => {
-                let (mut full_name, has_unknown) = self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment);
+            Statement::Function { name, params, return_type: return_type_expr, body, generics_names: generics, info } => {
+                let (mut full_name, has_unknown) = {
+                    if let Some(link_name) = &info.link_name {
+                        (Rc::clone(&link_name.lexeme), false)
+                    } else {
+                        self.get_generics(&self.get_name(&name.lexeme), generics, &self.environment)
+                    }
+                };
 
                 let env = self.globals.borrow();
                 let search_tok = Token::dummy(Rc::clone(&full_name));
-                let existing = env.get(&search_tok);
+                let existing = {
+                    if info.bind {
+                        None
+                    } else {
+                        env.get(&search_tok)
+                    }
+                };
 
                 let has_decl = {
                     if !has_unknown {
@@ -5531,7 +5543,7 @@ impl IrGen {
 
                 let has_body = body.is_some();
 
-                if *init {
+                if info.init {
                     if params.len() != 0 {
                         token_error!(self, name, "#init function must take no parameters");
                     }
@@ -5568,7 +5580,7 @@ impl IrGen {
 
                 // main function handling
                 if has_body && full_name.as_ref() == "main" {
-                    if *bind {
+                    if info.bind {
                         token_error!(self, name, "Cannot bind \"main\" function");
                     }
 
@@ -5609,7 +5621,47 @@ impl IrGen {
                     }
                 }
 
-                {
+                if let Some(link_name) = &info.link_name {
+                    let skye_name = self.get_name(&name.lexeme);
+
+                    let different_name = skye_name != full_name;
+                    if different_name {
+                        // create alias for skye name that points to link name
+                        self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::Define { 
+                                name: Rc::clone(&skye_name), 
+                                value: IrValue::new(
+                                    IrValueData::Variable { name: Rc::clone(&full_name) },
+                                    type_.clone()
+                                ), 
+                                typedef: false 
+                            }
+                        })));
+                    }
+                    
+                    let mut env = self.globals.borrow_mut();
+
+                    if different_name {
+                        // define skye name of function
+                        env.define(
+                            skye_name,
+                            SkyeVariable::new(
+                                type_.clone(), true,
+                                Some(Box::new(name.clone()))
+                            )
+                        );
+                    }
+                    
+                    // define actual function as link name
+                    env.define(
+                        Rc::clone(&full_name), 
+                        SkyeVariable::new(
+                            type_.clone(), true,
+                            Some(Box::new(link_name.clone()))
+                        )
+                    );
+                } else {
                     let mut env = self.globals.borrow_mut();
                     env.define(
                         Rc::clone(&full_name), 
@@ -5619,9 +5671,9 @@ impl IrGen {
                         )
                     );
                 }
-                
+
                 if !has_body {
-                    if !*bind {
+                    if !info.bind {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Function { 
@@ -5629,11 +5681,10 @@ impl IrGen {
                                 params: params_evaluated,
                                 signature: type_.clone(),
                                 body: None,
-                                qualifiers: qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
+                                qualifiers: info.qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
                             }
                         })));
                     }
-                    
 
                     return Ok(Some(type_));
                 }
@@ -5664,7 +5715,7 @@ impl IrGen {
                         params: params_evaluated,
                         body: Some(Vec::new()), 
                         signature: type_.clone(),
-                        qualifiers: qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
+                        qualifiers: info.qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
                     }
                 }));
 
@@ -7615,7 +7666,7 @@ impl IrGen {
                             let mut kind_tok = name.clone();
                             kind_tok.set_lexeme("kind");
 
-                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind, init } = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, generics_names, info } = statement {
                                 let mut args = Vec::new();
                                 for (i, param) in params.iter().enumerate() {
                                     let name = param.name.as_ref().expect("param name wasn't available in interface");
@@ -7683,10 +7734,8 @@ impl IrGen {
                                     params: params.clone(),
                                     return_type: return_type.clone(),
                                     body: Some(vec![Statement::Switch { kw: name.clone(), expr: Expression::Get(Box::new(Expression::Variable(self_tok)),kind_tok), cases: cases }]),
-                                    qualifiers: qualifiers.clone(),
                                     generics_names: generics_names.clone(),
-                                    bind: *bind,
-                                    init: *init
+                                    info: info.clone()
                                 });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
@@ -7729,7 +7778,7 @@ impl IrGen {
                         let mut functions = Vec::new();
 
                         for statement in body {
-                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, qualifiers, generics_names, bind, init } = statement {
+                            if let Statement::Function { name: fn_name, params, return_type, body: fn_body, generics_names, info } = statement {
                                 // if the interface function has a body, use that as default implementation
                                 if fn_body.is_some() {
                                     token_error!(self, fn_name, "Cannot define function body in forward declaration of interface");
@@ -7740,10 +7789,8 @@ impl IrGen {
                                     params: params.clone(),
                                     return_type: return_type.clone(),
                                     body: None,
-                                    qualifiers: qualifiers.clone(),
                                     generics_names: generics_names.clone(),
-                                    bind: *bind,
-                                    init: *init
+                                    info: info.clone()
                                 });
                             } else {
                                 ast_error!(self, statement, "Can only define functions in interface body");
