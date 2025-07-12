@@ -1242,16 +1242,22 @@ impl CodeGen {
 
                     let mut params_string = String::new();
 
-                    for (i, param) in params.iter().enumerate() {
-                        params_string.push_str(&stringify_type(&param.type_));
-                        params_string.push(' ');
-                        params_string.push_str(&param.name);
+                    if params.len() == 0 {
+                        // function() makes C assume that function has variadic arguments,
+                        // so it's recommended to use function(void) instead... weird stuff
+                        params_string.push_str("void"); 
+                    } else {
+                        for (i, param) in params.iter().enumerate() {
+                            params_string.push_str(&stringify_type(&param.type_));
+                            params_string.push(' ');
+                            params_string.push_str(&param.name);
 
-                        if i != params.len() - 1 {
-                            params_string.push_str(", ");
+                            if i != params.len() - 1 {
+                                params_string.push_str(", ");
+                            }
                         }
                     }
-
+                    
                     self.generate_fn_signature(&signature, &return_stringified, &params_string);
 
                     buf.push(&params_string);
