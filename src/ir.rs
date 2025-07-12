@@ -159,7 +159,7 @@ pub enum IrStatementData {
     Label { name: Rc<str> },
     Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType, qualifiers: Vec<FnQualifier> },
     Struct { type_: SkyeType },
-    Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, type_: SkyeType },
+    Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, #[allow(unused)] type_: SkyeType },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: OrderedNamedMap<SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },

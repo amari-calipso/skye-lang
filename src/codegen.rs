@@ -1115,15 +1115,13 @@ impl CodeGen {
                 buf.push(";\n");
                 self.typedefs.insert(prepared_name, TypeOutput::new(buf, dependencies));
             }
-            IrStatementData::Enum { name, variants, type_ } => {
+            IrStatementData::Enum { name, variants, .. } => {
                 let prepared_name = prepare_name(Rc::clone(&name));
 
                 let mut buf = CodeOutput::new();
                 buf.push_indent();
                 buf.push("typedef enum __SKYE_ENUM_");
                 buf.push(&prepared_name);
-                buf.push(": ");
-                buf.push(&stringify_type(&type_));
                 buf.push(" {\n");
                 buf.inc_indent();
 
