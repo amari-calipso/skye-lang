@@ -2,5 +2,10 @@ import "std/collections" namespace foo;
 
 fn main() {
     const items = {1, 2, 3};
+    let testOrderIndependentMacro = @test;
+    let anotherOrderIndependentMacro = @bar;
     @println("Does the slice contain 1? %", foo::std::collections::contains(items, items.length, 1));
 }
+
+use test as bar;
+macro test 2;

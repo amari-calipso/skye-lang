@@ -631,7 +631,7 @@ impl MacroExpander {
 
                 self.curr_name = previous_name;
             }
-            Statement::Macro { name, params, body } => {
+            Statement::Macro { name, params, body, .. } => {
                 if matches!(body, MacroBody::Binding(..)) { // ignore macro bindings, they are resolved at irgen time
                     return;
                 }
@@ -643,6 +643,62 @@ impl MacroExpander {
 
                 if self.in_interface {
                     token_error!(self, name, "Cannot declare macro inside an interface");
+                    return;
+                }
+
+                // macros might be defined within another macro, and we can't gather its definition until that other macro is called,
+                // so handle definitions here too
+                let full_name = self.get_name(&name.lexeme);
+                self.globals.insert(
+                    Rc::clone(&full_name),
+                    SkyeType::Type(Box::new(
+                        SkyeType::Macro(
+                            full_name,
+                            params.clone(),
+                            body.clone()
+                        )
+                    ))
+                );
+            }
+            _ => ()
+        }
+    }
+
+    // TODO: when we improve the constant folder, more nodes will need to be handled here 
+    //       (currently we're ignoring things like switch statements, which can only happen inside of a function,
+    //        but when the constant folder is complete, it will be allowed outside for constants)
+    async fn gather_macros_and_namespaces(&mut self, stmt: &Statement, ctx: &mut reblessive::Stk) {
+        match stmt {
+            Statement::ImportedBlock { statements, .. } => {
+                for statement in statements {
+                    ctx.run(|ctx| self.gather_macros_and_namespaces(statement, ctx)).await;
+                }
+            }
+            Statement::If { then_branch, else_branch, .. } => {
+                ctx.run(|ctx| self.gather_macros_and_namespaces(then_branch, ctx)).await;
+
+                if let Some(else_branch) = else_branch {
+                    ctx.run(|ctx| self.gather_macros_and_namespaces(else_branch, ctx)).await;
+                }
+            }
+            Statement::Namespace { name, body } => {
+                let full_name = self.get_name(&name.lexeme);
+                self.globals.insert(
+                    Rc::clone(&full_name),
+                    SkyeType::Namespace(Rc::clone(&full_name))
+                );
+
+                let previous_name = self.curr_name.clone();
+                self.curr_name = full_name.to_string();
+
+                for statement in body {
+                    ctx.run(|ctx| self.gather_macros_and_namespaces(statement, ctx)).await;
+                }
+
+                self.curr_name = previous_name;
+            }
+            Statement::Macro { name, params, body } => {
+                if matches!(body, MacroBody::Binding(..)) { // ignore macro bindings, they are resolved at irgen time
                     return;
                 }
 
@@ -662,9 +718,65 @@ impl MacroExpander {
         }
     }
 
+    async fn gather_aliases(&mut self, stmt: &mut Statement, ctx: &mut reblessive::Stk) {
+        match stmt {
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+                
+                for statement in statements {
+                    ctx.run(|ctx| self.gather_aliases(statement, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
+                }
+            }
+            Statement::If { then_branch, else_branch, .. } => {
+                ctx.run(|ctx| self.gather_aliases(then_branch, ctx)).await;
+
+                if let Some(else_branch) = else_branch {
+                    ctx.run(|ctx| self.gather_aliases(else_branch, ctx)).await;
+                }
+            }
+            Statement::Use { use_expr, as_name, .. } => {
+                let value = ctx.run(|ctx| self.expand_expression(use_expr, ctx)).await;
+
+                if let Some(value) = value {
+                    let mut should_remove = false;
+
+                    if let SkyeType::Type(inner) = &value {
+                        if let SkyeType::Macro(name, _, body) = &**inner {
+                            // if this is aliasing a macro, we should process the alias now and then remove it,
+                            // otherwise it will error at irgen time, unless this is an irgen builtin macro or a binding
+                            should_remove = !matches!(body, MacroBody::Binding(_)) && !irgen::BUILTIN_MACROS.contains(name.as_ref());
+                        }
+                    }
+
+                    self.globals.insert(Rc::clone(&as_name.lexeme), value);
+
+                    if should_remove {
+                        *stmt = Statement::Empty;
+                    }  
+                }
+            }
+            _ => ()
+        }
+    }
+
     pub fn expand(&mut self, statements: &mut Vec<Statement>) {
         let mut stack = reblessive::Stack::new();
 
+        // first, gather all global definitions
+        for statement in statements.iter() {
+            stack.enter(|ctx| self.gather_macros_and_namespaces(statement, ctx)).finish();
+        }
+
+        // then, gather any aliases defined with a `use` statement (which might depend on a global definition)
+        for statement in statements.iter_mut() {
+            stack.enter(|ctx| self.gather_aliases(statement, ctx)).finish();
+        }
+
+        // finally, expand all macros
         for statement in statements {
             stack.enter(|ctx| self.expand_statement(statement, ctx)).finish();
         }
