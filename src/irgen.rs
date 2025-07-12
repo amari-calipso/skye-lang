@@ -456,6 +456,20 @@ impl IrGen {
                 };
 
                 let mut splitted = self.split_interpolated_string(&real_fmt_string);
+                let formatted_values_count = splitted.iter().filter(|x| matches!(x, InterpolatedStringPortion::Value)).count();
+                let formatting_args_count = arguments.len() - 2;
+
+                if formatted_values_count != formatting_args_count {
+                    ast_error!(
+                        self, arguments[1],
+                        format!(
+                            "Expecting {} formatting arguments but got {}",
+                            formatted_values_count, formatting_args_count
+                        ).as_str()
+                    );
+
+                    return Some(SkyeValue::special(SkyeType::Void));
+                }
 
                 if is_fprintln {
                     splitted.push(InterpolatedStringPortion::String(String::from("\\n")));
