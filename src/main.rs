@@ -434,14 +434,10 @@ mod tests {
 
     #[test]
     fn test_can_compile_test_files_and_examples() {
-        compile_everything_in_folder("examples");
-        compile_everything_in_folder("tests");
-    }
+        if cfg!(windows) {
+            unsafe { std::env::set_var("CC", "gcc") };
+        }
 
-    #[test]
-    #[ignore]
-    fn test_can_compile_test_files_and_examples_on_windows_gh_action() {
-        unsafe { std::env::set_var("CC", "gcc") };
         compile_everything_in_folder("examples");
         compile_everything_in_folder("tests");
     }

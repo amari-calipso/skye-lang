@@ -29,4 +29,4 @@ jobs:
           rust-version: stable
 
       - name: Run tests
-        run: set RUST_BACKTRACE=full && cargo test test_can_compile_test_files_and_examples_on_windows_gh_action
+        run: set RUST_BACKTRACE=full && cargo test
