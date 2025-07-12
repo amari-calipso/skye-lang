@@ -210,8 +210,10 @@ impl MacroExpander {
                 ctx.run(|ctx| self.expand_expression(left, ctx)).await;
                 ctx.run(|ctx| self.expand_expression(right, ctx)).await;
             }
-            Expression::Grouping(expr) |
             Expression::Get(expr, _) => {
+                ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
+            }
+            Expression::Grouping(expr) => {
                 return ctx.run(|ctx| self.expand_expression(expr, ctx)).await;
             }
             Expression::Variable(name) => {
