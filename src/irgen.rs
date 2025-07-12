@@ -72,6 +72,9 @@ pub struct IrGen {
     curr_function: CurrentFn,
     curr_name:     String,
     curr_loop:     Option<CurrLoop>,
+    
+    /// Only set properly in global resolution
+    in_impl: bool,
 
     pub errors: usize
 }
@@ -109,6 +112,7 @@ impl IrGen {
             extern_libs: HashMap::new(),
             curr_definition: None,
             curr_name: String::new(),
+            in_impl: false,
             environment: Rc::clone(&globals),
             deferred: Rc::new(RefCell::new(Vec::new())),
             curr_function: CurrentFn::None,
@@ -6404,36 +6408,7 @@ impl IrGen {
                 }
             }
             Statement::Namespace { name, body } => {
-                if matches!(self.curr_function, CurrentFn::Some { .. }) {
-                    token_error!(self, name, "Namespaces are only allowed in the global scope");
-                }
-
                 let full_name = self.get_name(&name.lexeme);
-
-                let mut env = self.globals.borrow_mut();
-                if let Some(var) = env.get(name) {
-                    if !matches!(var.type_, SkyeType::Namespace(_)) {
-                        token_error!(self, name, "Cannot declare namespace with same name as existing symbol");
-
-                        if let Some(token) = &var.tok {
-                            token_note!(*token, "Previously defined here");
-                        }
-
-                        return Ok(None);
-                    }
-                } else {
-                    env.define(
-                        Rc::clone(&full_name),
-                        SkyeVariable::new(
-                            SkyeType::Namespace(Rc::clone(&full_name)),
-                            true,
-                            Some(Box::new(name.clone()))
-                        )
-                    );
-                }
-
-                drop(env);
-
                 let previous_name = self.curr_name.clone();
                 self.curr_name = full_name.to_string();
 
@@ -6445,6 +6420,18 @@ impl IrGen {
             }
             Statement::Use { use_expr, as_name: identifier, typedef, bind } => {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
+
+                if !(
+                    matches!(use_value.ir_value.type_, SkyeType::Function(..)) ||
+                    matches!(use_expr, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. } | 
+                                       Expression::FloatLiteral { .. } | Expression::StringLiteral { .. } | 
+                                       Expression::VoidLiteral(_)) || 
+                    !use_value.ir_value.type_.can_be_instantiated(false)
+                ) {
+                    ast_error!(self, use_expr, "Cannot create an alias of this value");
+                    ast_note!(use_expr, "The use statement only supports compile time values");
+                    token_note!(identifier, "If you want to create a compile-time constant, use a macro");
+                }
 
                 if identifier.lexeme.as_ref() != "_" {
                     let full_name = {
@@ -7856,9 +7843,322 @@ impl IrGen {
 
         Ok(None)
     }
+}
 
-    pub fn compile(&mut self, statements: Vec<Statement>) {
+macro_rules! expression_resolver {
+    ($name: ident, $slf: ident, $stmt: ident, $ctx: ident, $stmt_call: expr) => {
+        async fn $name(&mut $slf, expression: &mut Expression, ctx: &mut reblessive::Stk) {
+            match expression {
+                Expression::Grouping(inner) |
+                Expression::Unary { expr: inner, .. } |
+                Expression::Get(inner, _) => {
+                    ctx.run(|ctx| $slf.$name(inner, ctx)).await;
+                }
+                Expression::Binary { left, right, .. } |
+                Expression::Assign { target: left, value: right, .. } |
+                Expression::Array { item: left, size: right, .. } => {
+                    ctx.run(|ctx| $slf.$name(left, ctx)).await;
+                    ctx.run(|ctx| $slf.$name(right, ctx)).await;
+                }
+                Expression::Ternary { condition, then_expr, else_expr, .. } => {
+                    ctx.run(|ctx| $slf.$name(condition, ctx)).await;
+                    ctx.run(|ctx| $slf.$name(then_expr, ctx)).await;
+                    ctx.run(|ctx| $slf.$name(else_expr, ctx)).await;
+                }
+                Expression::StaticGet(inner, .. ) => {
+                    if let Some(inner) = inner {
+                        ctx.run(|ctx| $slf.$name(inner, ctx)).await;
+                    }
+                }
+                Expression::Slice { items, .. } |
+                Expression::ArrayLiteral { items, .. } => {
+                    for item in items {
+                        ctx.run(|ctx| $slf.$name(item, ctx)).await;
+                    }
+                }
+                Expression::Call(one, _, args, _) |
+                Expression::Subscript { subscripted: one, args, .. } => {
+                    ctx.run(|ctx| $slf.$name(one, ctx)).await;
+                    
+                    for arg in args {
+                        ctx.run(|ctx| $slf.$name(arg, ctx)).await;
+                    }
+                }
+                Expression::FnPtr { return_type, params, .. } => {
+                    ctx.run(|ctx| $slf.$name(return_type, ctx)).await;
+
+                    for param in params {
+                        ctx.run(|ctx| $slf.$name(&mut param.type_, ctx)).await;
+                    }
+                }
+                Expression::CompoundLiteral { type_, fields, .. } => {
+                    ctx.run(|ctx| $slf.$name(type_, ctx)).await;
+
+                    for field in fields {
+                        ctx.run(|ctx| $slf.$name(&mut field.expr, ctx)).await;
+                    }
+                }
+                Expression::InMacro { inner, source } => {
+                    let old_errors = $slf.errors;
+                    ctx.run(|ctx| $slf.$name(inner, ctx)).await;
+
+                    if $slf.errors != old_errors {
+                        astpos_note!(source, "This error is a result of this macro expansion");
+                    }
+                }
+                Expression::MacroExpandedStatements { inner, source } => {
+                    let old_errors = $slf.errors;
+
+                    for $stmt in inner {
+                        ctx.run(|$ctx| $stmt_call).await;
+                    }
+
+                    if $slf.errors != old_errors {
+                        astpos_note!(source, "This error is a result of this macro expansion");
+                    }
+                }
+                _ => ()
+            }
+        }
+    };
+}
+
+// globals resolution
+impl IrGen {
+    // step 1: resolve all structs, unions, interfaces (without body) and all namespaces
+    expression_resolver!(resolve_expr_step1, self, statement, ctx, self.resolve_types_preliminary(statement, ctx));
+    async fn resolve_types_preliminary(&mut self, statement: &mut Statement, ctx: &mut reblessive::Stk) {
+        match statement {
+            Statement::Expression(expression) | 
+            Statement::Use { use_expr: expression, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(expression, ctx)).await;
+            }
+            Statement::Defer { statement, .. } => {
+                ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+            }
+            Statement::While { condition, body, .. } |
+            Statement::DoWhile { condition, body, .. } |
+            Statement::Foreach { iterator: condition, body, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(condition, ctx)).await;
+                ctx.run(|ctx| self.resolve_types_preliminary(body, ctx)).await;
+            }
+            Statement::Return { value, .. } => {
+                if let Some(value) = value {
+                    ctx.run(|ctx| self.resolve_expr_step1(value, ctx)).await;
+                }
+            }
+            Statement::Block(_, statements) => {
+                for statement in statements {
+                    ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+                }
+            }
+            Statement::If { condition, then_branch, else_branch, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(condition, ctx)).await;
+                ctx.run(|ctx| self.resolve_types_preliminary(then_branch, ctx)).await;
+
+                if let Some(else_branch) = else_branch {
+                    ctx.run(|ctx| self.resolve_types_preliminary(else_branch, ctx)).await;
+                }
+            }
+            Statement::VarDecl { initializer, type_, .. } => {
+                if let Some(initializer) = initializer {
+                    ctx.run(|ctx| self.resolve_expr_step1(initializer, ctx)).await;
+                }
+
+                if let Some(type_) = type_ {
+                    ctx.run(|ctx| self.resolve_expr_step1(type_, ctx)).await;
+                }
+            }
+            Statement::For { initializer, condition, increments, body, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(condition, ctx)).await;
+                ctx.run(|ctx| self.resolve_types_preliminary(body, ctx)).await;
+
+                if let Some(initializer) = initializer {
+                    ctx.run(|ctx| self.resolve_types_preliminary(initializer, ctx)).await;
+                }
+
+                for increment in increments {
+                    ctx.run(|ctx| self.resolve_expr_step1(increment, ctx)).await;
+                }
+            }
+            Statement::ImportedBlock { statements, source } => {
+                let old_errors = self.errors;
+
+                for statement in statements {
+                    ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+                }
+
+                if self.errors != old_errors {
+                    astpos_note!(source, "The error(s) were a result of this import");
+                }
+            }
+            Statement::Impl { object, declarations } => {
+                ctx.run(|ctx| self.resolve_expr_step1(object, ctx)).await;
+
+                let previous_impl = self.in_impl;
+                self.in_impl = true;
+
+                for declaration in declarations {
+                    ctx.run(|ctx| self.resolve_types_preliminary(declaration, ctx)).await;
+                }
+
+                self.in_impl = previous_impl;
+            }
+            Statement::Function { params, return_type, body, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(return_type, ctx)).await;
+
+                for param in params {
+                    ctx.run(|ctx| self.resolve_expr_step1(&mut param.type_, ctx)).await;
+                }
+
+                if let Some(body) = body {
+                    for statement in body {
+                        ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+                    }
+                }
+            }
+            Statement::Switch { expr, cases, .. } => {
+                ctx.run(|ctx| self.resolve_expr_step1(expr, ctx)).await;
+
+                for branch in cases {
+                    for statement in &mut branch.code {
+                        ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+                    }
+
+                    if let Some(cases) = &mut branch.cases {
+                        for case in cases {
+                            ctx.run(|ctx| self.resolve_expr_step1(case, ctx)).await;
+                        }
+                    }
+                }
+            }
+            Statement::Namespace { name, body } => {
+                if matches!(self.curr_function, CurrentFn::Some { .. }) {
+                    token_error!(self, name, "Namespaces are only allowed in the global scope");
+                }
+
+                let full_name = self.get_name(&name.lexeme);
+
+                let mut env = self.globals.borrow_mut();
+                if let Some(var) = env.get(name) {
+                    if !matches!(var.type_, SkyeType::Namespace(_)) {
+                        token_error!(self, name, "Cannot declare namespace with same name as existing symbol");
+
+                        if let Some(token) = &var.tok {
+                            token_note!(*token, "Previously defined here");
+                        }
+
+                        return;
+                    }
+                } else {
+                    env.define(
+                        Rc::clone(&full_name),
+                        SkyeVariable::new(
+                            SkyeType::Namespace(Rc::clone(&full_name)),
+                            true,
+                            Some(Box::new(name.clone()))
+                        )
+                    );
+                }
+
+                drop(env);
+
+                let previous_name = self.curr_name.clone();
+                self.curr_name = full_name.to_string();
+
+                for statement in body {
+                    ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+                }
+
+                self.curr_name = previous_name;
+            }
+            Statement::Struct { name, fields, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Enum { name, kind_type, variants, is_simple, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Template { name, declaration, generics, generics_names } => todo!(),
+            Statement::Union { name, fields, has_body, binding, bind_typedefed } => todo!(),
+            Statement::Interface { name, declarations, types } => todo!(),
+            _ => ()
+        }
+    }
+
+    // TODO step 2: process use statements that refer to type aliases (templates and every step after this depend on it)
+    // TODO step 3: process templates (they are needed to complete the dictionary of types for later steps. what happens when a template uses as default a templated expression?)
+    // TODO step 4: process use statements that refer to templates
+
+    // step 5: resolve all functions (without body), macro bindings, enums, and global variables declaration
+    async fn resolve_fns_and_global_vars(&mut self, statement: &mut Statement, ctx: &mut reblessive::Stk) {
+        match statement {
+            Statement::Expression(expression) => todo!(),
+            Statement::Block(_, statements) => todo!(),
+            Statement::ImportedBlock { statements, source } => todo!(),
+            Statement::While { kw, condition, body } => todo!(),
+            Statement::DoWhile { kw, condition, body } => todo!(),
+            Statement::Return { kw, value } => todo!(),
+            Statement::Impl { object, declarations } => todo!(),
+            Statement::Namespace { name, body } => todo!(),
+            Statement::Defer { kw, statement } => todo!(),
+            Statement::Switch { kw, expr, cases } => todo!(),
+            Statement::Import { path, type_, is_include } => todo!(),
+            Statement::Macro { name, params, body } => todo!(),
+            Statement::VarDecl { name, initializer, type_, is_const, qualifiers } => todo!(),
+            Statement::If { kw, condition, then_branch, else_branch } => todo!(),
+            Statement::For { kw, initializer, condition, increments, body } => todo!(),
+            Statement::Function { name, params, return_type, body, generics_names, info } => todo!(),
+            Statement::Struct { name, fields, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Use { use_expr, as_name, typedef, bind } => todo!(),
+            Statement::Enum { name, kind_type, variants, is_simple, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Template { name, declaration, generics, generics_names } => todo!(),
+            Statement::Union { name, fields, has_body, binding, bind_typedefed } => todo!(),
+            Statement::Foreach { kw, variable_name, iterator, body } => todo!(),
+            Statement::Interface { name, declarations, types } => todo!(),
+            _ => ()
+        }
+    }
+
+    // TODO step 6: process use statements that refer to functions or variables
+
+    // step 7: resolve all types, including their bodies
+    async fn resolve_types_final(&mut self, statement: &mut Statement) {
+        match statement {
+            Statement::Expression(expression) => todo!(),
+            Statement::Block(token, statements) => todo!(),
+            Statement::ImportedBlock { statements, source } => todo!(),
+            Statement::While { kw, condition, body } => todo!(),
+            Statement::DoWhile { kw, condition, body } => todo!(),
+            Statement::Return { kw, value } => todo!(),
+            Statement::Impl { object, declarations } => todo!(),
+            Statement::Namespace { name, body } => todo!(),
+            Statement::Defer { kw, statement } => todo!(),
+            Statement::Switch { kw, expr, cases } => todo!(),
+            Statement::Import { path, type_, is_include } => todo!(),
+            Statement::Macro { name, params, body } => todo!(),
+            Statement::VarDecl { name, initializer, type_, is_const, qualifiers } => todo!(),
+            Statement::If { kw, condition, then_branch, else_branch } => todo!(),
+            Statement::For { kw, initializer, condition, increments, body } => todo!(),
+            Statement::Function { name, params, return_type, body, generics_names, info } => todo!(),
+            Statement::Struct { name, fields, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Use { use_expr, as_name, typedef, bind } => todo!(),
+            Statement::Enum { name, kind_type, variants, is_simple, has_body, binding, generics_names, bind_typedefed } => todo!(),
+            Statement::Template { name, declaration, generics, generics_names } => todo!(),
+            Statement::Union { name, fields, has_body, binding, bind_typedefed } => todo!(),
+            Statement::Foreach { kw, variable_name, iterator, body } => todo!(),
+            Statement::Interface { name, declarations, types } => todo!(),
+            _ => ()
+        }
+    }
+
+    async fn resolve_globals(&mut self, statements: &mut Vec<Statement>, ctx: &mut reblessive::Stk) {
+        for statement in statements {
+            ctx.run(|ctx| self.resolve_types_preliminary(statement, ctx)).await;
+        }
+
+        todo!()
+    }
+
+    pub fn compile(&mut self, mut statements: Vec<Statement>) {
         let mut stack = reblessive::Stack::new();
+
+        stack.enter(|ctx| self.resolve_globals(&mut statements, ctx)).finish();
 
         for statement in statements {
             let _ = stack.enter(|ctx| self.execute(&statement, ctx)).finish();
