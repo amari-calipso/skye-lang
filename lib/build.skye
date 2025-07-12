@@ -190,7 +190,7 @@ namespace build {
             );
         }
 
-        @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input, output);
+        @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input);
 
         switch conf.checks {
             core::compiler::Checks::Debug {}
