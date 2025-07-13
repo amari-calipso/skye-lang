@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
+use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, dot, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -134,7 +134,7 @@ impl MacroExpander {
         if self.curr_name == "" {
             Rc::clone(&name)
         } else {
-            Rc::from(format!("{}_DOT_{}", self.curr_name, name))
+            Rc::from(format!("{}{}{}", self.curr_name, dot!(), name))
         }
     }
 

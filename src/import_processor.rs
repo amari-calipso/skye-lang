@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
 
-use crate::{ast::{Ast, ImportType, MacroBody, Statement}, ast_note, astpos_note, parse_file, token_error, token_note, token_warning, tokens::Token};
+use crate::{ast::{Ast, ImportType, MacroBody, Statement}, ast_note, astpos_note, dot, parse_file, token_error, token_note, token_warning, tokens::Token};
 
 pub struct ImportProcessor {
     source_path: Option<Box<PathBuf>>,
@@ -34,7 +34,7 @@ impl ImportProcessor {
         if self.curr_name == "" {
             Rc::clone(&name)
         } else {
-            Rc::from(format!("{}_DOT_{}", self.curr_name, name))
+            Rc::from(format!("{}{}{}", self.curr_name, dot!(), name))
         }
     }
 

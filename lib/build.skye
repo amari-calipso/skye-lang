@@ -66,25 +66,27 @@ namespace build {
         }
     }
     
-    struct Conf {
+    struct SkyeConf {
         checks: core::compiler::Checks,
         platform: ?Platform,
-        externLibs: ?&Array[char]
+        externLibs: ?&Array[char],
+        namespaceSep: ?String
     }
 
-    impl Conf {
+    impl SkyeConf {
         use ::build::Platform;
 
         fn default() Self {
             return Self.{ 
                 checks: core::compiler::Checks::Debug,
                 platform: (?Platform)::None,
-                externLibs: (?&Array[char])::None 
+                externLibs: (?&Array[char])::None,
+                namespaceSep: (?String)::None
             };
         }
     }
 
-    fn compileSkyeToC(const input: String, const output: String, const conf: Conf) !void {
+    fn compileSkyeToC(const input: String, const output: String, const conf: SkyeConf) !void {
         let buf = core::Array::from(core::compiler::@EXECUTABLE);
         defer buf.free();
 
@@ -93,6 +95,10 @@ namespace build {
                 &buf, " --target-os % --ptr-size %", 
                 conf.platform.Some.targetOS, conf.platform.Some.ptrSize
             );
+        }
+
+        if conf.namespaceSep.isSome() {
+            @format(&buf, " --namespace-sep %", conf.namespaceSep.Some);
         }
 
         @format(&buf, " compile % --emit-c -o %", input, output);
@@ -150,6 +156,31 @@ namespace build {
         return CCResult::Error;
     }
 
+    enum OptLevel as u8 {
+        O0 = 0, 
+        O1 = 1, 
+        O2 = 2, 
+        O3 = 3
+    }
+
+    struct CConf {
+        optLevel: ?OptLevel,
+        externLibs: ?String,
+        cc: ?String
+    }
+    
+    impl CConf {
+        use ::build::OptLevel;
+
+        fn default() Self {
+            return Self.{
+                optLevel: (?OptLevel)::None,
+                externLibs: (?String)::None,
+                cc: (?String)::None
+            };
+        }
+    }
+
     fn pushAllExtern(const buf: &core::Array[char], const externLibs: String) {
         let a = 0usz;
         let b = 0usz;
@@ -167,16 +198,65 @@ namespace build {
         }
     }
 
-    fn compileC(const input: String, const output: String, const externLibs: ?String) !void {
+    fn compileC(const input: String, const output: String, conf: CConf) !void {
         let buf = core::Array::new[char]();
         defer buf.free();
 
-        const cc = try cc();
-        @format(&buf, "% -w % ", cc, input);
+        if conf.cc.isNone() {
+            conf.cc = (?String)::Some(try cc());
+        }
 
-        if (externLibs.isSome()) pushAllExtern(&buf, externLibs.Some);
+        @format(&buf, "% -w % ", conf.cc.Some, input);
+
+        if conf.optLevel.isSome() {
+            @format(&buf, "-O% ", @cast(u8, conf.optLevel.Some));
+        }
+
+        if (conf.externLibs.isSome()) pushAllExtern(&buf, conf.externLibs.Some);
         @format(&buf, "-o %", output);
         try system(buf.asString());
+    }
+
+    struct Conf {
+        checks: core::compiler::Checks,
+        platform: ?Platform,
+        namespaceSep: ?String,
+        optLevel: ?OptLevel,
+        cc: ?String
+    }
+
+    impl Conf {
+        use ::build::OptLevel;
+        use ::build::Platform;
+        use ::build::CConf;
+        use ::build::SkyeConf;
+
+        fn default() Self {
+            return Self.{
+                checks: core::compiler::Checks::Debug,
+                platform: (?Platform)::None,
+                namespaceSep: (?String)::None,
+                optLevel: (?OptLevel)::None,
+                cc: (?String)::None
+            };
+        }
+
+        fn toCConf(const self) CConf {
+            return CConf.{
+                externLibs: (?String)::None,
+                optLevel: self.optLevel,
+                cc: self.cc
+            };
+        }
+
+        fn toSkyeConf(const self) SkyeConf {
+            return SkyeConf.{ 
+                externLibs: (?&Array[char])::None,
+                checks: self.checks,
+                platform: self.platform,
+                namespaceSep: self.namespaceSep
+            };
+        }
     }
 
     fn compileSkye(const input: String, const output: String, const conf: Conf) !void {
@@ -188,6 +268,10 @@ namespace build {
                 &buf, " --target-os % --ptr-size %", 
                 conf.platform.Some.targetOS, conf.platform.Some.ptrSize
             );
+        }
+
+        if conf.namespaceSep.isSome() {
+            @format(&buf, " --namespace-sep %", conf.namespaceSep.Some);
         }
 
         @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input);
@@ -215,7 +299,10 @@ namespace build {
             return (!void)::Error;
         }
 
-        try compileC("tmp.c", output, (?String)::Some(externBuf.asString()));
+        let cConf = conf.toCConf();
+        cConf.externLibs = (?String)::Some(externBuf.asString());
+
+        try compileC("tmp.c", output, cConf);
         let _ = removeFile("tmp.c");
         return (!void)::Ok;
     }    

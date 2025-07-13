@@ -51,6 +51,10 @@ struct Args {
     #[arg(long, default_value_t, value_enum)]
     /// Sets the target operating system
     target_os: TargetOS,
+
+    #[arg(long, default_value_t = String::from("_DOT_"))]
+    /// Sets the internal string that separates namespaces. Only modify it if you what you're doing, may break compilation
+    namespace_sep: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -160,6 +164,7 @@ fn main() -> Result<(), Error> {
     };
 
     let args = Args::parse();
+    skye::NAMESPACE_SEP.set(args.namespace_sep).unwrap();
     let mut config = CompilerConfig::new(
         skyec, skye_path, args.primitives, args.no_builtins, args.no_panic, args.ptr_size, args.target_os
     );
@@ -406,6 +411,8 @@ mod tests {
     use crate::get_skyec;
 
     fn compile_everything_in_folder(folder: &str) {
+        let _ = skye::NAMESPACE_SEP.set(String::from("_DOT_"));
+        
         let output = OsStr::new("tmp");
         let mut config = CompilerConfig::new(
             get_skyec(), 

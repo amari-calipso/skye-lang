@@ -4,6 +4,20 @@ use colored::{ColoredString, Colorize};
 
 use crate::{ast::Expression, tokens::Token};
 
+#[macro_export]
+macro_rules! get_expect {
+    ($obj: expr) => {
+        $obj.get().expect(concat!("Could not get Once expression: ", stringify!($obj)))
+    };
+}
+
+#[macro_export]
+macro_rules! dot {
+    () => {
+        crate::get_expect!(crate::NAMESPACE_SEP)
+    };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderedNamedMap<T> {
     pub map: HashMap<Rc<str>, T>,

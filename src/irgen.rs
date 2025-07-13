@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, dot, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -123,7 +123,7 @@ impl IrGen {
         if self.curr_name == "" {
             Rc::clone(&name)
         } else {
-            Rc::from(format!("{}_DOT_{}", self.curr_name, name))
+            Rc::from(format!("{}{}{}", self.curr_name, dot!(), name))
         }
     }
 
@@ -524,15 +524,20 @@ impl IrGen {
                                 do_write = false;
 
                                 if is_format {
+                                    
                                     break 'interpolated_expr_blk Expression::Call(
-                                        Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT_intToBuf")))),
+                                        Box::new(Expression::Variable(Token::dummy(
+                                            format!("core{}fmt{}intToBuf", dot!(), dot!()).into()
+                                        ))),
                                         tok.clone(),
                                         vec![arguments[0].clone(), portion_expr],
                                         false
                                     );
                                 } else {
                                     break 'interpolated_expr_blk Expression::Call(
-                                        Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT___intToFile")))),
+                                        Box::new(Expression::Variable(Token::dummy(
+                                            format!("core{}fmt{}__intToFile", dot!(), dot!()).into()
+                                        ))),
                                         tok.clone(),
                                         vec![arguments[0].clone(), portion_expr],
                                         false
@@ -545,14 +550,18 @@ impl IrGen {
 
                                 if is_format {
                                     break 'interpolated_expr_blk Expression::Call(
-                                        Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT_floatToBuf")))),
+                                        Box::new(Expression::Variable(Token::dummy(
+                                            format!("core{}fmt{}floatToBuf", dot!(), dot!()).into()
+                                        ))),
                                         tok.clone(),
                                         vec![arguments[0].clone(), portion_expr],
                                         false
                                     );
                                 } else {
                                     break 'interpolated_expr_blk Expression::Call(
-                                        Box::new(Expression::Variable(Token::dummy(Rc::from("core_DOT_fmt_DOT___floatToFile")))),
+                                        Box::new(Expression::Variable(Token::dummy(
+                                            format!("core{}fmt{}__floatToFile", dot!(), dot!()).into()
+                                        ))),
                                         tok.clone(),
                                         vec![arguments[0].clone(), portion_expr],
                                         false
@@ -561,7 +570,7 @@ impl IrGen {
                             }
 
                             if let SkyeType::Struct(full_name, ..) = &evaluated.ir_value.type_ {
-                                if full_name.as_ref() == "core_DOT_Slice_GENOF_char_GENEND_" {
+                                if full_name.as_ref() == format!("core{}Slice_GENOF_char_GENEND_", dot!()).as_str() {
                                     break 'interpolated_expr_blk portion_expr;
                                 }
                             }
@@ -745,7 +754,7 @@ impl IrGen {
                                             IrValue::new(
                                                 IrValueData::Call { 
                                                     callee: Box::new(IrValue::new(
-                                                        IrValueData::Variable { name: format!("{}_DOT_{}", full_name, mangled).into() }, 
+                                                        IrValueData::Variable { name: format!("{}{}{}", full_name, dot!(), mangled).into() }, 
                                                         SkyeType::Void // TODO
                                                     )), 
                                                     args: vec![to_cast.ir_value]
@@ -799,7 +808,13 @@ impl IrGen {
                                                                         )), 
                                                                         right: Box::new(IrValue::new(
                                                                             IrValueData::Variable { 
-                                                                                name: format!("{}_DOT_Kind_DOT_{}", base_name, mangled).into() 
+                                                                                name: format!(
+                                                                                    "{}{}Kind{}{}", 
+                                                                                    base_name, 
+                                                                                    dot!(), 
+                                                                                    dot!(), 
+                                                                                    mangled
+                                                                                ).into() 
                                                                             },
                                                                             SkyeType::Void // TODO
                                                                         ))
@@ -810,7 +825,11 @@ impl IrGen {
                                                                     IrValueData::Call { 
                                                                         callee: Box::new(IrValue::new(
                                                                             IrValueData::Variable { 
-                                                                                name: format!("{}_DOT_Some", mangled_option_type).into() 
+                                                                                name: format!(
+                                                                                    "{}{}Some", 
+                                                                                    mangled_option_type, 
+                                                                                    dot!()
+                                                                                ).into() 
                                                                             },
                                                                             SkyeType::Void // TODO
                                                                         )), 
@@ -828,7 +847,11 @@ impl IrGen {
                                                                     *inner_option_type.clone()
                                                                 )),
                                                                 else_branch: Box::new(IrValue::new(
-                                                                    IrValueData::Variable { name: format!("{}_DOT_None", mangled_option_type).into() },
+                                                                    IrValueData::Variable { name: format!(
+                                                                        "{}{}None", 
+                                                                        mangled_option_type,
+                                                                        dot!()
+                                                                    ).into() },
                                                                     *inner_option_type.clone()
                                                                 ))
                                                             },
@@ -2192,14 +2215,14 @@ impl IrGen {
                     let (fmod_tok, fmod_function) = {
                         match op_type {
                             Operator::Mod => {
-                                let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT_floatMod"));
+                                let fmod_tok = Token::dummy(format!("core{}ops{}floatMod", dot!(), dot!()).into());
                                 let fmod_function = self.globals.borrow().get(&fmod_tok)
                                     .expect("Cannot find core::ops::floatMod");
 
                                 (fmod_tok, fmod_function)
                             }
                             Operator::SetMod => {
-                                let fmod_tok = Token::dummy(Rc::from("core_DOT_ops_DOT___setFloatMod"));
+                                let fmod_tok = Token::dummy(format!("core{}ops{}__setFloatMod", dot!(), dot!()).into());
                                 let fmod_function = self.globals.borrow().get(&fmod_tok)
                                     .expect("Cannot find core::ops::__setFloatMod");
 
@@ -2504,7 +2527,7 @@ impl IrGen {
                 }
 
                 let mut slice_tok = opening_brace.clone();
-                slice_tok.set_lexeme("core_DOT_Slice");
+                slice_tok.set_lexeme(format!("core{}Slice", dot!()).as_str());
 
                 let tmp_var = self.get_temporary_var();
 
@@ -2742,7 +2765,7 @@ impl IrGen {
                                 }
 
                                 let mut custom_token = op.clone();
-                                custom_token.set_lexeme("core_DOT_Result");
+                                custom_token.set_lexeme(format!("core{}Result", dot!()).as_str());
 
                                 let subscript_expr = Expression::Subscript { 
                                     subscripted: Box::new(Expression::Variable(custom_token)), 
@@ -2776,7 +2799,7 @@ impl IrGen {
                                 }
 
                                 let mut custom_token = op.clone();
-                                custom_token.set_lexeme("core_DOT_Option");
+                                custom_token.set_lexeme(format!("core{}Option", dot!()).as_str());
 
                                 let subscript_expr = Expression::Subscript { 
                                     subscripted: Box::new(Expression::Variable(custom_token)), 
@@ -3037,236 +3060,242 @@ impl IrGen {
 
                                 let scope = IrStatement::empty_scope(expr.get_pos());
 
-                                match name.as_ref() {
-                                    "core_DOT_Option" => {
-                                        // if (tmp.kind == core_DOT_Option_DOT_Kind_DOT_None) ...
-                                        self.add_statement(IrStatement { 
+                                if name.as_ref() == format!("core{}Option", dot!()).as_str() {
+                                    // if (tmp.kind == core::Option::Kind::None) ...
+                                    self.add_statement(IrStatement { 
+                                        pos: expr.get_pos(),
+                                        data: IrStatementData::If { 
+                                            condition: IrValue::new(
+                                                IrValueData::Binary { 
+                                                    op: BinaryOp::Equal, 
+                                                    left: Box::new(IrValue::new(
+                                                        IrValueData::Get { 
+                                                            from: Box::new(IrValue::new(
+                                                                IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                SkyeType::Void // TODO
+                                                            )), 
+                                                            name: Rc::from("kind") 
+                                                        },
+                                                        SkyeType::Void // TODO
+                                                    )), 
+                                                    right: Box::new(IrValue::new(
+                                                        IrValueData::Variable {
+                                                            name: format!(
+                                                                "core{}Option{}Kind{}None", 
+                                                                dot!(), dot!(), dot!()
+                                                            ).into() 
+                                                        },
+                                                        SkyeType::Void // TODO
+                                                    ))
+                                                },
+                                                SkyeType::U8
+                                            ), 
+                                            then_branch: Box::new(scope.clone()), 
+                                            else_branch: None 
+                                        }
+                                    });
+
+                                    let previous_definition = self.curr_definition.clone();
+                                    self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
+                                    ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
+                                    self.curr_definition = previous_definition;
+
+                                    if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
+                                        Self::add_statement_to_scope(&scope.data, IrStatement {
                                             pos: expr.get_pos(),
-                                            data: IrStatementData::If { 
-                                                condition: IrValue::new(
-                                                    IrValueData::Binary { 
-                                                        op: BinaryOp::Equal, 
-                                                        left: Box::new(IrValue::new(
-                                                            IrValueData::Get { 
-                                                                from: Box::new(IrValue::new(
-                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                                    SkyeType::Void // TODO
-                                                                )), 
-                                                                name: Rc::from("kind") 
-                                                            },
-                                                            SkyeType::Void // TODO
-                                                        )), 
-                                                        right: Box::new(IrValue::new(
-                                                            IrValueData::Variable { name: Rc::from("core_DOT_Option_DOT_Kind_DOT_None") },
-                                                            SkyeType::Void // TODO
-                                                        ))
-                                                    },
-                                                    SkyeType::U8
-                                                ), 
-                                                then_branch: Box::new(scope.clone()), 
-                                                else_branch: None 
+                                            data: IrStatementData::Return { 
+                                                value: Some(IrValue::new(
+                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                    SkyeType::Void // TODO
+                                                )) 
                                             }
                                         });
-
-                                        let previous_definition = self.curr_definition.clone();
-                                        self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                        ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
-                                        self.curr_definition = previous_definition;
-
-                                        if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
-                                            Self::add_statement_to_scope(&scope.data, IrStatement {
-                                                pos: expr.get_pos(),
-                                                data: IrStatementData::Return { 
-                                                    value: Some(IrValue::new(
-                                                        IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                        SkyeType::Void // TODO
-                                                    )) 
-                                                }
-                                            });
-                                        } else if let SkyeType::Enum(full_name, ..) = &return_type {
-                                            Self::add_statement_to_scope(&scope.data, IrStatement {
-                                                pos: expr.get_pos(),
-                                                data: IrStatementData::Return { 
-                                                    value: Some(IrValue::new(
-                                                        IrValueData::Variable { name: format!("{}_DOT_None", full_name).into() },
-                                                        SkyeType::Void // TODO
-                                                    )) 
-                                                }
-                                            });
-                                        } else {
-                                            unreachable!();
-                                        }
-
-                                        if let Some(variant) = variants.as_ref().unwrap().get("Some") {
-                                            SkyeValue::new(
-                                                IrValue::new(
-                                                    IrValueData::Get { 
-                                                        from: Box::new(IrValue::new(
-                                                            IrValueData::Variable { name: tmp_var_name },
-                                                            SkyeType::Void // TODO
-                                                        )), 
-                                                        name: Rc::from("Some")
-                                                    },
-                                                    variant.clone()
-                                                ),
-                                                true
-                                            )
-                                        } else {
-                                            // when variant is void
-                                            SkyeValue::special(SkyeType::Void)
-                                        }
+                                    } else if let SkyeType::Enum(full_name, ..) = &return_type {
+                                        Self::add_statement_to_scope(&scope.data, IrStatement {
+                                            pos: expr.get_pos(),
+                                            data: IrStatementData::Return { 
+                                                value: Some(IrValue::new(
+                                                    IrValueData::Variable { name: format!("{}{}None", full_name, dot!()).into() },
+                                                    SkyeType::Void // TODO
+                                                )) 
+                                            }
+                                        });
+                                    } else {
+                                        unreachable!();
                                     }
-                                    "core_DOT_Result" => {
-                                        // if (tmp.kind == core_DOT_Result_DOT_Kind_DOT_Error) ...
-                                        self.add_statement(IrStatement { 
+
+                                    if let Some(variant) = variants.as_ref().unwrap().get("Some") {
+                                        SkyeValue::new(
+                                            IrValue::new(
+                                                IrValueData::Get { 
+                                                    from: Box::new(IrValue::new(
+                                                        IrValueData::Variable { name: tmp_var_name },
+                                                        SkyeType::Void // TODO
+                                                    )), 
+                                                    name: Rc::from("Some")
+                                                },
+                                                variant.clone()
+                                            ),
+                                            true
+                                        )
+                                    } else {
+                                        // when variant is void
+                                        SkyeValue::special(SkyeType::Void)
+                                    }
+                                } else if name.as_ref() == format!("core{}Result", dot!()).as_str() {
+                                    // if (tmp.kind == core::Result::Kind::Error) ...
+                                    self.add_statement(IrStatement { 
+                                        pos: expr.get_pos(),
+                                        data: IrStatementData::If { 
+                                            condition: IrValue::new(
+                                                IrValueData::Binary { 
+                                                    op: BinaryOp::Equal, 
+                                                    left: Box::new(IrValue::new(
+                                                        IrValueData::Get { 
+                                                            from: Box::new(IrValue::new(
+                                                                IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                SkyeType::Void // TODO
+                                                            )), 
+                                                            name: Rc::from("kind") 
+                                                        },
+                                                        SkyeType::Void // TODO
+                                                    )), 
+                                                    right: Box::new(IrValue::new(
+                                                        IrValueData::Variable { 
+                                                            name: format!(
+                                                                "core{}Result{}Kind{}Error", 
+                                                                dot!(), dot!(), dot!()
+                                                            ).into()
+                                                        },
+                                                        SkyeType::Void // TODO
+                                                    ))
+                                                },
+                                                SkyeType::U8
+                                            ), 
+                                            then_branch: Box::new(scope.clone()), 
+                                            else_branch: None 
+                                        }
+                                    });
+
+                                    let previous_definition = self.curr_definition.clone();
+                                    self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
+                                    ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
+                                    self.curr_definition = previous_definition;
+
+                                    if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
+                                        Self::add_statement_to_scope(&scope.data, IrStatement {
                                             pos: expr.get_pos(),
-                                            data: IrStatementData::If { 
-                                                condition: IrValue::new(
-                                                    IrValueData::Binary { 
-                                                        op: BinaryOp::Equal, 
-                                                        left: Box::new(IrValue::new(
-                                                            IrValueData::Get { 
-                                                                from: Box::new(IrValue::new(
-                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                                    SkyeType::Void // TODO
-                                                                )), 
-                                                                name: Rc::from("kind") 
-                                                            },
-                                                            SkyeType::Void // TODO
-                                                        )), 
-                                                        right: Box::new(IrValue::new(
-                                                            IrValueData::Variable { name: Rc::from("core_DOT_Result_DOT_Kind_DOT_Error") },
-                                                            SkyeType::Void // TODO
-                                                        ))
-                                                    },
-                                                    SkyeType::U8
-                                                ), 
-                                                then_branch: Box::new(scope.clone()), 
-                                                else_branch: None 
+                                            data: IrStatementData::Return { 
+                                                value: Some(IrValue::new(
+                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                    SkyeType::Void // TODO
+                                                )) 
                                             }
                                         });
-
-                                        let previous_definition = self.curr_definition.clone();
-                                        self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                        ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
-                                        self.curr_definition = previous_definition;
-
-                                        if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
-                                            Self::add_statement_to_scope(&scope.data, IrStatement {
-                                                pos: expr.get_pos(),
-                                                data: IrStatementData::Return { 
-                                                    value: Some(IrValue::new(
-                                                        IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                        SkyeType::Void // TODO
-                                                    )) 
-                                                }
-                                            });
-                                        } else if let SkyeType::Enum(full_name, return_variants, _) = &return_type {
-                                            if let Some(return_variant) = return_variants.as_ref().unwrap().get("Error") {
-                                                if let Some(variant) = variants.as_ref().unwrap().get("Error") {
-                                                    if variant.equals(return_variant, EqualsLevel::Typewise) {
-                                                        // return type::Error(tmp.Error)
-                                                        Self::add_statement_to_scope(&scope.data, IrStatement {
-                                                            pos: expr.get_pos(),
-                                                            data: IrStatementData::Return { 
-                                                                value: Some(IrValue::new(
-                                                                    IrValueData::Call {
-                                                                        callee: Box::new(IrValue::new(
-                                                                            IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                                            SkyeType::Void // TODO
-                                                                        )),
-                                                                        args: vec![IrValue::new(
-                                                                            IrValueData::Get { 
-                                                                                from: Box::new(IrValue::new(
-                                                                                    IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
-                                                                                    SkyeType::Void // TODO
-                                                                                )), 
-                                                                                name: Rc::from("Error")
-                                                                            },
-                                                                            SkyeType::Void // TODO
-                                                                        )]
-                                                                    },
-                                                                    SkyeType::Void // TODO
-                                                                )) 
-                                                            }
-                                                        });
-                                                    } else {
-                                                        ast_error!(
-                                                            self, expr,
-                                                            format!(
-                                                                "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type ({})",
-                                                                variant.stringify(), return_variant.stringify(),
-                                                            ).as_ref()
-                                                        );
-
-                                                        ast_note!(return_expr, "Return type defined here");
-                                                    }
+                                    } else if let SkyeType::Enum(full_name, return_variants, _) = &return_type {
+                                        if let Some(return_variant) = return_variants.as_ref().unwrap().get("Error") {
+                                            if let Some(variant) = variants.as_ref().unwrap().get("Error") {
+                                                if variant.equals(return_variant, EqualsLevel::Typewise) {
+                                                    // return type::Error(tmp.Error)
+                                                    Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                        pos: expr.get_pos(),
+                                                        data: IrStatementData::Return { 
+                                                            value: Some(IrValue::new(
+                                                                IrValueData::Call {
+                                                                    callee: Box::new(IrValue::new(
+                                                                        IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                        SkyeType::Void // TODO
+                                                                    )),
+                                                                    args: vec![IrValue::new(
+                                                                        IrValueData::Get { 
+                                                                            from: Box::new(IrValue::new(
+                                                                                IrValueData::Variable { name: Rc::clone(&tmp_var_name) },
+                                                                                SkyeType::Void // TODO
+                                                                            )), 
+                                                                            name: Rc::from("Error")
+                                                                        },
+                                                                        SkyeType::Void // TODO
+                                                                    )]
+                                                                },
+                                                                SkyeType::Void // TODO
+                                                            )) 
+                                                        }
+                                                    });
                                                 } else {
                                                     ast_error!(
                                                         self, expr,
                                                         format!(
-                                                            "core::Result \"Error\" variant type (void) does not match with return type's \"Error\" variant type ({})",
-                                                            return_variant.stringify(),
+                                                            "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type ({})",
+                                                            variant.stringify(), return_variant.stringify(),
                                                         ).as_ref()
                                                     );
 
                                                     ast_note!(return_expr, "Return type defined here");
                                                 }
-                                            } else if let Some(variant) = variants.as_ref().unwrap().get("Error") {
+                                            } else {
                                                 ast_error!(
                                                     self, expr,
                                                     format!(
-                                                        "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type (void)",
-                                                        variant.stringify(),
+                                                        "core::Result \"Error\" variant type (void) does not match with return type's \"Error\" variant type ({})",
+                                                        return_variant.stringify(),
                                                     ).as_ref()
                                                 );
 
                                                 ast_note!(return_expr, "Return type defined here");
-                                            } else {
-                                                Self::add_statement_to_scope(&scope.data, IrStatement {
-                                                    pos: expr.get_pos(),
-                                                    data: IrStatementData::Return { 
-                                                        value: Some(IrValue::new(
-                                                            IrValueData::Variable { name: format!("{}_DOT_Error", full_name).into() },
-                                                            SkyeType::Void // TODO
-                                                        )) 
-                                                    }
-                                                });
                                             }
-                                        } else {
-                                            unreachable!();
-                                        }
+                                        } else if let Some(variant) = variants.as_ref().unwrap().get("Error") {
+                                            ast_error!(
+                                                self, expr,
+                                                format!(
+                                                    "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type (void)",
+                                                    variant.stringify(),
+                                                ).as_ref()
+                                            );
 
-                                        if let Some(variant) = variants.as_ref().unwrap().get("Ok") {
-                                            SkyeValue::new(
-                                                IrValue::new(
-                                                    IrValueData::Get { 
-                                                        from: Box::new(IrValue::new(
-                                                            IrValueData::Variable { name: tmp_var_name },
-                                                            SkyeType::Void // TODO
-                                                        )), 
-                                                        name: Rc::from("Ok")
-                                                    },
-                                                    variant.clone()
-                                                ),
-                                                true
-                                            )
+                                            ast_note!(return_expr, "Return type defined here");
                                         } else {
-                                            // when variant is void
-                                            SkyeValue::special(SkyeType::Void)
+                                            Self::add_statement_to_scope(&scope.data, IrStatement {
+                                                pos: expr.get_pos(),
+                                                data: IrStatementData::Return { 
+                                                    value: Some(IrValue::new(
+                                                        IrValueData::Variable { name: format!("{}{}Error", full_name, dot!()).into() },
+                                                        SkyeType::Void // TODO
+                                                    )) 
+                                                }
+                                            });
                                         }
+                                    } else {
+                                        unreachable!();
                                     }
-                                    _ => {
-                                        ast_error!(
-                                            self, inner_expr,
-                                            format!(
-                                                "Can only use \"try\" operator on expressions returning core::Result or core::Option (got {})",
-                                                inner.ir_value.type_.stringify()
-                                            ).as_ref()
-                                        );
 
-                                        SkyeValue::get_unknown()
+                                    if let Some(variant) = variants.as_ref().unwrap().get("Ok") {
+                                        SkyeValue::new(
+                                            IrValue::new(
+                                                IrValueData::Get { 
+                                                    from: Box::new(IrValue::new(
+                                                        IrValueData::Variable { name: tmp_var_name },
+                                                        SkyeType::Void // TODO
+                                                    )), 
+                                                    name: Rc::from("Ok")
+                                                },
+                                                variant.clone()
+                                            ),
+                                            true
+                                        )
+                                    } else {
+                                        // when variant is void
+                                        SkyeValue::special(SkyeType::Void)
                                     }
+                                } else {
+                                    ast_error!(
+                                        self, inner_expr,
+                                        format!(
+                                            "Can only use \"try\" operator on expressions returning core::Result or core::Option (got {})",
+                                            inner.ir_value.type_.stringify()
+                                        ).as_ref()
+                                    );
+
+                                    SkyeValue::get_unknown()
                                 }
                             } else {
                                 ast_error!(
@@ -3834,7 +3863,7 @@ impl IrGen {
                                 }
 
                                 let mut custom_token = op.clone();
-                                custom_token.set_lexeme("core_DOT_Result");
+                                custom_token.set_lexeme(format!("core{}Result", dot!()).as_str());
 
                                 let subscript_expr = Expression::Subscript { 
                                     subscripted: Box::new(Expression::Variable(custom_token)), 
@@ -5114,7 +5143,7 @@ impl IrGen {
                 if let Some(object) = object {
                     if let SkyeType::Type(inner_type) = &object.ir_value.type_ {
                         if let SkyeType::Enum(enum_name, ..) = &**inner_type {
-                            search_tok.set_lexeme(format!("{}_DOT_{}", enum_name, name.lexeme).as_ref());
+                            search_tok.set_lexeme(format!("{}{}{}", enum_name, dot!(), name.lexeme).as_ref());
 
                             if let Some(value) = self.resolve_variable(&search_tok, global_ns) {
                                 return value;
@@ -5287,7 +5316,7 @@ impl IrGen {
                 }
 
                 if let SkyeType::Enum(.., base_name) = &value.ir_value.type_ {
-                    if base_name.as_ref() == "core_DOT_Result" {
+                    if base_name.as_ref() == format!("core{}Result", dot!()).as_str() {
                         ast_warning!(expr, "Error is being ignored implictly");
                         ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
                     }
@@ -5619,7 +5648,10 @@ impl IrGen {
                         params_types.len() == 1 &&
                         {
                             if let SkyeType::Struct(full_name, ..) = &params_types[0].type_ {
-                                full_name.as_ref() == "core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_"
+                                full_name.as_ref() == format!(
+                                    "core{}Array_GENOF_core{}Slice_GENOF_char_GENEND__GENAND_core{}mem{}HeapAllocator_GENEND_", 
+                                    dot!(), dot!(), dot!(), dot!()
+                                ).as_str()
                             } else {
                                 false
                             }
@@ -6551,7 +6583,7 @@ impl IrGen {
                     if *is_simple {
                         Rc::clone(&name.lexeme)
                     } else {
-                        Rc::from(format!("{}_DOT_Kind", name.lexeme))
+                        Rc::from(format!("{}{}Kind", name.lexeme, dot!()))
                     }
                 };
 
@@ -6700,7 +6732,7 @@ impl IrGen {
                                 );
                             } else {
                                 env.define(
-                                    Rc::from(format!("{}_DOT_{}", simple_enum_full_name, variant.name.lexeme)),
+                                    Rc::from(format!("{}{}{}", simple_enum_full_name, dot!(), variant.name.lexeme)),
                                     SkyeVariable::with_from(
                                         simple_enum_type.clone(), true,
                                         Some(Box::new(variant.name.clone())),
@@ -6774,7 +6806,7 @@ impl IrGen {
                                                     )),
                                                     value: Box::new(IrValue::new(
                                                         IrValueData::Variable { 
-                                                            name: format!("{}_DOT_{}", simple_enum_full_name, variant.name.lexeme).into() 
+                                                            name: format!("{}{}{}", simple_enum_full_name, dot!(), variant.name.lexeme).into() 
                                                         },
                                                         simple_enum_type.clone()
                                                     )) 
@@ -6797,8 +6829,12 @@ impl IrGen {
                                 };
 
                                 if matches!(variant.type_, SkyeType::Void) {
-                                    let enum_variant_init_fn_name = format!("{}_DOT_SKYE_ENUM_INIT_{}", full_name, variant.name.lexeme).into();
-                                    let enum_variant_init_alias = format!("{}_DOT_{}", full_name, variant.name.lexeme).into();
+                                    let enum_variant_init_fn_name = format!(
+                                        "{}{}SKYE_ENUM_INIT_{}", 
+                                        full_name, dot!(), variant.name.lexeme
+                                    ).into();
+
+                                    let enum_variant_init_alias = format!("{}{}{}", full_name, dot!(), variant.name.lexeme).into();
                                     let function_type = SkyeType::Function(Vec::new(), Box::new(struct_output_type.clone()), true);
 
                                     env.define(
@@ -6851,7 +6887,7 @@ impl IrGen {
                                         }
                                     })));
                                 } else {
-                                    let enum_variant_init_fn_name = format!("{}_DOT_{}", full_name, variant.name.lexeme).into();
+                                    let enum_variant_init_fn_name = format!("{}{}{}", full_name, dot!(), variant.name.lexeme).into();
                                     let value = Rc::from("value");
 
                                     let function_type = SkyeType::Function(
@@ -7512,7 +7548,7 @@ impl IrGen {
 
                 let item_type = {
                     if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
-                        if name.as_ref() != "core_DOT_Option" {
+                        if name.as_ref() != format!("core{}Option", dot!()).as_str() {
                             ast_error!(
                                 self, iterator_expr,
                                 format!(
@@ -7578,7 +7614,7 @@ impl IrGen {
                                     SkyeType::Void // TODO
                                 )),
                                 right: Box::new(IrValue::new(
-                                    IrValueData::Variable { name: Rc::from("core_DOT_Option_DOT_Kind_DOT_Some") },
+                                    IrValueData::Variable { name: format!("core{}Option{}Kind{}Some", dot!(), dot!(), dot!()).into() },
                                     SkyeType::Void // TODO
                                 )) 
                             },

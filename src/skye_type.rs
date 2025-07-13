@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, tokens::Token, utils::OrderedNamedMap};
+use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, dot, tokens::Token, utils::OrderedNamedMap};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeFunctionParam {
@@ -240,8 +240,8 @@ impl SkyeType {
             SkyeType::Void => String::from("void"),
 
             SkyeType::Group(left, right) => format!("{} | {}", left.stringify(), right.stringify()),
-            SkyeType::Template(name, ..) => format!("template \"{}\"", name.replace("_DOT_", "::")),
-            SkyeType::Namespace(name) => format!("namespace \"{}\"", name.replace("_DOT_", "::")),
+            SkyeType::Template(name, ..) => format!("template \"{}\"", name.replace(dot!(), "::")),
+            SkyeType::Namespace(name) => format!("namespace \"{}\"", name.replace(dot!(), "::")),
             SkyeType::Macro(name, ..) => format!("macro \"{}\"", name),
             SkyeType::Unknown(name) => {
                 if name.as_ref() == "" {
@@ -295,7 +295,7 @@ impl SkyeType {
             SkyeType::Enum(name, ..) => {
                 // not ideal, but it's just error reporting ¯\_(ツ)_/¯
                 name.to_string()
-                    .replace("_DOT_", "::")
+                    .replace(dot!(), "::")
                     .replace("__SKYE_FNPTR_", "fn (")
                     .replace("_PARAM_AND_", ", ")
                     .replace("_PARAM_END_", ") ")
@@ -306,7 +306,7 @@ impl SkyeType {
                     .replace("_UNKNOWN_", "{any}")
             }
 
-            SkyeType::Union(name, _) => name.to_string().replace("_DOT_", "::"),
+            SkyeType::Union(name, _) => name.to_string().replace(dot!(), "::"),
         }
     }
 
@@ -649,7 +649,7 @@ impl SkyeType {
             SkyeType::Struct(.., namespace_name) |
             SkyeType::Enum(.., namespace_name) |
             SkyeType::Template(namespace_name, ..) => {
-                Some(format!("{}_DOT_{}", namespace_name, name.lexeme).into())
+                Some(format!("{}{}{}", namespace_name, dot!(), name.lexeme).into())
             }
             _ => None
         }
@@ -671,7 +671,7 @@ impl SkyeType {
             SkyeType::Struct(.., obj_name) |
             SkyeType::Enum(.., obj_name) |
             SkyeType::Template(obj_name, ..) => {
-                Some(format!("{}_DOT_{}", obj_name, name.lexeme).into())
+                Some(format!("{}{}{}", obj_name, dot!(), name.lexeme).into())
             }
             _ => None
         }

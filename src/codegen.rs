@@ -3,7 +3,7 @@ use std::{cell::{OnceCell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
 
-use crate::{ast::{Bits, Expression, StringKind}, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
+use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
 
 const OUTPUT_INDENT_SPACES: usize = 4;
 
@@ -36,58 +36,58 @@ const VOID_MAIN_PLUS_STD_ARGS: &str = concat!(
 const VOID_MAIN_PLUS_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
+    "    core$Array_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
     "    _SKYE_MAIN(args);\n",
-    "    core_DOT_Array_DOT_free_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_(&args);\n",
+    "    core$Array$free_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_(&args);\n",
     "    return 0;\n",
     "}\n\n"
 );
 const RESULT_VOID_MAIN: &str = concat!(
     "int main() {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN();\n",
-    "    return result.kind != core_DOT_Result_DOT_Kind_DOT_Ok;\n",
+    "    core$Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN();\n",
+    "    return result.kind != core$Result$Kind$Ok;\n",
     "}\n\n"
 );
 const RESULT_VOID_MAIN_PLUS_STD_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN(argc, argv);\n",
-    "    return result.kind != core_DOT_Result_DOT_Kind_DOT_Ok;\n",
+    "    core$Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN(argc, argv);\n",
+    "    return result.kind != core$Result$Kind$Ok;\n",
     "}\n\n"
 );
 const RESULT_VOID_MAIN_PLUS_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
-    "    core_DOT_Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN(args);\n",
-    "    core_DOT_Array_DOT_free_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_(&args);\n",
-    "    return result.kind != core_DOT_Result_DOT_Kind_DOT_Ok;\n",
+    "    core$Array_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
+    "    core$Result_GENOF_void_GENAND_void_GENEND_ result = _SKYE_MAIN(args);\n",
+    "    core$Array$free_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_(&args);\n",
+    "    return result.kind != core$Result$Kind$Ok;\n",
     "}\n\n"
 );
 const RESULT_I32_MAIN: &str = concat!(
     "int main() {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN();\n",
-    "    if (result.kind == core_DOT_Result_DOT_Kind_DOT_Ok) return 0;\n",
+    "    core$Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN();\n",
+    "    if (result.kind == core$Result$Kind$Ok) return 0;\n",
     "    return result.Error;\n",
     "}\n\n"
 );
 const RESULT_I32_MAIN_PLUS_STD_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN(argc, argv);\n",
-    "    if (result.kind == core_DOT_Result_DOT_Kind_DOT_Ok) return 0;\n",
+    "    core$Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN(argc, argv);\n",
+    "    if (result.kind == core$Result$Kind$Ok) return 0;\n",
     "    return result.Error;\n",
     "}\n\n"
 );
 const RESULT_I32_MAIN_PLUS_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
-    "    core_DOT_Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN(args);\n",
-    "    core_DOT_Array_DOT_free_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_(&args);\n",
-    "    if (result.kind == core_DOT_Result_DOT_Kind_DOT_Ok) return 0;\n",
+    "    core$Array_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
+    "    core$Result_GENOF_void_GENAND_i32_GENEND_ result = _SKYE_MAIN(args);\n",
+    "    core$Array$free_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_(&args);\n",
+    "    if (result.kind == core$Result$Kind$Ok) return 0;\n",
     "    return result.Error;\n",
     "}\n\n"
 );
@@ -106,9 +106,9 @@ const I32_MAIN_PLUS_STD_ARGS: &str = concat!(
 const I32_MAIN_PLUS_ARGS: &str = concat!(
     "int main(int argc, char** argv) {\n",
     "    _SKYE_INIT();\n",
-    "    core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
+    "    core$Array_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_ args = _SKYE_CONVERT_ARGS(argc, argv);\n",
     "    i32 result = _SKYE_MAIN(args);\n",
-    "    core_DOT_Array_DOT_free_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_(&args);\n",
+    "    core$Array$free_GENOF_core$Slice_GENOF_char_GENEND__GENAND_core$mem$HeapAllocator_GENEND_(&args);\n",
     "    return result;\n",
     "}\n\n"
 );
@@ -708,8 +708,8 @@ impl CodeGen {
                             StringKind::Slice => {
                                 if let Some(string_const) = self.strings.get(&value) {
                                     format!(
-                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = sizeof(__SKYE_STRING_{}) }}",
-                                        string_const, string_const
+                                        "(core{}Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = sizeof(__SKYE_STRING_{}) }}",
+                                        dot!(), string_const, string_const
                                     ).into()
                                 } else {
                                     let str_index = self.strings.len();
@@ -722,8 +722,8 @@ impl CodeGen {
                                     self.strings.insert(value, str_index);
 
                                     format!(
-                                        "(core_DOT_Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = {} }}",
-                                        str_index, string_len
+                                        "(core{}Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = {} }}",
+                                        dot!(), str_index, string_len
                                     ).into()
                                 }
                             }
@@ -1128,7 +1128,7 @@ impl CodeGen {
                 for variant in variants {
                     buf.push_indent();
                     buf.push(&name);
-                    buf.push("_DOT_");
+                    buf.push(&dot!());
                     buf.push(&variant.name);
 
                     if let Some(value) = variant.value {
@@ -1158,8 +1158,8 @@ impl CodeGen {
                     if prepared_name.as_ref() == "_SKYE_MAIN" {
                         let returns_void        = return_stringified == "void";
                         let returns_i32         = return_stringified == "i32";
-                        let returns_i32_result  = return_stringified == "core_DOT_Result_GENOF_void_GENAND_i32_GENEND_";
-                        let returns_void_result = return_stringified == "core_DOT_Result_GENOF_void_GENAND_void_GENEND_";
+                        let returns_i32_result  = return_stringified == format!("core{}Result_GENOF_void_GENAND_i32_GENEND_", dot!()).as_str();
+                        let returns_void_result = return_stringified == format!("core{}Result_GENOF_void_GENAND_void_GENEND_", dot!()).as_str();
 
                         let has_stdargs = {
                             params.len() == 2 &&
@@ -1177,7 +1177,10 @@ impl CodeGen {
                             params.len() == 1 &&
                             {
                                 if let SkyeType::Struct(full_name, ..) = &params[0].type_ {
-                                    full_name.as_ref() == "core_DOT_Array_GENOF_core_DOT_Slice_GENOF_char_GENEND__GENAND_core_DOT_mem_DOT_HeapAllocator_GENEND_"
+                                    full_name.as_ref() == format!(
+                                        "core{}Array_GENOF_core{}Slice_GENOF_char_GENEND__GENAND_core{}mem{}HeapAllocator_GENEND_", 
+                                        dot!(), dot!(), dot!(), dot!()
+                                    ).as_str()
                                 } else {
                                     false
                                 }
@@ -1191,35 +1194,35 @@ impl CodeGen {
 
                             if returns_void {
                                 if has_stdargs {
-                                    self.fndefs.last_mut().unwrap().push(VOID_MAIN_PLUS_STD_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&VOID_MAIN_PLUS_STD_ARGS.replace('$', dot!()));
                                 } else if has_args {
-                                    self.fndefs.last_mut().unwrap().push(VOID_MAIN_PLUS_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&VOID_MAIN_PLUS_ARGS.replace('$', dot!()));
                                 } else {
-                                    self.fndefs.last_mut().unwrap().push(VOID_MAIN);
+                                    self.fndefs.last_mut().unwrap().push(&VOID_MAIN.replace('$', dot!()));
                                 }
                             } else if returns_i32 {
                                 if has_stdargs {
-                                    self.fndefs.last_mut().unwrap().push(I32_MAIN_PLUS_STD_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&I32_MAIN_PLUS_STD_ARGS.replace('$', dot!()));
                                 } else if has_args {
-                                    self.fndefs.last_mut().unwrap().push(I32_MAIN_PLUS_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&I32_MAIN_PLUS_ARGS.replace('$', dot!()));
                                 } else {
-                                    self.fndefs.last_mut().unwrap().push(I32_MAIN);
+                                    self.fndefs.last_mut().unwrap().push(&I32_MAIN.replace('$', dot!()));
                                 }
                             } else if returns_i32_result {
                                 if has_stdargs {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_I32_MAIN_PLUS_STD_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_I32_MAIN_PLUS_STD_ARGS.replace('$', dot!()));
                                 } else if has_args {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_I32_MAIN_PLUS_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_I32_MAIN_PLUS_ARGS.replace('$', dot!()));
                                 } else {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_I32_MAIN);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_I32_MAIN.replace('$', dot!()));
                                 }
                             } else if returns_void_result {
                                 if has_stdargs {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_VOID_MAIN_PLUS_STD_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_VOID_MAIN_PLUS_STD_ARGS.replace('$', dot!()));
                                 } else if has_args {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_VOID_MAIN_PLUS_ARGS);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_VOID_MAIN_PLUS_ARGS.replace('$', dot!()));
                                 } else {
-                                    self.fndefs.last_mut().unwrap().push(RESULT_VOID_MAIN);
+                                    self.fndefs.last_mut().unwrap().push(&RESULT_VOID_MAIN.replace('$', dot!()));
                                 }
                             }
                         }

@@ -1,4 +1,4 @@
-use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, File}, io::{Error, Read, Write}, path::{Path, PathBuf}, process::Command, rc::Rc};
+use std::{ffi::{OsStr, OsString}, fs::{self, create_dir, read_dir, remove_file, File}, io::{Error, Read, Write}, path::{Path, PathBuf}, process::Command, rc::Rc, sync::OnceLock};
 
 use ast::{ImportType, Statement};
 use clap::ValueEnum;
@@ -28,6 +28,8 @@ mod macro_expander;
 mod constant_folder;
 
 pub const MAX_PACKAGE_SIZE_BYTES: u128 = 2u128.pow(32); // Max uncompressed package size is 4 GB (basic protection against malicious ZIPs)
+
+pub static NAMESPACE_SEP: OnceLock<String> = OnceLock::new();
 
 pub fn parse(source: &String, filename: Rc<str>) -> Option<Vec<Statement>> {
     let mut scanner = Scanner::new(source, filename);
