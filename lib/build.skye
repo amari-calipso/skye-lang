@@ -121,7 +121,6 @@ namespace build {
             }
 
             if result.Ok != 0 {
-                @print("%", conf.externLibs.Some.asString());
                 @println("build::compileSkyeToC: non-zero exit code: %", result.Ok);
                 return (!void)::Error;
             }
@@ -296,7 +295,6 @@ namespace build {
         }
 
         if result.Ok != 0 {
-            @print("%", externBuf.asString());
             @println("build::compileSkye: non-zero exit code: %", result.Ok);
             return (!void)::Error;
         }
