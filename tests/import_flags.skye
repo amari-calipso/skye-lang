@@ -1,0 +1,10 @@
+include <<"core/internals.h">> use FLAG1, FLAG2;
+
+fn main() {
+    let typeTest = Array::new[*const char]();
+    const hi = "hi";
+    let anotherTypeTest = Array::from({hi.ptr});
+
+    typeTest.push(hi.ptr);
+    anotherTypeTest.push(hi.ptr);
+}

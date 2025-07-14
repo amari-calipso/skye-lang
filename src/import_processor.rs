@@ -40,7 +40,7 @@ impl ImportProcessor {
 
     async fn process_one(&mut self, stmt: &mut Statement, ctx: &mut reblessive::Stk) {
         match stmt {
-            Statement::Import { path: path_tok, type_, is_include } => {
+            Statement::Import { path: path_tok, type_, is_include, flags } => {
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
                 let skye_import = {
@@ -72,6 +72,17 @@ impl ImportProcessor {
                     }
                 };
 
+                if skye_import {
+                    if flags.len() != 0 {
+                        token_error!(self, flags.first().unwrap(), "Cannot use flags in a Skye import");
+                        token_note!(path_tok, "Flags are meant to set functionality for C header-only libraries");
+                    }
+                } else {
+                    if self.curr_name != "" {
+                        token_warning!(path_tok, "C imports cannot be namespaced. This import will be performed in the global namespace");
+                    }
+                }
+
                 if !*is_include {
                     if let Some(info) = self.imports.get_mut(&path) {
                         token_warning!(path_tok, "A duplicate import was performed");
@@ -82,28 +93,30 @@ impl ImportProcessor {
                         
                         token_note!(path_tok, "If this is intentional, use an 'include' statement instead of 'import', otherwise remove this import");
 
-                        if info.contains_key(&self.curr_name) {
+                        if !skye_import || info.contains_key(&self.curr_name) {
                             // if this import was previously performed in the same namespace as the current one, no need to perform the import again
                             *stmt = Statement::Empty;
                             return;
                         } 
 
-                        if info.len() == 1 {
-                            token_note!(
-                                path_tok, 
-                                concat!(
-                                    "The previous import was performed behind another namespace. ",
-                                    "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
-                                )
-                            );
-                        } else {
-                            token_note!(
-                                path_tok, 
-                                concat!(
-                                    "The previous imports were performed behind other namespaces. ",
-                                    "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
-                                )
-                            );
+                        if skye_import {
+                            if info.len() == 1 {
+                                token_note!(
+                                    path_tok, 
+                                    concat!(
+                                        "The previous import was performed behind another namespace. ",
+                                        "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
+                                    )
+                                );
+                            } else {
+                                token_note!(
+                                    path_tok, 
+                                    concat!(
+                                        "The previous imports were performed behind other namespaces. ",
+                                        "It is recommended to specify full paths or add \"use\" statements instead of importing the file again"
+                                    )
+                                );
+                            }
                         }
                         
                         info.insert(self.curr_name.clone(), path_tok.clone());

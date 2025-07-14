@@ -509,7 +509,10 @@ import "namespacedFile.skye" namespace myNamespace;
 import <"math.h">; 
 
 // using double angular brackets forces the import to address to the installed packages
-import <<"core/internals.h">>; 
+import <<"core/internals.h">>;
+
+// you can set flags for C header-only libraries
+import "stb_ds.h" use STB_DS_IMPLEMENTATION;
 ```
 
 Note that you can't `import` a file multiple times. If you want to do that, use the `include` keyword instead.

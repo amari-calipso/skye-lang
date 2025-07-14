@@ -691,11 +691,7 @@ impl SkyeType {
             SkyeType::Macro(..) => (),
 
             SkyeType::Unknown(name) => {
-                if let SkyeType::Pointer(inner_type, _, is_reference) = other {
-                    data.borrow_mut().insert(Rc::clone(name), SkyeType::Pointer(inner_type.clone(), false, *is_reference));
-                } else {
-                    data.borrow_mut().insert(Rc::clone(name), other.clone());
-                }
+                data.borrow_mut().insert(Rc::clone(name), other.clone());
             }
 
             SkyeType::Pointer(self_inner_type, ..) |

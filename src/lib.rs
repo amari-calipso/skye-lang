@@ -123,7 +123,8 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
                 0, 1, 0
             ), 
             type_: ImportType::Default,
-            is_include: false
+            is_include: false,
+            flags: Vec::new()
         }
     );
 
@@ -142,7 +143,8 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
                 0, 1, 0
             ), 
             type_: ImportType::Default,
-            is_include: false
+            is_include: false,
+            flags: Vec::new()
         }
     );
 
@@ -157,7 +159,8 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
                 0, 1, 0
             ), 
             type_: ImportType::Default,
-            is_include: false
+            is_include: false,
+            flags: Vec::new()
         }
     );
 
@@ -173,7 +176,8 @@ fn prepare_base_imports(statements: &mut Vec<Statement>, source: &String, filena
                     0, 1, 0
                 ), 
                 type_: ImportType::Default,
-                is_include: false
+                is_include: false,
+                flags: Vec::new()
             }
         );
     }

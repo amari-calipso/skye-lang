@@ -438,7 +438,7 @@ pub enum Statement {
     Namespace { name: Token, body: Vec<Statement> },
     Defer { kw: Token, statement: Box<Statement> },
     Switch { kw: Token, expr: Expression, cases: Vec<SwitchCase> },
-    Import { path: Token, type_: ImportType, is_include: bool },
+    Import { path: Token, type_: ImportType, is_include: bool, flags: Vec<Token> },
     Macro { name: Token, params: MacroParams, body: MacroBody },
     VarDecl {
         name: Token,

@@ -1,15 +1,24 @@
 // manually specify link names to make std/os namespace-compatible
-#bind #linkName(system) fn system(const command: *const char) i32;
 #bind #linkName(remove) fn remove(const file: *const char) i32;
 #bind #linkName(getenv) fn getenv(const name: *const char) *const char;
-#bind #linkName(popen)  fn popen(command: *const char, type: *const char) *CFile;
-#bind #linkName(pclose) fn pclose(stream: *CFile) i32;
+
+#bind #linkName(fork)    fn fork() i32;
+#bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
+#bind #linkName(execvp)  fn execvp(pathname: *const char, argv: **const char) i32;
+#bind #linkName(pipe)    fn pipe(pipefd: *i32) i32;
+#bind #linkName(fdopen)  fn fdopen(fd: i32, mode: *const char) *CFile;
+#bind #linkName(close)   fn close(fd: i32) i32;
+#bind #linkName(waitpid) fn waitpid(pid: i32, status: *i32, options: i32) i32;
 
 import <"dirent.h">;
 
 namespace std {
     namespace os {
         macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
+
+        macro STDIN_FD 0;
+        macro STDOUT_FD 1;
+        macro STDERR_FD 2;
 
         #typedef struct CDir: DIR;
         struct CDirent: dirent {
@@ -21,40 +30,197 @@ namespace std {
         #bind #linkName(readdir)  fn readdir(const dir: *const CDir) &CDirent;
         #bind #linkName(closedir) fn closedir(const dir: *const CDir) i32;
 
+        struct ChildProcess {
+            pid:    i32,
+            stdin:  ?core::io::File,
+            stdout: ?core::io::File,
+            stderr: ?core::io::File,
+        }
+
+        impl ChildProcess {
+            fn new() Self {
+                return Self.{
+                    pid: 0,
+                    stdin:  (?core::io::File)::None,
+                    stdout: (?core::io::File)::None,
+                    stderr: (?core::io::File)::None,
+                };
+            }
+
+            fn close(self) {
+                // TODO: shouldn't fail, but i think it's better if we bubble the errors up anyway to be safe
+                if self.stdin.isSome() {
+                    let _ = self.stdin.unwrap().close();
+                }
+
+                if self.stdout.isSome() {
+                    let _ = self.stdout.unwrap().close();
+                }
+
+                if self.stderr.isSome() {
+                    let _ = self.stderr.unwrap().close();
+                }
+            }
+
+            // TODO: add an actual error to this
+            fn wait(const self) i32!void {
+                let status: i32;
+                const pid = waitpid(self.pid, &status, 0);
+                if (pid < 0) return (i32!void)::Error;
+                return (i32!void)::Ok(status);
+            }
+        }
+
         struct Command {
-            command: String
+            command:   String,
+            arguments: Array[String],
+            stdin:     bool,
+            stdout:    bool,
+            stderr:    bool,
         }
 
         impl Command {
             fn new(command: String) Self {
-                return Self.{ command };
+                return Self.{ 
+                    command,
+                    arguments: Array::new[String](),
+                    stdin:     false,
+                    stdout:    false,
+                    stderr:    false,
+                };
             }
 
-            fn __nullTerminated(const self) core::Array[char] {
-                let buf = core::Array::new[char]();
-                @format(&buf, "%\0", self.command);
-                return buf;
+            fn free(self) {
+                self.arguments.free();
             }
 
-            fn status(const self) i32 {
-                let buf = self.__nullTerminated();
-                defer buf.free();                
-                return system(buf.array.ptr);
+            fn arg(self, const argument: String) &Self {
+                self.arguments.push(argument);
+                return self;
+            }
+
+            fn args(self, const arguments: &const Slice[String]) &Self {
+                self.arguments.append(arguments);
+                return self;
+            }
+
+            fn pipeStdin(self) &Self {
+                self.stdin = true;
+                return self;
+            }
+
+            fn pipeStdout(self) &Self {
+                self.stdout = true;
+                return self;
+            }
+
+            fn pipeStderr(self) &Self {
+                self.stderr = true;
+                return self;
+            }
+
+            use std::os::ChildProcess;
+
+            // TODO: add an actual error to this
+            fn spawn(const self) ChildProcess!void {
+                use ChildProcess!void as SpawnResult;
+                use core::io::File;
+
+                @assert(self.command.length != 0);
+
+                let process = ChildProcess::new();
+
+                let stdinPipe:  [i32; 2];
+                let stdoutPipe: [i32; 2];
+                let stderrPipe: [i32; 2];
+
+                if self.stdin {
+                    if (pipe(@cast(*i32, stdinPipe))) return SpawnResult::Error;
+                    const file = fdopen(stdinPipe[1], `w\0`);
+                    if (file == @nullptr) return SpawnResult::Error;
+                    process.stdin = (?File)::Some(File::fromCFile(file));
+                }
+
+                if self.stdout {
+                    if (pipe(@cast(*i32, stdoutPipe))) return SpawnResult::Error;
+                    const file = fdopen(stdoutPipe[0], `r\0`);
+                    if (file == @nullptr) return SpawnResult::Error;
+                    process.stdout = (?File)::Some(File::fromCFile(file));
+                }
+
+                if self.stderr {
+                    if (pipe(@cast(*i32, stderrPipe))) return SpawnResult::Error;
+                    const file = fdopen(stderrPipe[0], `r\0`);
+                    if (file == @nullptr) return SpawnResult::Error;
+                    process.stderr = (?File)::Some(File::fromCFile(file));
+                }
+
+                // TODO: this is ugly. would be nicer with an arena
+                let command = Array::withCapacity[char](self.command.length + 1);
+                @format(&command, "%\0", self.command);
+
+                let buf = Array::withCapacity[Array[char]](self.arguments.length);
+                let ptrs = Array::withCapacity[*const char](self.arguments.length + 1);
+                ptrs.push(command.array.ptr); // first arg is program executable
+
+                for arg; self.arguments {
+                    let argBuf = Array::withCapacity[char](arg.length + 1);
+                    @format(&argBuf, "%\0", arg);
+                    ptrs.push(argBuf.array.ptr);
+                }
+
+                ptrs.push(@cast(*const char, @nullptr));
+
+                const pid = fork();
+                if (pid < 0) return SpawnResult::Error;
+
+                if pid == 0 {
+                    close(stdinPipe[1]);
+                    close(stdoutPipe[0]);
+                    close(stderrPipe[0]);
+
+                    dup2( stdinPipe[0], std::os::@STDIN_FD);
+                    dup2(stdoutPipe[1], std::os::@STDOUT_FD);
+                    dup2(stderrPipe[1], std::os::@STDERR_FD);
+
+                    const result = execvp(command.array.ptr, ptrs.array.ptr);
+                    if (result < 0) return SpawnResult::Error;
+                    @unreachable;
+                }
+
+                close(stdinPipe[0]);
+                close(stdoutPipe[1]);
+                close(stderrPipe[1]);
+
+                for let i = 0usz; i < buf.length; i++ {
+                    buf[i].free();
+                }
+                
+                command.free();
+                buf.free();
+                ptrs.free();
+
+                process.pid = pid;
+                return SpawnResult::Ok(process);
+            }
+
+            fn status(self) i32!void {
+                let process = try self.spawn();
+                process.close();
+                return process.wait();
             }
 
             fn output[A = core::mem::HeapAllocator](const self, const output: &core::Array[char, A]) i32!void {
-                let buf = self.__nullTerminated();
-                defer buf.free();
+                let process = try self.spawn();
 
-                let stream = popen(buf.array.ptr, `r\0`);
-                if (stream == @nullptr) return (i32!void)::Error;
-
-                let file = core::io::File::fromCFile(stream);
-                file.readAll(output);
-
-                const exitCode = pclose(stream);
-                if (exitCode < 0) return (i32!void)::Error;
-                return (i32!void)::Ok(exitCode);
+                if process.stdout.isSome() {
+                    process.stdout.unwrap().readAll(output);
+                } else if process.stderr.isSome() {
+                    process.stderr.unwrap().readAll(output);
+                }
+                
+                process.close();
+                return process.wait();
             }
         }
 

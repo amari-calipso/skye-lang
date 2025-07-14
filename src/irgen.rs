@@ -300,7 +300,7 @@ impl IrGen {
         res.into()
     }
 
-    fn make_temporary_var(&mut self, value: SkyeValue, pos: AstPos) -> Rc<str> {
+    fn make_temporary_var(&mut self, value: SkyeValue, pos: AstPos) -> Rc<str> {       
         // https://github.com/amari-calipso/skye-lang/issues/61
         if matches!(value.ir_value.data, IrValueData::Variable { .. }) && matches!(value.from, ValueFrom::Default) {
             if let IrValueData::Variable { name } = value.ir_value.data {
@@ -3492,15 +3492,17 @@ impl IrGen {
                                 // needed so short circuiting can work
                                 let result_tmp = self.get_temporary_var();
 
-                                self.add_statement(IrStatement {
-                                    pos: expr.get_pos(),
-                                    data: IrStatementData::VarDecl { 
-                                        name: Rc::clone(&result_tmp), 
-                                        type_: result_type.clone(), 
-                                        initializer: None,
-                                        qualifiers: Vec::new()
-                                    } 
-                                });
+                                if !matches!(result_type, SkyeType::Void) {
+                                    self.add_statement(IrStatement {
+                                        pos: expr.get_pos(),
+                                        data: IrStatementData::VarDecl { 
+                                            name: Rc::clone(&result_tmp), 
+                                            type_: result_type.clone(), 
+                                            initializer: None,
+                                            qualifiers: Vec::new()
+                                        } 
+                                    });
+                                }
 
                                 let left_tmp = self.make_temporary_var(new_left, expr.get_pos());
 
@@ -3622,15 +3624,17 @@ impl IrGen {
                                 // needed so short circuiting can work
                                 let result_tmp = self.get_temporary_var();
 
-                                self.add_statement(IrStatement {
-                                    pos: expr.get_pos(),
-                                    data: IrStatementData::VarDecl { 
-                                        name: Rc::clone(&result_tmp), 
-                                        type_: result_type.clone(), 
-                                        initializer: None,
-                                        qualifiers: Vec::new()
-                                    } 
-                                });
+                                if !matches!(result_type, SkyeType::Void) {
+                                    self.add_statement(IrStatement {
+                                        pos: expr.get_pos(),
+                                        data: IrStatementData::VarDecl { 
+                                            name: Rc::clone(&result_tmp), 
+                                            type_: result_type.clone(), 
+                                            initializer: None,
+                                            qualifiers: Vec::new()
+                                        } 
+                                    });
+                                }
 
                                 let left_tmp = self.make_temporary_var(new_left, expr.get_pos());
 
@@ -4098,16 +4102,18 @@ impl IrGen {
                 }
 
                 let tmp_var = self.get_temporary_var();
-
-                self.add_statement(IrStatement {
-                    pos: expr.get_pos(),
-                    data: IrStatementData::VarDecl { 
-                        name: Rc::clone(&tmp_var), 
-                        type_: then_branch.ir_value.type_.clone(), 
-                        initializer: None,
-                        qualifiers: Vec::new()
-                    } 
-                });
+                
+                if !matches!(then_branch.ir_value.type_, SkyeType::Void) {
+                    self.add_statement(IrStatement {
+                        pos: expr.get_pos(),
+                        data: IrStatementData::VarDecl { 
+                            name: Rc::clone(&tmp_var), 
+                            type_: then_branch.ir_value.type_.clone(), 
+                            initializer: None,
+                            qualifiers: Vec::new()
+                        } 
+                    });
+                }
 
                 self.add_statement(IrStatement {
                     pos: expr.get_pos(),
@@ -5315,10 +5321,12 @@ impl IrGen {
                     );
                 }
 
-                if let SkyeType::Enum(.., base_name) = &value.ir_value.type_ {
-                    if base_name.as_ref() == format!("core{}Result", dot!()).as_str() {
-                        ast_warning!(expr, "Error is being ignored implictly");
-                        ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
+                if !matches!(expr.get_inner(), Expression::Assign { .. }) {
+                    if let SkyeType::Enum(.., base_name) = &value.ir_value.type_ {
+                        if base_name.as_ref() == format!("core{}Result", dot!()).as_str() {
+                            ast_warning!(expr, "Error is being ignored implictly");
+                            ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
+                        }
                     }
                 }
 
@@ -7230,7 +7238,7 @@ impl IrGen {
                     token_error!(self, kw, "Can only use continue inside loops");
                 }
             }
-            Statement::Import { path: path_tok, type_: import_type, .. } => {
+            Statement::Import { path: path_tok, type_: import_type, flags, .. } => {
                 // handle C imports
                 let mut path: PathBuf = path_tok.lexeme.split('/').collect();
 
@@ -7249,7 +7257,8 @@ impl IrGen {
                     pos: stmt.get_pos(),
                     data: IrStatementData::Include { 
                         path: escape_string(&path.to_str().expect("Error converting to string")).into(), 
-                        is_ang: *import_type == ImportType::Ang 
+                        is_ang: *import_type == ImportType::Ang,
+                        flags: flags.iter().map(|x| Rc::clone(&x.lexeme)).collect()
                     }
                 };
 

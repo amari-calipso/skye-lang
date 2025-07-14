@@ -5,6 +5,8 @@ import <"math.h">;
 import <"errno.h">;
 
 if !core::compiler::os::@WINDOWS {
+    import <"unistd.h">;
+    import <"sys/wait.h">;
     extern m;
 }
 
@@ -127,7 +129,7 @@ namespace core {
                 let buf = @cast(*char, core::mem::heapAllocator.allocRaw(filename.length + 1));
                 defer core::mem::heapAllocator.freeRaw(@cast(voidptr, buf));
 
-                core::mem::typedBlockCopy(filename.ptr, buf, filename.length);
+                core::mem::typedBlockCopy(@constCast(filename.ptr), buf, filename.length);
                 buf[filename.length] = '\0';
 
                 const cFile = fopen(buf, mode.toCMode());
