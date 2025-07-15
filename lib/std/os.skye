@@ -36,33 +36,33 @@ namespace std {
 
         struct ChildProcess {
             pid:    i32,
-            stdin:  ?core::io::File,
-            stdout: ?core::io::File,
-            stderr: ?core::io::File,
+            stdIn:  ?core::io::File,
+            stdOut: ?core::io::File,
+            stdErr: ?core::io::File,
         }
 
         impl ChildProcess {
             fn new() Self {
                 return Self.{
                     pid: 0,
-                    stdin:  (?core::io::File)::None,
-                    stdout: (?core::io::File)::None,
-                    stderr: (?core::io::File)::None,
+                    stdIn:  (?core::io::File)::None,
+                    stdOut: (?core::io::File)::None,
+                    stdErr: (?core::io::File)::None,
                 };
             }
 
             fn close(self) {
                 // TODO: shouldn't fail, but i think it's better if we bubble the errors up anyway to be safe
-                if self.stdin.isSome() {
-                    let _ = self.stdin.unwrap().close();
+                if self.stdIn.isSome() {
+                    let _ = self.stdIn.unwrap().close();
                 }
 
-                if self.stdout.isSome() {
-                    let _ = self.stdout.unwrap().close();
+                if self.stdOut.isSome() {
+                    let _ = self.stdOut.unwrap().close();
                 }
 
-                if self.stderr.isSome() {
-                    let _ = self.stderr.unwrap().close();
+                if self.stdErr.isSome() {
+                    let _ = self.stdErr.unwrap().close();
                 }
             }
 
@@ -78,9 +78,9 @@ namespace std {
         struct Command {
             command:   String,
             arguments: Array[String],
-            stdin:     bool,
-            stdout:    bool,
-            stderr:    bool,
+            stdIn:     bool,
+            stdOut:    bool,
+            stdErr:    bool,
         }
 
         impl Command {
@@ -88,9 +88,9 @@ namespace std {
                 return Self.{ 
                     command,
                     arguments: Array::new[String](),
-                    stdin:     false,
-                    stdout:    false,
-                    stderr:    false,
+                    stdIn:     false,
+                    stdOut:    false,
+                    stdErr:    false,
                 };
             }
 
@@ -109,17 +109,17 @@ namespace std {
             }
 
             fn pipeStdin(self) &Self {
-                self.stdin = true;
+                self.stdIn = true;
                 return self;
             }
 
             fn pipeStdout(self) &Self {
-                self.stdout = true;
+                self.stdOut = true;
                 return self;
             }
 
             fn pipeStderr(self) &Self {
-                self.stderr = true;
+                self.stdErr = true;
                 return self;
             }
 
@@ -138,25 +138,25 @@ namespace std {
                 let stdoutPipe: [i32; 2];
                 let stderrPipe: [i32; 2];
 
-                if self.stdin {
+                if self.stdIn {
                     if (pipe(@cast(*i32, stdinPipe))) return SpawnResult::Error;
                     const file = fdopen(stdinPipe[1], `w\0`);
                     if (file == @nullptr) return SpawnResult::Error;
-                    process.stdin = (?File)::Some(File::fromCFile(file));
+                    process.stdIn = (?File)::Some(File::fromCFile(file));
                 }
 
-                if self.stdout {
+                if self.stdOut {
                     if (pipe(@cast(*i32, stdoutPipe))) return SpawnResult::Error;
                     const file = fdopen(stdoutPipe[0], `r\0`);
                     if (file == @nullptr) return SpawnResult::Error;
-                    process.stdout = (?File)::Some(File::fromCFile(file));
+                    process.stdOut = (?File)::Some(File::fromCFile(file));
                 }
 
-                if self.stderr {
+                if self.stdErr {
                     if (pipe(@cast(*i32, stderrPipe))) return SpawnResult::Error;
                     const file = fdopen(stderrPipe[0], `r\0`);
                     if (file == @nullptr) return SpawnResult::Error;
-                    process.stderr = (?File)::Some(File::fromCFile(file));
+                    process.stdErr = (?File)::Some(File::fromCFile(file));
                 }
 
                 // TODO: this is ugly. would be nicer with an arena
@@ -217,10 +217,10 @@ namespace std {
             fn output[A = core::mem::HeapAllocator](const self, const output: &core::Array[char, A]) i32!void {
                 let process = try self.spawn();
 
-                if process.stdout.isSome() {
-                    process.stdout.unwrap().readAll(output);
-                } else if process.stderr.isSome() {
-                    process.stderr.unwrap().readAll(output);
+                if process.stdOut.isSome() {
+                    process.stdOut.unwrap().readAll(output);
+                } else if process.stdErr.isSome() {
+                    process.stdErr.unwrap().readAll(output);
                 }
                 
                 process.close();
