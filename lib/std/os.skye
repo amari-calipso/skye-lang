@@ -14,21 +14,25 @@ import <"dirent.h">;
 
 namespace std {
     namespace os {
-        macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
-
-        macro STDIN_FD 0;
-        macro STDOUT_FD 1;
-        macro STDERR_FD 2;
-
         #typedef struct CDir: DIR;
         struct CDirent: dirent {
             // other fields currently aren't relevant for us
             const d_name: *const char
         }
+    }
+}
 
-        #bind #linkName(opendir)  fn opendir(const path: *const char) &CDir;
-        #bind #linkName(readdir)  fn readdir(const dir: *const CDir) &CDirent;
-        #bind #linkName(closedir) fn closedir(const dir: *const CDir) i32;
+#bind #linkName(opendir)  fn opendir(const path: *const char) &std::os::CDir;
+#bind #linkName(readdir)  fn readdir(const dir: *const CDir) &CDirent;
+#bind #linkName(closedir) fn closedir(const dir: *const CDir) i32;
+
+namespace std {
+    namespace os {
+        macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
+
+        macro STDIN_FD 0;
+        macro STDOUT_FD 1;
+        macro STDERR_FD 2;
 
         struct ChildProcess {
             pid:    i32,

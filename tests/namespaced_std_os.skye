@@ -1,5 +1,0 @@
-import "std/os" namespace foo;
-
-fn main() {
-    
-}
