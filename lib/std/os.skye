@@ -171,6 +171,7 @@ namespace std {
                     let argBuf = Array::withCapacity[char](arg.length + 1);
                     @format(&argBuf, "%\0", arg);
                     ptrs.push(argBuf.array.ptr);
+                    buf.push(argBuf);
                 }
 
                 ptrs.push(@cast(*const char, @nullptr));
