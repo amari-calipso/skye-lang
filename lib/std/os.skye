@@ -23,8 +23,8 @@ namespace std {
 }
 
 #bind #linkName(opendir)  fn opendir(const path: *const char) &std::os::CDir;
-#bind #linkName(readdir)  fn readdir(const dir: *const CDir) &CDirent;
-#bind #linkName(closedir) fn closedir(const dir: *const CDir) i32;
+#bind #linkName(readdir)  fn readdir(const dir: *const std::os::CDir) &std::os::CDirent;
+#bind #linkName(closedir) fn closedir(const dir: *const std::os::CDir) i32;
 
 namespace std {
     namespace os {
