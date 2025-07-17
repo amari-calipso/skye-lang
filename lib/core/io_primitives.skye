@@ -203,7 +203,7 @@ namespace core {
 
                     const cFile = fdopen(fd, mode.toCMode());
                     if cFile == @nullptr {
-                        close(fd);
+                        ::close(fd);
                         const ptr = strerror(errno);
                         return (Self!String)::Error(String.{ ptr, length: core::utils::cStringLength(ptr) });
                     }
