@@ -27,13 +27,13 @@ Check out more examples [here](https://github.com/amari-calipso/skye-lang-exampl
 # Projects
 Creating a new project in Skye is simple!
 
-If your project is a simple one that doesn't need any specific compiler flag, you can just create a new file containing your Skye code, and then compile it or run it directly by using `skye compile <file>` or `skye run <file>` respectively.
+If your project is a simple one that doesn't need any special configuration, you can just create a new file containing your Skye code, and then compile it or run it directly by using `skye compile <file>` or `skye run <file>` respectively.
 
-If you're working with a bigger project (this is the most common case, since you'll be working with C compilers) you can create a Skye project by using the `skye new` command. At this stage, you should choose if you want to create a standalone program (`skye new standalone <project_name>`), or a Skye package (`skye new package <project_name>`).
+If you're working with a bigger project that you can create a Skye project by using the `skye new` command. At this stage, you should choose if you want to create a standalone program (`skye new standalone <project_name>`), or a Skye package (`skye new package <project_name>`).
 
 Standalone projects can be built by using the `skye build` command, and Skye packages can be exported using `skye export`. The result of `skye export` is a `zip` file that can be installed using `skye install <package_file>`. To remove an installed package, use `skye remove <package_name>`.
 
-The Skye package manager has no notion of versions, so feature-wise versioning should be performed by the developer through different package names (for example "myPackage-v1_0", "myPackage-v1_1"...). This way, projects that require a specific version of a package as a dependency don't collide with a different version of the same package while the required one is being installed.
+The Skye package manager has no notion of versions, so feature-wise versioning should be performed by the developer through different package names (for example "myPackage-v1_0", "myPackage-v1_1"...). This way, projects that require a specific version of a package as a dependency don't collide with a different version of the same package while the required one is being installed. (Note: the package system is still in the works, expect this part of the language to change a lot)
 
 # Comments
 ```
