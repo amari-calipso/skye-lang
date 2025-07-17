@@ -2,7 +2,9 @@
 #bind #linkName(remove) fn remove(const file: *const char) i32;
 #bind #linkName(getenv) fn getenv(const name: *const char) *const char;
 
-if !core::compiler::os::@WINDOWS {
+if core::compiler::os::@WINDOWS {
+    import <"processthreadsapi.h">;
+} else {
     #bind #linkName(fork)    fn fork() i32;
     #bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
     #bind #linkName(execvp)  fn execvp(pathname: *const char, argv: **const char) i32;
