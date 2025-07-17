@@ -6,10 +6,9 @@ Skye's programming language (Skye, for short) is the retrofuturistic systems pro
 Note: the language is currently in a very early stage! the standard library is very limited in functionality, and the language is widely untested.
 
 # Who is Skye?
-Skye loves programming, and they enjoy writing their programs from scratch, just like you would do using C. However, they also think that while the C programming language is great, it's missing some tools and constructs to make their life easier. They do like manual memory allocation, but sometimes it's too much to handle. They like having control over all the code they write, but they would also like to have some more abstraction, as long as it doesn't hurt the runtime performance! If this sounds like you, then you have your answer: you are Skye.
+Skye thinks that there is some sort of magic in just writing your program in C. To them, it feels kind of old-timey, but also kind of cozy, for a reason they can't fully explain. They like the control it gives them, and they like that the only magic that's in their program isn't the one that makes you wonder what is happening, but it's the one that makes you feel that way. Sometimes though, C can be annoying, and for a good reason: C is old, and it didn't have in mind many of the tools we have today when it was created and designed. So what if you could get that feeling of writing C code, but avoiding those annoying spots? what if you could get some more tools, without any magic, performance loss, and understanding what your program does down to the bits and bytes? what if you don't actually *need* to replace C, but make it go hand in hand with modern tools? If this sounds good to you you, maybe you and me are a bit like Skye.
 
-# Tell me more!
-Skye tries to give you a similar experience to writing code in C, but with some handy tools like type inference, generics, sum types, a more modern syntax, and a type system that's way more robust than C's, as well as a more coherent ecosystem. In some way, Skye is covering the use case for C++, but it isn't as annoying to use. At the same time, Skye is also a fairly simple language in its structure, that means that every component of it is hackable and accessible: Skye loves open source!
+Skye tries to give you a similar experience to writing code in C, but with some handy tools like type inference, generics, sum types, AST-based macros, a more modern syntax, and a type system that's way more robust than C's, as well as a more coherent ecosystem. At the same time, Skye is also a fairly simple language in its structure, that means that every component of it is hackable and accessible: Skye loves open source!
 
 # Installation
 To install Skye, you can either jump to the releases and download the latest version for your platform, or download the source and compile it using `cargo build --release`.
@@ -774,8 +773,6 @@ Here is a list of operators that can be overloaded
 | <code>{} &#124;= {}</code> | `__setor__` | 1 | any |
 | `{} &= {}` | `__setand__` | 1 | any |
 | `{}[{}]` | `__subscript__` or `__constsubscript__` [*5](#additional-information) | any | pointer to any |
-
-Additionally, Skye offers you copy constructors and destructors, mostly used for special types like smart pointers. They are respectively the `__copy__` method and the `__destruct__` method. The Skye compiler will warn you when it inserts calls to those methods inside the code, so that eventual debugging is easier.
 
 ### Additional information
 1) Prefix and suffix increments and decrements are handled by the Skye compiler, and thus prevent undefined behavior for cases where multiple increments are used in the same expression or statement. Every expression is evaluated from left to right, and the outcome is always predictable.

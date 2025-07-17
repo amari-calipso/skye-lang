@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_info, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, dot, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, dot, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -1095,16 +1095,7 @@ impl IrGen {
                         }
                     }
 
-                    let search_tok = Token::dummy(Rc::from("__copy__"));
-                    if let Some(value) = self.get_method(&new_arg, &search_tok, true) {
-                        let v = Vec::new();
-                        let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &arguments[i - arguments_mod], &v, allow_unknown, ctx)).await;
-                        
-                        args.push(copy_constructor.ir_value);
-                        ast_info!(arguments[i - arguments_mod], "Skye inserted a copy constructor call for this expression"); // +I-copies
-                    } else {
-                        args.push(new_arg.ir_value);
-                    }
+                    args.push(new_arg.ir_value);
                 }
 
                 let call_output = self.output_call(*return_type.clone(), callee.ir_value.clone(), args, expr.get_pos());
@@ -1317,24 +1308,7 @@ impl IrGen {
                             ast_note!(expr, "This error is a result of template generation originating from this call");
                         }
 
-                        let search_tok = Token::dummy(Rc::from("__copy__"));
-                        if let Some(value) = self.get_method(&new_call_evaluated, &search_tok, true) {
-                            let loc_callee_expr = {
-                                if i != 0 || arguments_mod != 1 {
-                                    &arguments[i - arguments_mod]
-                                } else {
-                                    callee_expr
-                                }
-                            };
-
-                            let v = Vec::new();
-                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, loc_callee_expr, &v, allow_unknown, ctx)).await;
-                            
-                            args.push(copy_constructor.ir_value);
-                            ast_info!(loc_callee_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
-                        } else {
-                            args.push(new_call_evaluated.ir_value);
-                        }
+                        args.push(new_call_evaluated.ir_value);
                     }
 
                     for expr_generic in generics {
@@ -3097,7 +3071,7 @@ impl IrGen {
 
                                     let previous_definition = self.curr_definition.clone();
                                     self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                    ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
+                                    ctx.run(|ctx| self.handle_all_deferred(ctx)).await;
                                     self.curr_definition = previous_definition;
 
                                     if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
@@ -3179,7 +3153,7 @@ impl IrGen {
 
                                     let previous_definition = self.curr_definition.clone();
                                     self.curr_definition = Some(Rc::new(RefCell::new(scope.clone())));
-                                    ctx.run(|ctx| self.handle_all_deferred(false, expr, "in the propagation branch of this expression", ctx)).await;
+                                    ctx.run(|ctx| self.handle_all_deferred(ctx)).await;
                                     self.curr_definition = previous_definition;
 
                                     if return_type.equals(&inner.ir_value.type_, EqualsLevel::Typewise) {
@@ -3943,25 +3917,13 @@ impl IrGen {
                         let value = ctx.run(|ctx| self.evaluate(&value_expr, allow_unknown, ctx)).await;
 
                         if target_type.equals(&value.ir_value.type_, EqualsLevel::Strict) {
-                            let search_tok = Token::dummy(Rc::from("__copy__"));
-                            let output_value = {
-                                if let Some(value) = self.get_method(&value, &search_tok, true) {
-                                    let v = Vec::new();
-                                    let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &value_expr, &v, allow_unknown, ctx)).await;
-                                    ast_info!(value_expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
-                                    copy_constructor
-                                } else {
-                                    value
-                                }
-                            };
-
                             SkyeValue::new(
                                 IrValue {
-                                    type_: output_value.ir_value.type_.clone(),
+                                    type_: value.ir_value.type_.clone(),
                                     data: IrValueData::Assign { 
                                         op: AssignOp::None,
                                         target: Box::new(target.ir_value), 
-                                        value: Box::new(output_value.ir_value) 
+                                        value: Box::new(value.ir_value) 
                                     }
                                 },
                                 true
@@ -4204,16 +4166,7 @@ impl IrGen {
                                                 );
                                             }
 
-                                            let search_tok = Token::dummy(Rc::from("__copy__"));
-                                            if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
-                                                let v = Vec::new();
-                                                let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &field.expr, &v, allow_unknown, ctx)).await;
-                                                
-                                                fields_output.insert(Rc::clone(&field.name.lexeme), copy_constructor.ir_value);
-                                                ast_info!(field.expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
-                                            } else {
-                                                fields_output.insert(Rc::clone(&field.name.lexeme), field_evaluated.ir_value);
-                                            }
+                                            fields_output.insert(Rc::clone(&field.name.lexeme), field_evaluated.ir_value);
                                         } else {
                                             token_error!(self, field.name, "Unknown struct field");
                                         }
@@ -4252,17 +4205,7 @@ impl IrGen {
                                             );
                                         }
 
-                                        let search_tok = Token::dummy(Rc::from("__copy__"));
-                                        if let Some(value) = self.get_method(&field_evaluated, &search_tok, true) {
-                                            let v = Vec::new();
-                                            let copy_constructor = ctx.run(|ctx| self.call(&value, expr, &fields[0].expr, &v, allow_unknown, ctx)).await;
-                                            
-                                            fields_output.insert(Rc::clone(&fields[0].name.lexeme), copy_constructor.ir_value);
-
-                                            ast_info!(fields[0].expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
-                                        } else {
-                                            fields_output.insert(Rc::clone(&fields[0].name.lexeme), field_evaluated.ir_value);
-                                        }
+                                        fields_output.insert(Rc::clone(&fields[0].name.lexeme), field_evaluated.ir_value);
                                     } else {
                                         token_error!(self, fields[0].name, "Unknown union field");
                                     }
@@ -5176,46 +5119,7 @@ impl IrGen {
         }
     }
 
-    async fn handle_destructors<T: Ast>(&mut self, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) -> Result<Option<SkyeType>, ExecutionInterrupt> {
-        if !global {
-            let vars = self.environment.borrow().iter_local();
-
-            for (name, var) in vars {
-                if matches!(var.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
-                    let search_tok = Token::dummy(Rc::from("__destruct__"));
-                    
-                    let var_value = SkyeValue::new(
-                        IrValue::new(
-                            IrValueData::Variable { name: Rc::clone(&name) },
-                            var.type_.clone()
-                        ), 
-                        var.is_const
-                    );
-
-                    if let Some(value) = self.get_method(&var_value, &search_tok, true) {
-                        let fake_expr = Expression::Variable(search_tok);
-                        let v = Vec::new();
-
-                        let call = ctx.run(|ctx| self.call(&value, &fake_expr, &fake_expr, &v, false, ctx)).await;
-
-                        ast_info!(ast_item, format!("Skye inserted a destructor call for \"{}\" {}", name, msg).as_ref()); // +I-destructors
-
-                        let filtered = call.ir_value.keep_side_effects();
-                        if !filtered.is_empty() {
-                            self.add_statement(IrStatement { 
-                                pos: ast_item.get_pos(), 
-                                data: IrStatementData::Expression { value: filtered }, 
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn handle_all_deferred<T: Ast>(&mut self, global: bool, ast_item: &T, msg: &str, ctx: &mut reblessive::Stk) {
+    async fn handle_all_deferred(&mut self, ctx: &mut reblessive::Stk) {
         let deferred = self.deferred.borrow().clone();
 
         for statements in deferred.iter().rev() {
@@ -5223,24 +5127,21 @@ impl IrGen {
                 let _ = ctx.run(|ctx| self.execute(&statement, ctx)).await;
             }
         }
-
-        let _ = ctx.run(|ctx| self.handle_destructors(global, ast_item, msg, ctx)).await;
     }
 
-    async fn execute_block(&mut self, statements: &Vec<Statement>, environment: Rc<RefCell<Environment>>, global: bool, ctx: &mut reblessive::Stk) {
+    async fn execute_block(&mut self, statements: &Vec<Statement>, environment: Rc<RefCell<Environment>>, ctx: &mut reblessive::Stk) {
         let previous = Rc::clone(&self.environment);
         self.environment = environment;
 
         self.deferred.borrow_mut().push(Vec::new());
 
-        let mut destructors_called = false;
+        let mut deferred_handled = false;
         for (i, statement) in statements.iter().enumerate() {
             if let Err(interrupt) = ctx.run(|ctx| self.execute(statement, ctx)).await {
                 match interrupt {
                     ExecutionInterrupt::Interrupt(output) => {
                         ctx.run(|ctx| self.handle_deferred(ctx)).await;
-                        let _ = ctx.run(|ctx| self.handle_destructors(global, statement, "before this statement", ctx)).await;
-                        destructors_called = true;
+                        deferred_handled = true;
 
                         self.add_statement(output);
 
@@ -5250,8 +5151,8 @@ impl IrGen {
                         }
                     }
                     ExecutionInterrupt::Return(output) => {
-                        ctx.run(|ctx| self.handle_all_deferred(global, statement, "before this statement", ctx)).await;
-                        destructors_called = true;
+                        ctx.run(|ctx| self.handle_all_deferred(ctx)).await;
+                        deferred_handled = true;
 
                         self.add_statement(output);
 
@@ -5264,9 +5165,8 @@ impl IrGen {
             }
         }
 
-        if statements.len() != 0 && !destructors_called {
+        if statements.len() != 0 && !deferred_handled {
             ctx.run(|ctx| self.handle_deferred(ctx)).await;
-            let _ = ctx.run(|ctx| self.handle_destructors(global, statements.last().unwrap(), "after this statement", ctx)).await;
         }
 
         self.deferred.borrow_mut().pop();
@@ -5281,7 +5181,7 @@ impl IrGen {
                 Rc::new(RefCell::new(Environment::with_enclosing(
                     Rc::clone(&self.environment)
                 ))),
-                false, ctx
+                ctx
             )).await;
         } else {
             let _ = ctx.run(|ctx| self.execute(stmt, ctx)).await;
@@ -5513,7 +5413,7 @@ impl IrGen {
                     }
                 };
                 
-                ctx.run(|ctx| self.execute_block(statements, env, toplevel, ctx)).await;
+                ctx.run(|ctx| self.execute_block(statements, env, ctx)).await;
                 
                 if !toplevel {
                     self.curr_definition = previous_definition;
@@ -5781,7 +5681,7 @@ impl IrGen {
                 ctx.run(|ctx| self.execute_block(
                     body.as_ref().unwrap(),
                     Rc::new(RefCell::new(fn_environment.unwrap())),
-                    false, ctx
+                    ctx
                 )).await;
 
                 self.curr_definition = previous_definition;
@@ -6159,23 +6059,10 @@ impl IrGen {
                             data: IrStatementData::Return { value: None } 
                         }));
                     } else {
-                        let final_value = {
-                            let search_tok = Token::dummy(Rc::from("__copy__"));
-                            if let Some(method_value) = self.get_method(&value, &search_tok, true) {
-                                let v = Vec::new();
-                                let copy_constructor = ctx.run(|ctx| self.call(&method_value, expr, &expr, &v, false, ctx)).await;
-
-                                ast_info!(expr, "Skye inserted a copy constructor call for this expression"); // +I-copies
-                                copy_constructor
-                            } else {
-                                value
-                            }
-                        };
-
-                        let type_ = final_value.ir_value.type_.clone();
+                        let type_ = value.ir_value.type_.clone();
 
                         // return value is saved in a temporary variable so deferred statements get executed after evaluation
-                        let tmp_var_name = self.make_temporary_var(final_value, kw.get_pos());
+                        let tmp_var_name = self.make_temporary_var(value, kw.get_pos());
 
                         return Err(ExecutionInterrupt::Return(IrStatement { 
                             pos: kw.get_pos(),
@@ -6390,7 +6277,7 @@ impl IrGen {
                                 self.curr_name = base_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
-                                    statements, Rc::clone(&self.globals), true, ctx
+                                    statements, Rc::clone(&self.globals), ctx
                                 )).await;
 
                                 self.curr_name = previous_name;
@@ -6427,7 +6314,7 @@ impl IrGen {
                                 self.curr_name = template_name.to_string();
 
                                 ctx.run(|ctx| self.execute_block(
-                                    statements, Rc::clone(&self.globals), true, ctx
+                                    statements, Rc::clone(&self.globals), ctx
                                 )).await;
 
                                 self.curr_name = previous_name;
@@ -6492,7 +6379,7 @@ impl IrGen {
                 self.curr_name = full_name.to_string();
 
                 ctx.run(|ctx| self.execute_block(
-                    body, Rc::clone(&self.globals), true, ctx
+                    body, Rc::clone(&self.globals), ctx
                 )).await;
 
                 self.curr_name = previous_name;
@@ -7136,7 +7023,7 @@ impl IrGen {
                                         Rc::clone(&self.environment)
                                     )
                                 )),
-                                false, ctx
+                                ctx
                             )).await;
                             continue;
                         }
@@ -7153,7 +7040,7 @@ impl IrGen {
                                     Rc::clone(&self.environment)
                                 )
                             )),
-                            false, ctx
+                            ctx
                         )).await;
 
                         branches_output.push(IrSwitchBranch { cases: cases_output, code: scope });
@@ -7180,7 +7067,7 @@ impl IrGen {
                                     Rc::clone(&self.environment)
                                 )
                             )),
-                            false, ctx
+                            ctx
                         )).await;
                     }
                 }

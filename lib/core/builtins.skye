@@ -98,54 +98,6 @@ namespace core {
 use core::Ptr;
 
 namespace core {
-    struct Rc[T, U = core::mem::HeapAllocator] {
-        const data: &T,
-        count: u64,
-        const allocator: &U
-    }
-
-    impl[T, U = core::mem::HeapAllocator] core::Rc[T, U] {
-        fn new(data: T) Self[T, U] {
-            return Self.{
-                data: core::mem::heapAllocator.put(data).ptr,
-                count: 1,
-                allocator: &core::mem::heapAllocator
-            };
-        }
-
-        fn init(data: T, allocator: &U) Self[T, U] {
-            return Self.{
-                data: allocator.put(data).ptr,
-                count: 2,
-                allocator
-            };
-        }
-
-        fn empty() Self[T, U] {
-            return Self.{
-                data: core::mem::heapAllocator.alloc[T](1).ptr,
-                count: 1,
-                allocator: &core::mem::heapAllocator
-            };
-        }
-
-        fn from(data: Ptr[T, U]) Self[T, U] {
-            return Self.{
-                data, count: 1
-            };
-        }
-
-        fn __copy__(self) Self[T, U] {
-            return Self.{ data: self.data, count: self.count + 1 };
-        }
-
-        fn __destruct__(self) {
-            if --self.count == 0 {
-                self.allocator.freeRaw(@cast(voidptr, self.data));
-            }
-        }
-    }
-
     struct ArrayIterator[T] {
         const array: &const core::Array[T],
         idx: usz
@@ -614,7 +566,6 @@ namespace core {
     }
 }
 
-use core::Rc;
 use core::Array;
 
 impl core::io::File {

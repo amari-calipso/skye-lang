@@ -77,10 +77,6 @@ pub fn note_color(msg: &str) -> ColoredString {
     msg.bright_blue()
 }
 
-pub fn info_color(msg: &str) -> ColoredString {
-    msg.bright_green()
-}
-
 pub fn report(source: &Rc<str>, msg: &str, type_: &str, filename: &Rc<str>, pos: usize, len: usize, line: usize, color: fn(&str) -> ColoredString) {
     let lines = source.lines().collect::<Vec<&str>>();
     let iter_range = {
@@ -120,10 +116,6 @@ pub fn warning(source: &Rc<str>, msg: &str, filename: &Rc<str>, pos: usize, len:
 
 pub fn note(source: &Rc<str>, msg: &str, filename: &Rc<str>, pos: usize, len: usize, line: usize) {
     report(source, msg, "note", filename, pos, len, line, note_color);
-}
-
-pub fn info(source: &Rc<str>, msg: &str, filename: &Rc<str>, pos: usize, len: usize, line: usize) {
-    report(source, msg, "info", filename, pos, len, line, info_color);
 }
 
 #[macro_export]
@@ -187,16 +179,6 @@ macro_rules! ast_note {
         {
             let pos: crate::ast::AstPos = $e.get_pos();
             crate::astpos_note!(pos, $msg);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! ast_info {
-    ($e: expr, $msg: expr) => {
-        {
-            let pos: crate::ast::AstPos = $e.get_pos();
-            crate::utils::info(&pos.source, $msg, &pos.filename, pos.start, pos.end - pos.start, pos.line);
         }
     };
 }

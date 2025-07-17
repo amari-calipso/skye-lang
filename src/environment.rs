@@ -40,6 +40,7 @@ impl Environment {
         Environment { types: HashMap::new(), enclosing: Some(enclosing), is_function: true }
     }
 
+    #[allow(dead_code)] // useful for debugging
     pub fn iter_local(&self) -> HashMap<Rc<str>, SkyeVariable> {
         self.types.clone()
     }
