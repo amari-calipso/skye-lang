@@ -142,7 +142,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    return (i32!void)::Ok(status);
+                    return (i32!void)::Ok(@cast(i32, status));
                 }
             }
         } else {
@@ -332,7 +332,7 @@ namespace std {
                     if (hChildStdErrW != @nullptr) CloseHandle(hChildStdErrW);
 
                     process.pid = @cast(i32, processInfo.dwProcessId);
-                    process.handle = processInfo.hProcess;
+                    process.__handle = processInfo.hProcess;
                     return SpawnResult::Ok(process);
                 } else {
                     let stdinPipe:  [i32; 2];
