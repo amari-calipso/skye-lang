@@ -372,7 +372,7 @@ impl CodeGen {
             def_buf.inc_indent();
 
             def_buf.push_indent();
-            def_buf.push(&type_.stringify());
+            def_buf.push(&stringify_type(type_));
             def_buf.push(" __SKYE_ARRAY[");
             def_buf.push(&size.to_string());
             def_buf.push("];\n");
@@ -420,6 +420,10 @@ impl CodeGen {
 
             let return_stringified = stringify_type(&return_type);
             self.generate_fn_signature(&value.type_, &return_stringified, &params_string);
+        } else if let SkyeType::Array(type_, size) = &value.type_ {
+            let array_specifier: Rc<str> = format!("{}_{}", type_.mangle(), size).into();
+            let type_name: Rc<str> = format!("__SKYE_ARRAY_{}", array_specifier).into();
+            self.prepare_array_struct(array_specifier, &type_name, type_, *size);
         }
 
         match value.data {
@@ -873,31 +877,56 @@ impl CodeGen {
                     }
                 }
             }
-            IrStatementData::Include { path, is_ang } => {
-                let mut buf = String::from("#include ");
+            IrStatementData::Include { path, is_ang, flags } => {
+                let buf = {
+                    if self.in_function {
+                        self.fndefs.last_mut().unwrap()
+                    } else {
+                        &mut self.includes
+                    }
+                };
 
-                if is_ang {
-                    buf.push('<')
-                } else {
-                    buf.push('"');
+                for flag in &flags {
+                    buf.push_indent();
+                    buf.push("#define ");
+                    buf.push(&flag);
+                    buf.push("\n");
                 }
 
-                buf.push_str(&path);
+                buf.push_indent();
+                buf.push("#include ");
 
                 if is_ang {
-                    buf.push('>')
+                    buf.push("<")
                 } else {
-                    buf.push('"');
+                    buf.push("\"");
                 }
 
-                buf.push('\n');
+                buf.push(&path);
 
-                if self.in_function {
-                    self.fndefs.last_mut().unwrap().push_indent();
-                    self.fndefs.last_mut().unwrap().push(&buf);
+                if is_ang {
+                    buf.push(">")
                 } else {
-                    self.includes.push_indent();
-                    self.includes.push(&buf);
+                    buf.push("\"");
+                }
+
+                buf.push("\n");
+
+                for flag in flags {
+                    buf.push_indent();
+                    buf.push("#ifdef ");
+                    buf.push(&flag);
+                    buf.push("\n");
+                    buf.inc_indent();
+
+                    buf.push_indent();
+                    buf.push("#undef ");
+                    buf.push(&flag);
+                    buf.push("\n");
+                    buf.dec_indent();
+
+                    buf.push_indent();
+                    buf.push("#endif\n");
                 }
             }
             IrStatementData::VarDecl { name, type_, initializer, qualifiers } => {

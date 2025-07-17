@@ -191,7 +191,7 @@ namespace core {
 
         fn from(const slice: core::Slice[T]) Self[T, U] {
             const mem = core::mem::heapAllocator.alloc[T](slice.length);
-            core::mem::typedBlockCopy(slice.ptr, mem.ptr, slice.length);
+            core::mem::typedBlockCopy(@constCast(slice.ptr), mem.ptr, slice.length);
 
             return Self.{
                 array: mem,

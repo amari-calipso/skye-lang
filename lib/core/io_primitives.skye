@@ -3,8 +3,13 @@ import <"stdio.h">;
 import <"string.h">;
 import <"math.h">;
 import <"errno.h">;
+import <"fcntl.h">;
 
-if !core::compiler::os::@WINDOWS {
+if core::compiler::os::@WINDOWS {
+    import <"io.h">;
+} else {
+    import <"unistd.h">;
+    import <"sys/wait.h">;
     extern m;
 }
 
@@ -14,7 +19,6 @@ if !core::compiler::os::@WINDOWS {
 #bind fn malloc(size: usz) voidptr;
 #bind fn realloc(ptr: voidptr, size: usz) voidptr;
 #bind fn free(ptr: voidptr);
-#bind fn strlen(const str: *const char) usz;
 #bind fn exit(code: i32);
 
 #typedef struct CFile: FILE;
@@ -23,10 +27,19 @@ if !core::compiler::os::@WINDOWS {
 #bind fn fwrite(ptr: voidptr, size: usz, nmemb: usz, file: *CFile) usz;
 #bind fn fflush(file: *CFile) i32;
 #bind fn fread(buf: voidptr, size: usz, count: usz, file: *CFile) usz;
+#bind fn fdopen(fd: i32, mode: *const char) *CFile;
+#bind fn close(fd: i32) i32;
+
+if core::compiler::os::@WINDOWS {
+    #bind fn _open_osfhandle(osfhandle: usz, flags: i32) i32;
+    #bind fn CloseHandle(hObject: voidptr) bool;
+}
 
 #bind fn strerror(errnum: i32) *const char;
 
-// actually not macros but this "hides" the C handles a little bit
+macro O_RDONLY -> i32;
+macro O_APPEND -> i32;
+
 macro stdout -> *CFile;
 macro stderr -> *CFile;
 macro stdin  -> *CFile;
@@ -37,9 +50,7 @@ let errno: i32;
 
 namespace core {
     namespace utils {
-        fn cStringLength(const str: *const char) usz {
-            return strlen(str);
-        }
+        #bind #linkName(strlen) fn cStringLength(const str: *const char) usz;
     }
 
     namespace ops {
@@ -112,6 +123,14 @@ namespace core {
                     `ab\0`, `rb+\0`, `wb+\0`, `ab+\0`
                 }.ptr[@cast(u8, *self)];
             }
+
+            // TODO: no idea if this is accurate, but winapi documentation isn't clear
+            fn toFlag(const self) i32 {
+                switch *self {
+                    Read | ReadBin -> return @O_RDONLY;
+                    else -> return @O_APPEND;
+                }
+            }
         }
 
         struct File {
@@ -127,7 +146,7 @@ namespace core {
                 let buf = @cast(*char, core::mem::heapAllocator.allocRaw(filename.length + 1));
                 defer core::mem::heapAllocator.freeRaw(@cast(voidptr, buf));
 
-                core::mem::typedBlockCopy(filename.ptr, buf, filename.length);
+                core::mem::typedBlockCopy(@constCast(filename.ptr), buf, filename.length);
                 buf[filename.length] = '\0';
 
                 const cFile = fopen(buf, mode.toCMode());
@@ -170,6 +189,27 @@ namespace core {
             // buf has to point to at least amt * size bytes
             fn readRaw(self, buf: voidptr, size: usz, amt: usz) usz {
                 return fread(buf, size, amt, self.cFile);
+            }
+        }
+
+        if core::compiler::os::@WINDOWS {
+            impl core::io::File {
+                fn fromWindowsHandle(const handle: voidptr, const mode: core::io::FileOpenMode) Self!String {
+                    const fd = _open_osfhandle(@cast(usz, handle), mode.toFlag());
+                    if fd < 0 {
+                        CloseHandle(handle);
+                        return (Self!String)::Error("Could not get file descriptor from Windows handle");
+                    }
+
+                    const cFile = fdopen(fd, mode.toCMode());
+                    if cFile == @nullptr {
+                        ::close(fd);
+                        const ptr = strerror(errno);
+                        return (Self!String)::Error(String.{ ptr, length: core::utils::cStringLength(ptr) });
+                    }
+
+                    return (Self!String)::Ok(Self.{ cFile });
+                }
             }
         }
 

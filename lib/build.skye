@@ -17,11 +17,22 @@ namespace build {
         return (!void)::Ok;
     }
 
-    fn system(const command: String) !void {
-        @println("build::system: \"%\"", command);
-        const exitCode = std::os::Command::new(command).status();
+    fn __printCommand(const cmd: &const std::os::Command) {
+        @print("build::command: \"%\"", cmd.command);
+        for (arg; cmd.arguments) @print(" \"%\"", arg);
+        @print("\n");
+    }
+
+    fn command(const path: String, const args: Slice[String]) !void {
+        let cmd = std::os::Command::new(path);
+        defer cmd.free();
+
+        cmd.args(args);
+        __printCommand(&cmd);
+
+        const exitCode = try cmd.status();
         if exitCode != 0 {
-            @println("build::system: non-zero exit code: %", exitCode);
+            @println("build::command: non-zero exit code: %", exitCode);
             return (!void)::Error;
         }
 
@@ -87,45 +98,56 @@ namespace build {
     }
 
     fn compileSkyeToC(const input: String, const output: String, const conf: SkyeConf) !void {
-        let buf = core::Array::from(core::compiler::@EXECUTABLE);
-        defer buf.free();
+        let cmd = std::os::Command::new(core::compiler::@EXECUTABLE);
+        defer cmd.free();
+
+        let ptrSize = @empty(Array[char]);
 
         if conf.platform.isSome() {
-            @format(
-                &buf, " --target-os % --ptr-size %", 
-                conf.platform.Some.targetOS, conf.platform.Some.ptrSize
-            );
+            ptrSize = Array::withCapacity[char](3); // 8 bit number needs 3 digits at most
+            core::fmt::intToBuf(&ptrSize, conf.platform.Some.ptrSize);
+
+            cmd.args({
+                "--target-os", conf.platform.Some.targetOS.toString(),
+                "--ptr-size", ptrSize.asString()
+            });
         }
 
         if conf.namespaceSep.isSome() {
-            @format(&buf, " --namespace-sep %", conf.namespaceSep.Some);
+            cmd.args({"--namespace-sep", conf.namespaceSep.Some});
         }
 
-        @format(&buf, " compile % --emit-c -o %", input, output);
+        cmd.args({"compile", input, "--emit-c", "-o", output});
 
         switch conf.checks {
             core::compiler::Checks::Debug {}
-            core::compiler::Checks::Release       -> @format(&buf, " -c release");
-            core::compiler::Checks::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
+            core::compiler::Checks::Release       -> cmd.args({"-c", "release"});
+            core::compiler::Checks::ReleaseUnsafe -> cmd.args({"-c", "release-unsafe"});
             else -> @unreachable;
         }
 
+        let result: i32!void;
+
         if conf.externLibs.isSome() {
-            buf += " --list-extern";
-            @println("build::compileSkyeToC: \"%\"", buf);
-
-            const result = std::os::Command::new(buf.asString()).output(conf.externLibs.Some);
-            if result.isError() {
-                @println("build::compileSkyeToC: failed to execute command");
-                return (!void)::Error;
-            }
-
-            if result.Ok != 0 {
-                @println("build::compileSkyeToC: non-zero exit code: %", result.Ok);
-                return (!void)::Error;
-            }
+            cmd.arg("--list-extern");
+            __printCommand(&cmd);
+            result = cmd.pipeStderr().output(conf.externLibs.Some);
         } else {
-            try system(buf.asString());
+            __printCommand(&cmd);
+            result = cmd.status();
+        }
+
+        // capacity is 0 only if array stays @empty
+        if (ptrSize.capacity != 0) ptrSize.free();
+
+        if result.isError() {
+            @println("build::command: failed to execute command");
+            return (!void)::Error;
+        }
+
+        if result.Ok != 0 {
+            @println("build::command: non-zero exit code: %", result.Ok);
+            return (!void)::Error;
         }
 
         return (!void)::Ok;
@@ -143,7 +165,7 @@ namespace build {
             __cc = (?String)::Some(cc.Some);
             return CCResult::Ok(__cc.Some);
         } else if core::compiler::@TARGET_OS.isUnixLike() {
-            if system("cc --version").isOk() {
+            if command("cc", {"--version"}).isOk() {
                 __cc = (?String)::Some("cc");
                 return CCResult::Ok(__cc.Some);
             }
@@ -161,6 +183,17 @@ namespace build {
         O1 = 1, 
         O2 = 2, 
         O3 = 3
+    }
+
+    impl OptLevel {
+        fn toString(const self) String {
+            switch *self {
+                Self::O0 -> return "-O0";
+                Self::O1 -> return "-O1";
+                Self::O2 -> return "-O2";
+                Self::O3 -> return "-O3";
+            }
+        }
     }
 
     struct CConf {
@@ -181,12 +214,19 @@ namespace build {
         }
     }
 
-    fn pushAllExtern(const buf: &core::Array[char], const externLibs: String) {
+    fn pushAllExtern(const cmd: &std::os::Command, const externLibs: String, const buf: &core::Array[char]) {
+        // this ensures we have enough space for worst case scenario 
+        // (that way we don't reallocate and lose pointer location)
+        buf.resize(externLibs.length * 3); 
+
         let a = 0usz;
         let b = 0usz;
+        let offset = 0usz;
         while b < externLibs.length {
             if externLibs[b] == ',' {
-                @format(buf, "-l% ", externLibs.slice(a, b));
+                @format(buf, "-l%", externLibs.slice(a, b));
+                cmd.arg(buf.slice(offset, buf.length));
+                offset = buf.length;
                 a = ++b;
             } else {
                 b++;
@@ -194,27 +234,38 @@ namespace build {
         }
 
         if a < externLibs.length {
-            @format(buf, "-l% ", externLibs.slice(a, b));
+            @format(buf, "-l%", externLibs.slice(a, b));
+            cmd.arg(buf.slice(offset, buf.length));
         }
     }
 
     fn compileC(const input: String, const output: String, conf: CConf) !void {
-        let buf = core::Array::new[char]();
-        defer buf.free();
-
         if conf.cc.isNone() {
             conf.cc = (?String)::Some(try cc());
         }
 
-        @format(&buf, "% -w % ", conf.cc.Some, input);
+        let cmd = std::os::Command::new(conf.cc.Some);
+        defer cmd.free();
+
+        cmd.args({"-w", input});
 
         if conf.optLevel.isSome() {
-            @format(&buf, "-O% ", @cast(u8, conf.optLevel.Some));
+            cmd.arg(conf.optLevel.Some.toString());
         }
 
-        if (conf.externLibs.isSome()) pushAllExtern(&buf, conf.externLibs.Some);
-        @format(&buf, "-o %", output);
-        try system(buf.asString());
+        let buf = @empty(Array[char]);
+
+        if (conf.externLibs.isSome()) {
+            buf = Array::new[char]();
+            pushAllExtern(&cmd, conf.externLibs.Some, &buf);
+        }
+
+        cmd.args({"-o", output});
+        __printCommand(&cmd);
+        const result = cmd.status();
+        if (buf.capacity != 0) buf.free(); // capacity is 0 only if array stays @empty
+        try result;
+        return (!void)::Ok;
     }
 
     struct Conf {
@@ -260,42 +311,48 @@ namespace build {
     }
 
     fn compileSkye(const input: String, const output: String, const conf: Conf) !void {
-        let buf = core::Array::from(core::compiler::@EXECUTABLE);
-        defer buf.free();
+        let cmd = std::os::Command::new(core::compiler::@EXECUTABLE);
+        defer cmd.free();
+
+        let ptrSize = @empty(Array[char]);
 
         if conf.platform.isSome() {
-            @format(
-                &buf, " --target-os % --ptr-size %", 
-                conf.platform.Some.targetOS, conf.platform.Some.ptrSize
-            );
+            ptrSize = Array::withCapacity[char](3); // 8 bit number needs 3 digits at most
+            core::fmt::intToBuf(&ptrSize, conf.platform.Some.ptrSize);
+
+            cmd.args({
+                "--target-os", conf.platform.Some.targetOS.toString(),
+                "--ptr-size", ptrSize.asString()
+            });
         }
 
         if conf.namespaceSep.isSome() {
-            @format(&buf, " --namespace-sep %", conf.namespaceSep.Some);
+            cmd.args({"--namespace-sep", conf.namespaceSep.Some});
         }
 
-        @format(&buf, " compile % --emit-c --list-extern -o tmp.c", input);
+        cmd.args({"compile", input, "--emit-c", "--list-extern", "-o", "tmp.c"});
 
         switch conf.checks {
             core::compiler::Checks::Debug {}
-            core::compiler::Checks::Release       -> @format(&buf, " -c release");
-            core::compiler::Checks::ReleaseUnsafe -> @format(&buf, " -c release-unsafe");
+            core::compiler::Checks::Release       -> cmd.args({"-c", "release"});
+            core::compiler::Checks::ReleaseUnsafe -> cmd.args({"-c", "release-unsafe"});
             else -> @unreachable;
         }
 
-        @println("build::compileSkye: \"%\"", buf);
+        __printCommand(&cmd);
 
         let externBuf = core::Array::new[char]();
         defer externBuf.free();
 
-        const result = std::os::Command::new(buf.asString()).output(&externBuf);
+        const result = cmd.pipeStderr().output(&externBuf);
+        if (ptrSize.capacity != 0) ptrSize.free(); // capacity is 0 only if array stays @empty
         if result.isError() {
-            @println("build::compileSkye: failed to execute command");
+            @println("build::command: failed to execute command");
             return (!void)::Error;
         }
 
         if result.Ok != 0 {
-            @println("build::compileSkye: non-zero exit code: %", result.Ok);
+            @println("build::command: non-zero exit code: %", result.Ok);
             return (!void)::Error;
         }
 

@@ -92,7 +92,7 @@ impl MacroExpander {
                         let macos   = matches!(config.target_os, TargetOS::MacOS)   as u8;
                         let windows = matches!(config.target_os, TargetOS::Windows) as u8;
 
-                        let executable = config.skyec.as_os_str().to_str().unwrap();
+                        let executable = escape_string(config.skyec.as_os_str().to_str().unwrap());
 
                         parse(
                             &format!(

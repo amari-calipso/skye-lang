@@ -1441,9 +1441,20 @@ impl Parser {
             }
         };
 
+        let mut flags = Vec::new();
+        if self.match_(&[TokenType::Use]) {
+            while !self.check(TokenType::Semicolon) {
+                flags.push(self.consume(TokenType::Identifier, "Expecting flag name after use")?.clone());
+
+                if !self.match_(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
         self.consume(TokenType::Semicolon, "Expecting ';' after import statement")?;
 
-        let import = Statement::Import { path, type_: import_type, is_include };
+        let import = Statement::Import { path, type_: import_type, is_include, flags };
         if let Some(namespace) = namespace {
             Some(Statement::Namespace { 
                 name: namespace, 

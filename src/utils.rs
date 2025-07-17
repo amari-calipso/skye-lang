@@ -99,13 +99,13 @@ pub fn report(source: &Rc<str>, msg: &str, type_: &str, filename: &Rc<str>, pos:
 
     let linelen = max((iter_range.end as f64).log10().ceil() as usize, 1);
 
-    eprintln!("{} ({}: line {}, pos {}): {}", color(type_), filename, line + 1, pos, msg);
+    println!("{} ({}: line {}, pos {}): {}", color(type_), filename, line + 1, pos, msg);
 
     for l in iter_range {
-        eprintln!("{:linelen$} | {}", l + 1, lines[l].trim_end());
+        println!("{:linelen$} | {}", l + 1, lines[l].trim_end());
 
         if l == line {
-            eprintln!("{} | {}{}", " ".repeat(linelen), " ".repeat(pos), color("^".repeat(len).as_str()));
+            println!("{} | {}{}", " ".repeat(linelen), " ".repeat(pos), color("^".repeat(len).as_str()));
         }
     }
 }

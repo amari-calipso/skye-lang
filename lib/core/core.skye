@@ -337,7 +337,7 @@ impl[T] core::SliceIterator[T] {
 
 impl[T] core::Option[T] {
     fn expect(const self, msg: String) T {
-        if self.kind == core::Result::Kind::Some {
+        if self.kind == core::Option::Kind::Some {
             switch T {
                 void -> return;
                 else -> return self.Some;

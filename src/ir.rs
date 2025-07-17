@@ -163,7 +163,7 @@ pub enum IrStatementData {
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: OrderedNamedMap<SkyeType> },
     Union { type_: SkyeType },
     Loop { body: Box<IrStatement> },
-    Include { path: Rc<str>, is_ang: bool },
+    Include { path: Rc<str>, is_ang: bool, flags: Vec<Rc<str>> },
     Switch { value: IrValue, branches: Vec<IrSwitchBranch> }
 }
 

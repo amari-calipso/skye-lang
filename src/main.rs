@@ -198,10 +198,10 @@ fn main() -> Result<(), Error> {
 
             if list_extern {
                 for (i, lib) in extern_libs.iter().enumerate() {
-                    print!("{}", lib);
+                    eprint!("{}", lib);
 
                     if i != extern_libs.len() - 1 {
-                        print!(",");
+                        eprint!(",");
                     }
                 }
             }
