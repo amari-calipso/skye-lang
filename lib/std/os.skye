@@ -2,13 +2,13 @@
 #bind #linkName(remove) fn remove(const file: *const char) i32;
 #bind #linkName(getenv) fn getenv(const name: *const char) *const char;
 
-#bind #linkName(fork)    fn fork() i32;
-#bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
-#bind #linkName(execvp)  fn execvp(pathname: *const char, argv: **const char) i32;
-#bind #linkName(pipe)    fn pipe(pipefd: *i32) i32;
-#bind #linkName(fdopen)  fn fdopen(fd: i32, mode: *const char) *CFile;
-#bind #linkName(close)   fn close(fd: i32) i32;
-#bind #linkName(waitpid) fn waitpid(pid: i32, status: *i32, options: i32) i32;
+if !core::compiler::os::@WINDOWS {
+    #bind #linkName(fork)    fn fork() i32;
+    #bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
+    #bind #linkName(execvp)  fn execvp(pathname: *const char, argv: **const char) i32;
+    #bind #linkName(pipe)    fn pipe(pipefd: *i32) i32;
+    #bind #linkName(waitpid) fn waitpid(pid: i32, status: *i32, options: i32) i32;
+}
 
 import <"dirent.h">;
 
@@ -30,27 +30,154 @@ namespace std {
     namespace os {
         macro SEPARATOR core::compiler::@TARGET_OS == core::compiler::TargetOS::Windows ? '\\' : '/';
 
-        macro STDIN_FD 0;
-        macro STDOUT_FD 1;
-        macro STDERR_FD 2;
+        if core::compiler::os::@WINDOWS {
+            namespace windows {
+                macro HANDLE_FLAG_INHERIT 0x00000001;
+                macro HANDLE_FLAG_PROTECT_FROM_CLOSE 0x00000002;
 
-        struct ChildProcess {
-            pid:    i32,
-            stdIn:  ?core::io::File,
-            stdOut: ?core::io::File,
-            stdErr: ?core::io::File,
+                macro STD_INPUT_HANDLE  @cast(u32, -10);
+                macro STD_OUTPUT_HANDLE @cast(u32, -11);
+                macro STD_ERROR_HANDLE  @cast(u32, -12);
+
+                macro STARTF_FORCEONFEEDBACK  0x00000040;
+                macro STARTF_FORCEOFFFEEDBACK 0x00000080;
+                macro STARTF_PREVENTPINNING   0x00002000;
+                macro STARTF_RUNFULLSCREEN    0x00000020;
+                macro STARTF_TITLEISAPPID     0x00001000;
+                macro STARTF_TITLEISLINKNAME  0x00000800;
+                macro STARTF_UNTRUSTEDSOURCE  0x00008000;
+                macro STARTF_USECOUNTCHARS    0x00000008;
+                macro STARTF_USEFILLATTRIBUTE 0x00000010;
+                macro STARTF_USEHOTKEY        0x00000200;
+                macro STARTF_USEPOSITION      0x00000004;
+                macro STARTF_USESHOWWINDOW    0x00000002;
+                macro STARTF_USESTDHANDLES    0x00000100;
+
+                macro WAIT_FAILED 0xFFFFFFFF;
+
+                macro INFINITE 0xFFFFFFFF;
+
+                #typedef struct SecurityAttributes: SECURITY_ATTRIBUTES {
+                    nLength: u32,
+                    lpSecurityDescriptor: voidptr,
+                    bInheritHandle: bool
+                }
+
+                #typedef struct StartupInfo: STARTUPINFOA {
+                    cb: u32,
+                    lpReserved: *const char,
+                    lpDesktop: *const char,
+                    lpTitle: *const char,
+                    dwX: u32,
+                    dwY: u32,
+                    dwXSize: u32,
+                    dwYSize: u32,
+                    dwXCountChars: u32,
+                    dwYCountChars: u32,
+                    dwFillAttribute: u32,
+                    dwFlags: u32,
+                    wShowWindow: u16,
+                    cbReserved2: u16,
+                    lpReserved2: *u8,
+                    hStdInput: voidptr,
+                    hStdOutput: voidptr,
+                    hStdError: voidptr,
+                }
+
+                #typedef struct ProcessInformation: PROCESS_INFORMATION {
+                    hProcess: voidptr,
+                    hThread: voidptr,
+                    dwProcessId: u32,
+                    dwThreadId: u32
+                }
+
+                #bind #linkName(CreatePipe) fn createPipe(hReadPipe: *voidptr, hWritePipe: *voidptr, lpPipeAttributes: *SecurityAttributes, nSize: u32) bool;
+                #bind #linkName(SetHandleInformation) fn setHandleInformation(hObject: voidptr, dwMask: u32, dwFlags: u32) bool;
+                #bind #linkName(GetStdHandle) fn getStdHandle(nStdHandle: u32) voidptr;
+                #bind #linkName(WaitForSingleObject) fn waitForSingleObject(hHandle: voidptr, dwMilliseconds: u32) u32;
+                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *u32) bool;
+                #bind #linkName(CreateProcess) fn createProcess(
+                    lpApplicationName: *const char, 
+                    lpCommandLine: *const char,
+                    lpProcessAttributes: *SecurityAttributes,
+                    lpThreadAttributes: *SecurityAttributes,
+                    bInheritHandle: bool,
+                    dwCreationFlags: u32,
+                    lpEnvironment: voidptr,
+                    lpCurrentDirectory: *const char,
+                    lpStartupInfo: *StartupInfo,
+                    lpProcessInformation: *ProcessInformation
+                ) bool;
+            }
+
+            struct ChildProcess {
+                pid:    i32,
+                stdIn:  ?core::io::File,
+                stdOut: ?core::io::File,
+                stdErr: ?core::io::File,
+                __handle: voidptr,
+            }
+
+            impl ChildProcess {
+                fn new() Self {
+                    return Self.{
+                        pid: 0,
+                        stdIn:  (?core::io::File)::None,
+                        stdOut: (?core::io::File)::None,
+                        stdErr: (?core::io::File)::None,
+                        __handle: @cast(voidptr, @nullptr),
+                    };
+                }
+
+                // TODO: add an actual error to this
+                fn wait(const self) i32!void {
+                    use std::os::windows;
+                    
+                    if windows::waitForSingleObject(self.__handle, windows::@INFINITE) == windows::@WAIT_FAILED {
+                        return (i32!void)::Error;
+                    }
+
+                    let status: u32;
+                    if !windows::getExitCodeProcess(self.__handle, &status) {
+                        return (i32!void)::Error;
+                    }
+
+                    return (i32!void)::Ok(status);
+                }
+            }
+        } else {
+            macro STDIN_FD 0;
+            macro STDOUT_FD 1;
+            macro STDERR_FD 2;
+
+            struct ChildProcess {
+                pid:    i32,
+                stdIn:  ?core::io::File,
+                stdOut: ?core::io::File,
+                stdErr: ?core::io::File,
+            }
+
+            impl ChildProcess {
+                fn new() Self {
+                    return Self.{
+                        pid: 0,
+                        stdIn:  (?core::io::File)::None,
+                        stdOut: (?core::io::File)::None,
+                        stdErr: (?core::io::File)::None,
+                    };
+                }
+
+                // TODO: add an actual error to this
+                fn wait(const self) i32!void {
+                    let status: i32;
+                    const pid = waitpid(self.pid, &status, 0);
+                    if (pid < 0) return (i32!void)::Error;
+                    return (i32!void)::Ok(status);
+                }
+            }
         }
 
         impl ChildProcess {
-            fn new() Self {
-                return Self.{
-                    pid: 0,
-                    stdIn:  (?core::io::File)::None,
-                    stdOut: (?core::io::File)::None,
-                    stdErr: (?core::io::File)::None,
-                };
-            }
-
             fn close(self) {
                 // TODO: shouldn't fail, but i think it's better if we bubble the errors up anyway to be safe
                 if self.stdIn.isSome() {
@@ -64,14 +191,6 @@ namespace std {
                 if self.stdErr.isSome() {
                     let _ = self.stdErr.unwrap().close();
                 }
-            }
-
-            // TODO: add an actual error to this
-            fn wait(const self) i32!void {
-                let status: i32;
-                const pid = waitpid(self.pid, &status, 0);
-                if (pid < 0) return (i32!void)::Error;
-                return (i32!void)::Ok(status);
             }
         }
 
@@ -134,79 +253,162 @@ namespace std {
 
                 let process = ChildProcess::new();
 
-                let stdinPipe:  [i32; 2];
-                let stdoutPipe: [i32; 2];
-                let stderrPipe: [i32; 2];
+                if core::compiler::os::@WINDOWS {
+                    use std::os::windows;
 
-                if self.stdIn {
-                    if (pipe(@cast(*i32, stdinPipe))) return SpawnResult::Error;
-                    const file = fdopen(stdinPipe[1], `w\0`);
-                    if (file == @nullptr) return SpawnResult::Error;
-                    process.stdIn = (?File)::Some(File::fromCFile(file));
+                    let securityAttributes = windows::SecurityAttributes.{
+                        nLength: @cast(u32, @sizeOf(windows::SecurityAttributes)),
+                        bInheritHandle: true,
+                        lpSecurityDescriptor: @cast(voidptr, @nullptr)
+                    };
+
+                    let hChildStdInR  = @cast(voidptr, @nullptr);
+                    let hChildStdInW  = @cast(voidptr, @nullptr);
+                    let hChildStdOutR = @cast(voidptr, @nullptr);
+                    let hChildStdOutW = @cast(voidptr, @nullptr);
+                    let hChildStdErrR = @cast(voidptr, @nullptr);
+                    let hChildStdErrW = @cast(voidptr, @nullptr);
+
+                    if self.stdIn {
+                        if (!windows::createPipe(&hChildStdInR, &hChildStdInW, &securityAttributes, 0)) return SpawnResult::Error;
+                        if (!windows::setHandleInformation(hChildStdInW, windows::@HANDLE_FLAG_INHERIT, 0)) return SpawnResult::Error;
+                        process.stdIn = (?File)::Some(
+                            File::fromWindowsHandle(hChildStdInW, core::io::FileOpenMode::Write)
+                                .expect("TODO: properly handle error")
+                        );
+                    }
+
+                    if self.stdOut {
+                        if (!windows::createPipe(&hChildStdOutR, &hChildStdOutW, &securityAttributes, 0)) return SpawnResult::Error;
+                        if (!windows::setHandleInformation(hChildStdOutR, windows::@HANDLE_FLAG_INHERIT, 0)) return SpawnResult::Error;
+                        process.stdOut = (?File)::Some(
+                            File::fromWindowsHandle(hChildStdOutR, core::io::FileOpenMode::Read)
+                                .expect("TODO: properly handle error")
+                        );
+                    }
+
+                    if self.stdErr {
+                        if (!windows::createPipe(&hChildStdErrR, &hChildStdErrW, &securityAttributes, 0)) return SpawnResult::Error;
+                        if (!windows::setHandleInformation(hChildStdErrR, windows::@HANDLE_FLAG_INHERIT, 0)) return SpawnResult::Error;
+                        process.stdErr = (?File)::Some(
+                            File::fromWindowsHandle(hChildStdErrR, core::io::FileOpenMode::Read)
+                                .expect("TODO: properly handle error")
+                        );
+                    }
+
+                    let command = Array::withCapacity[char](self.command.length + 1);
+                    defer command.free();
+                    @format(&command, "%", self.command);
+                    for (arg; self.arguments) @format(&command, " \"%\"", arg);
+                    command.push('\0');
+
+                    let startupInfo = @empty(windows::StartupInfo);
+                    startupInfo.cb = @cast(u32, @sizeOf(windows::StartupInfo));
+                    startupInfo.hStdInput  =  hChildStdInR != @nullptr ?  hChildStdInR : windows::getStdHandle(windows::@STD_INPUT_HANDLE);
+                    startupInfo.hStdOutput = hChildStdOutW != @nullptr ? hChildStdOutW : windows::getStdHandle(windows::@STD_OUTPUT_HANDLE);
+                    startupInfo.hStdError  = hChildStdErrW != @nullptr ? hChildStdErrW : windows::getStdHandle(windows::@STD_ERROR_HANDLE);
+                    startupInfo.dwFlags |= windows::@STARTF_USESTDHANDLES;
+
+                    let processInfo: windows::ProcessInformation;
+
+                    if !windows::createProcess(
+                        @cast(*const char, @nullptr),
+                        command.array.ptr,
+                        @cast(*windows::SecurityAttributes, @nullptr),
+                        @cast(*windows::SecurityAttributes, @nullptr),
+                        true,
+                        0,
+                        @cast(voidptr, @nullptr),
+                        @cast(*const char, @nullptr),
+                        &startupInfo,
+                        &processInfo
+                    ) {
+                        return SpawnResult::Error;
+                    }
+
+                    CloseHandle(processInfo.hThread);
+                    if (hChildStdInR  != @nullptr) CloseHandle(hChildStdInR);
+                    if (hChildStdOutW != @nullptr) CloseHandle(hChildStdOutW);
+                    if (hChildStdErrW != @nullptr) CloseHandle(hChildStdErrW);
+
+                    process.pid = @cast(i32, processInfo.dwProcessId);
+                    process.handle = processInfo.hProcess;
+                    return SpawnResult::Ok(process);
+                } else {
+                    let stdinPipe:  [i32; 2];
+                    let stdoutPipe: [i32; 2];
+                    let stderrPipe: [i32; 2];
+
+                    if self.stdIn {
+                        if (pipe(@cast(*i32, stdinPipe))) return SpawnResult::Error;
+                        const file = fdopen(stdinPipe[1], `w\0`);
+                        if (file == @nullptr) return SpawnResult::Error;
+                        process.stdIn = (?File)::Some(File::fromCFile(file));
+                    }
+
+                    if self.stdOut {
+                        if (pipe(@cast(*i32, stdoutPipe))) return SpawnResult::Error;
+                        const file = fdopen(stdoutPipe[0], `r\0`);
+                        if (file == @nullptr) return SpawnResult::Error;
+                        process.stdOut = (?File)::Some(File::fromCFile(file));
+                    }
+
+                    if self.stdErr {
+                        if (pipe(@cast(*i32, stderrPipe))) return SpawnResult::Error;
+                        const file = fdopen(stderrPipe[0], `r\0`);
+                        if (file == @nullptr) return SpawnResult::Error;
+                        process.stdErr = (?File)::Some(File::fromCFile(file));
+                    }
+
+                    // TODO: this is ugly. would be nicer with an arena
+                    let command = Array::withCapacity[char](self.command.length + 1);
+                    @format(&command, "%\0", self.command);
+
+                    let buf = Array::withCapacity[Array[char]](self.arguments.length);
+                    let ptrs = Array::withCapacity[*const char](self.arguments.length + 1);
+                    ptrs.push(command.array.ptr); // first arg is program executable
+
+                    for arg; self.arguments {
+                        let argBuf = Array::withCapacity[char](arg.length + 1);
+                        @format(&argBuf, "%\0", arg);
+                        ptrs.push(argBuf.array.ptr);
+                        buf.push(argBuf);
+                    }
+
+                    ptrs.push(@cast(*const char, @nullptr));
+
+                    const pid = fork();
+                    if (pid < 0) return SpawnResult::Error;
+
+                    if pid == 0 {
+                        close(stdinPipe[1]);
+                        close(stdoutPipe[0]);
+                        close(stderrPipe[0]);
+
+                        dup2( stdinPipe[0], std::os::@STDIN_FD);
+                        dup2(stdoutPipe[1], std::os::@STDOUT_FD);
+                        dup2(stderrPipe[1], std::os::@STDERR_FD);
+
+                        const result = execvp(command.array.ptr, ptrs.array.ptr);
+                        if (result < 0) return SpawnResult::Error;
+                        @unreachable;
+                    }
+
+                    close(stdinPipe[0]);
+                    close(stdoutPipe[1]);
+                    close(stderrPipe[1]);
+
+                    for let i = 0usz; i < buf.length; i++ {
+                        buf[i].free();
+                    }
+                    
+                    command.free();
+                    buf.free();
+                    ptrs.free();
+
+                    process.pid = pid;
+                    return SpawnResult::Ok(process);
                 }
-
-                if self.stdOut {
-                    if (pipe(@cast(*i32, stdoutPipe))) return SpawnResult::Error;
-                    const file = fdopen(stdoutPipe[0], `r\0`);
-                    if (file == @nullptr) return SpawnResult::Error;
-                    process.stdOut = (?File)::Some(File::fromCFile(file));
-                }
-
-                if self.stdErr {
-                    if (pipe(@cast(*i32, stderrPipe))) return SpawnResult::Error;
-                    const file = fdopen(stderrPipe[0], `r\0`);
-                    if (file == @nullptr) return SpawnResult::Error;
-                    process.stdErr = (?File)::Some(File::fromCFile(file));
-                }
-
-                // TODO: this is ugly. would be nicer with an arena
-                let command = Array::withCapacity[char](self.command.length + 1);
-                @format(&command, "%\0", self.command);
-
-                let buf = Array::withCapacity[Array[char]](self.arguments.length);
-                let ptrs = Array::withCapacity[*const char](self.arguments.length + 1);
-                ptrs.push(command.array.ptr); // first arg is program executable
-
-                for arg; self.arguments {
-                    let argBuf = Array::withCapacity[char](arg.length + 1);
-                    @format(&argBuf, "%\0", arg);
-                    ptrs.push(argBuf.array.ptr);
-                    buf.push(argBuf);
-                }
-
-                ptrs.push(@cast(*const char, @nullptr));
-
-                const pid = fork();
-                if (pid < 0) return SpawnResult::Error;
-
-                if pid == 0 {
-                    close(stdinPipe[1]);
-                    close(stdoutPipe[0]);
-                    close(stderrPipe[0]);
-
-                    dup2( stdinPipe[0], std::os::@STDIN_FD);
-                    dup2(stdoutPipe[1], std::os::@STDOUT_FD);
-                    dup2(stderrPipe[1], std::os::@STDERR_FD);
-
-                    const result = execvp(command.array.ptr, ptrs.array.ptr);
-                    if (result < 0) return SpawnResult::Error;
-                    @unreachable;
-                }
-
-                close(stdinPipe[0]);
-                close(stdoutPipe[1]);
-                close(stderrPipe[1]);
-
-                for let i = 0usz; i < buf.length; i++ {
-                    buf[i].free();
-                }
-                
-                command.free();
-                buf.free();
-                ptrs.free();
-
-                process.pid = pid;
-                return SpawnResult::Ok(process);
             }
 
             fn status(self) i32!void {
