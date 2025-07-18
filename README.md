@@ -467,6 +467,9 @@ namespace myNamespace {
         // if you want to refer to something outside, you can use a leading '::' 
         // to specify you are in the global namespace
         ::ambiguous(); // I am the outside one!
+
+        // instead, if you just want to go up one namespace, you can use 'super'
+        super::ambiguous(); // I am the outside one!
     }
 }
 

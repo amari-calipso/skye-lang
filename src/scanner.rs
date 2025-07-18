@@ -39,6 +39,7 @@ impl<'a> Scanner<'a> {
         keywords.insert(    "defer", TokenType::Defer);
         keywords.insert(    "macro", TokenType::Macro);
         keywords.insert(    "union", TokenType::Union);
+        keywords.insert(    "super", TokenType::Super);
         keywords.insert(    "while", TokenType::While);
         keywords.insert(   "extern", TokenType::Extern);
         keywords.insert(   "import", TokenType::Import);

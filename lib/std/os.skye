@@ -133,7 +133,7 @@ namespace std {
 
                 // TODO: add an actual error to this
                 fn wait(const self) i32!void {
-                    use std::os::windows;
+                    use super::windows;
                     
                     if windows::waitForSingleObject(self.__handle, windows::@INFINITE) == windows::@WAIT_FAILED {
                         return (i32!void)::Error;
@@ -244,7 +244,7 @@ namespace std {
                 return self;
             }
 
-            use std::os::ChildProcess;
+            use super::ChildProcess;
 
             // TODO: add an actual error to this
             fn spawn(const self) ChildProcess!void {
@@ -256,7 +256,7 @@ namespace std {
                 let process = ChildProcess::new();
 
                 if core::compiler::os::@WINDOWS {
-                    use std::os::windows;
+                    use super::windows;
 
                     let securityAttributes = windows::SecurityAttributes.{
                         nLength: @cast(u32, @sizeOf(windows::SecurityAttributes)),

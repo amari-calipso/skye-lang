@@ -1,5 +1,17 @@
 import "std";
 
+macro test 2;
+
+namespace foo {
+    fn aaaaa() {
+        @println("%", ::@test);
+    }
+
+    fn bbbb() {
+        @println("%", super::@test);
+    }
+}
+
 fn main() {
     
 }

@@ -1,11 +1,11 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, AstPos, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, dot, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
+use crate::{ast::{Ast, AstPos, Expression, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind}, ast_error, ast_note, ast_warning, astpos_note, dot, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
 
-    curr_name:    String,
+    name_stack:   Vec<String>,
     in_impl:      bool,
     in_interface: bool,
     in_function:  bool,
@@ -124,7 +124,7 @@ impl MacroExpander {
 
         MacroExpander {
             globals, config,
-            curr_name: String::new(),
+            name_stack: Vec::new(),
             in_impl: false,
             in_interface: false,
             in_function: false,
@@ -134,10 +134,10 @@ impl MacroExpander {
     }
 
     fn get_name(&self, name: &Rc<str>) -> Rc<str> {
-        if self.curr_name == "" {
+        if self.name_stack.len() == 0 {
             Rc::clone(&name)
         } else {
-            Rc::from(format!("{}{}{}", self.curr_name, dot!(), name))
+            Rc::from(format!("{}{}{}", self.name_stack.last().unwrap(), dot!(), name))
         }
     }
 
@@ -221,7 +221,7 @@ impl MacroExpander {
             }
             Expression::Variable(name) => {
                 // first, attempt finding the variable within the current namespace (if any)
-                if self.curr_name != "" {
+                if self.name_stack.len() != 0 {
                     let full_name = self.get_name(&name.lexeme);
                     if let Some(result) = self.globals.get(&full_name) {
                         return Some(result.clone());
@@ -297,26 +297,37 @@ impl MacroExpander {
             }
             Expression::StaticGet(object_expr, name, gets_macro) => {
                 let value = 'value_blk: {
-                    if let Some(object_expr) = object_expr {
-                        let object = ctx.run(|ctx| self.expand_expression(object_expr, ctx)).await;
-
-                        if let Some(object) = object {
-                            if let Some(value) = object.static_get(&name) {
-                                break 'value_blk value;
+                    match object_expr {
+                        StaticGetTarget::Global => Rc::clone(&name.lexeme),
+                        StaticGetTarget::Super => {
+                            if let Some(last_name) = self.name_stack.pop() {
+                                let name = self.get_name(&name.lexeme);
+                                self.name_stack.push(last_name);
+                                name
                             } else {
-                                ast_error!(
-                                    self, object_expr,
-                                    format!(
-                                        "Can only statically access namespaces, structs, enums and instances (got {})",
-                                        object.stringify()
-                                    ).as_ref()
-                                );
+                                token_error!(self, name, "Cannot use super in the global namespace");
+                                Rc::clone(&name.lexeme)
                             }
                         }
+                        StaticGetTarget::Expression(expression) => {
+                            let object = ctx.run(|ctx| self.expand_expression(expression, ctx)).await;
 
-                        return None;
-                    } else {
-                        self.get_name(&name.lexeme)
+                            if let Some(object) = object {
+                                if let Some(value) = object.static_get(&name) {
+                                    break 'value_blk value;
+                                } else {
+                                    ast_error!(
+                                        self, expression,
+                                        format!(
+                                            "Can only statically access namespaces, structs, enums and instances (got {})",
+                                            object.stringify()
+                                        ).as_ref()
+                                    );
+                                }
+                            }
+
+                            return None;
+                        }
                     }
                 };
 
@@ -639,15 +650,14 @@ impl MacroExpander {
                     Rc::clone(&full_name),
                     SkyeType::Namespace(Rc::clone(&full_name))
                 );
-
-                let previous_name = self.curr_name.clone();
-                self.curr_name = full_name.to_string();
+                
+                self.name_stack.push(full_name.to_string());
 
                 for statement in body {
                     ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
                 }
 
-                self.curr_name = previous_name;
+                self.name_stack.pop();
             }
             Statement::Macro { name, params, body } => {
                 if matches!(body, MacroBody::Binding(..)) { // ignore macro bindings, they are resolved at irgen time

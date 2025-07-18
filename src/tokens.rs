@@ -37,7 +37,7 @@ pub enum TokenType {
     Let, While, Enum, Import, Include, Defer,
     Impl, Void, Namespace, Switch, Continue,
     Break, Do, Macro, Const, Use, Try, As,
-    Union, Interface, Extern,
+    Union, Interface, Extern, Super,
 
     StarConst, RefConst,
 

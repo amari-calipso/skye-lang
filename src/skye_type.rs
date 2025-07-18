@@ -182,7 +182,7 @@ pub enum SkyeType {
     Struct(Rc<str>, Option<OrderedNamedMap<SkyeField>>, Rc<str>), // name fields base_name
     Namespace(Rc<str>), // name
     Enum(Rc<str>, Option<OrderedNamedMap<SkyeType>>, Rc<str>), // name variants base_name
-    Template(Rc<str>, Statement, Vec<Generic>, Vec<Token>, String, Rc<RefCell<Environment>>), // name definition generics generics_names curr_name environment
+    Template(Rc<str>, Statement, Vec<Generic>, Vec<Token>, Vec<String>, Rc<RefCell<Environment>>), // name definition generics generics_names curr_name_stack environment
     Union(Rc<str>, Option<OrderedNamedMap<SkyeField>>), // name fields
     Macro(Rc<str>, MacroParams, MacroBody), // name params body
 }

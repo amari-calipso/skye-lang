@@ -96,6 +96,13 @@ impl SwitchCase {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum StaticGetTarget {
+    Global,
+    Super,
+    Expression(Box<Expression>)
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Expression {
     Binary { left: Box<Expression>, op: Token, right: Box<Expression> },
     SignedIntLiteral { value: i128, tok: Token, bits: Bits },
@@ -113,7 +120,7 @@ pub enum Expression {
     CompoundLiteral { type_: Box<Expression>, closing_brace: Token, fields: Vec<StructField> },
     Subscript { subscripted: Box<Expression>, paren: Token, args: Vec<Expression> },
     Get(Box<Expression>, Token), // object name
-    StaticGet(Option<Box<Expression>>, Token, bool), // object name gets_macro
+    StaticGet(StaticGetTarget, Token, bool), // object name gets_macro
     Slice { opening_brace: Token, items: Vec<Expression> },
     InMacro { inner: Box<Expression>, source: AstPos },
     MacroExpandedStatements { inner: Vec<Statement>, source: AstPos },
@@ -230,7 +237,7 @@ impl Ast for Expression {
             }
             Expression::StaticGet(object, name, _) => {
                 let object_pos = {
-                    if let Some(object) = object {
+                    if let StaticGetTarget::Expression(object) = object {
                         object.get_pos()
                     } else {
                         name.get_pos()
@@ -324,7 +331,17 @@ impl Ast for Expression {
                 Expression::Get(Box::new(object.replace_variable(name, replace_expr)), get_name.clone())
             }
             Expression::StaticGet(object, get_name, gets_macro) => {
-                Expression::StaticGet(object.as_ref().map(|x| Box::new(x.replace_variable(name, replace_expr))), get_name.clone(), *gets_macro)
+                Expression::StaticGet(
+                    {
+                        if let StaticGetTarget::Expression(expr) = object {
+                            StaticGetTarget::Expression(Box::new(expr.replace_variable(name, replace_expr)))
+                        } else {
+                            object.clone()
+                        }
+                    },
+                    get_name.clone(), 
+                    *gets_macro
+                )
             }
             Expression::Slice { opening_brace, items } => {
                 Expression::Slice { opening_brace: opening_brace.clone(), items: items.iter().map(|x| x.replace_variable(name, replace_expr)).collect() }

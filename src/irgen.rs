@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase}, ast_error, ast_note, ast_warning, astpos_note, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, dot, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase}, ast_error, ast_note, ast_warning, astpos_note, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -70,7 +70,7 @@ pub struct IrGen {
 
     deferred:      Rc<RefCell<Vec<Vec<Statement>>>>,
     curr_function: CurrentFn,
-    curr_name:     String,
+    name_stack:    Vec<String>,
     curr_loop:     Option<CurrLoop>,
 
     pos_stack: Vec<AstPos>,
@@ -110,7 +110,7 @@ impl IrGen {
             definitions,
             extern_libs: HashMap::new(),
             curr_definition: None,
-            curr_name: String::new(),
+            name_stack: Vec::new(),
             environment: Rc::clone(&globals),
             deferred: Rc::new(RefCell::new(Vec::new())),
             curr_function: CurrentFn::None,
@@ -123,10 +123,10 @@ impl IrGen {
     }
 
     fn get_name(&self, name: &Rc<str>) -> Rc<str> {
-        if self.curr_name == "" {
+        if self.name_stack.len() == 0 {
             Rc::clone(&name)
         } else {
-            Rc::from(format!("{}{}{}", self.curr_name, dot!(), name))
+            Rc::from(format!("{}{}{}", self.name_stack.last().unwrap(), dot!(), name))
         }
     }
 
@@ -1104,7 +1104,7 @@ impl IrGen {
                 let call_output = self.output_call(*return_type.clone(), callee.ir_value.clone(), args, expr.get_pos());
                 SkyeValue::new(call_output, false)
             }
-            SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
+            SkyeType::Template(name, definition, generics, generics_names, curr_name_stack, read_env) => {
                 if let Statement::Function { params, return_type: return_type_expr, .. } = definition {
                     if params.len() != arguments_len {
                         ast_error!(
@@ -1148,12 +1148,12 @@ impl IrGen {
                         let previous = Rc::clone(&self.environment);
                         self.environment = Rc::clone(&tmp_env);
 
-                        let previous_name = self.curr_name.clone();
-                        self.curr_name = curr_name.clone();
+                        let previous_name_stack = self.name_stack.clone();
+                        self.name_stack = curr_name_stack.clone();
 
                         let def_evaluated = ctx.run(|ctx| self.evaluate(&params[i].type_, true, ctx)).await;
 
-                        self.curr_name   = previous_name;
+                        self.name_stack  = previous_name_stack;
                         self.environment = previous;
 
                         let def_type = {
@@ -1424,8 +1424,8 @@ impl IrGen {
                     let previous = Rc::clone(&self.environment);
                     self.environment = Rc::clone(&tmp_env);
 
-                    let previous_name = self.curr_name.clone();
-                    self.curr_name = curr_name.clone();
+                    let previous_name_stack = self.name_stack.clone();
+                    self.name_stack = curr_name_stack.clone();
 
                     let return_evaluated = {
                         let ret_type = ctx.run(|ctx| self.evaluate(&return_type_expr, false, ctx)).await.ir_value.type_;
@@ -1474,7 +1474,7 @@ impl IrGen {
                                 }
 
                                 drop(env);
-                                self.curr_name   = previous_name;
+                                self.name_stack  = previous_name_stack;
                                 self.environment = previous;
 
                                 let call_output = self.output_call(
@@ -1516,7 +1516,7 @@ impl IrGen {
                         ast_note!(expr, "This error is a result of template generation originating from this call");
                     }
 
-                    self.curr_name   = previous_name;
+                    self.name_stack  = previous_name_stack;
                     self.environment = previous;
 
                     env = tmp_env.borrow_mut();
@@ -2380,36 +2380,7 @@ impl IrGen {
         }
     }
 
-    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
-        // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
-        if self.environment.borrow().enclosing.is_some() {
-            if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
-                return Some(SkyeValue::with_from(
-                    IrValue::new(
-                        IrValueData::Variable { name: Rc::clone(&name.lexeme) },
-                        var_info.type_
-                    ), 
-                    var_info.is_const,
-                    var_info.from
-                ));
-            }
-        }
-
-        // if it's not found, attempt finding it within the current namespace (if any)
-        if !global_ns && self.curr_name != "" {
-            let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
-            if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
-                return Some(SkyeValue::with_from(
-                    IrValue::new(
-                        IrValueData::Variable { name: namespaced_name.lexeme },
-                        var_info.type_
-                    ), 
-                    var_info.is_const,
-                    var_info.from
-                ));
-            }
-        }
-
+    fn resolve_phase2(&self, name: &Token) -> Option<SkyeValue> {
         // if it's not found in the current namespace either, look for it in all environments, from innermost to topmost
         if let Some(var_info) = self.environment.borrow().get(&name) {
             return Some(SkyeValue::with_from(
@@ -2449,6 +2420,39 @@ impl IrGen {
         }
 
         return None;
+    }
+
+    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
+        // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
+        if !global_ns && self.environment.borrow().enclosing.is_some() {
+            if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
+        // if it's not found, attempt finding it within the current namespace (if any)
+        if !global_ns && self.name_stack.len() != 0 {
+            let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
+            if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: namespaced_name.lexeme },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
+        self.resolve_phase2(name)
     }
 
     async fn evaluate(&mut self, expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
@@ -4254,7 +4258,7 @@ impl IrGen {
                             }
                         }
                     }
-                    SkyeType::Template(name, definition, generics, generics_names, curr_name, read_env) => {
+                    SkyeType::Template(name, definition, generics, generics_names, curr_name_stack, read_env) => {
                         if let Statement::Struct { name: struct_name, fields: defined_fields, .. } = &definition {
                             if fields.len() != defined_fields.len() {
                                 ast_error!(self, expr, format!(
@@ -4289,12 +4293,12 @@ impl IrGen {
                                     let previous = Rc::clone(&self.environment);
                                     self.environment = Rc::clone(&tmp_env);
 
-                                    let previous_name = self.curr_name.clone();
-                                    self.curr_name = curr_name.clone();
+                                    let previous_name_stack = self.name_stack.clone();
+                                    self.name_stack = curr_name_stack.clone();
 
                                     let def_evaluated = ctx.run(|ctx| self.evaluate(&def_field_expr, true, ctx)).await;
 
-                                    self.curr_name   = previous_name;
+                                    self.name_stack  = previous_name_stack;
                                     self.environment = previous;
 
                                     let literal_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, false, ctx)).await;
@@ -4530,8 +4534,8 @@ impl IrGen {
                             let previous = Rc::clone(&self.environment);
                             self.environment = Rc::clone(&tmp_env);
 
-                            let previous_name = self.curr_name.clone();
-                            self.curr_name = curr_name.clone();
+                            let previous_name_stack: Vec<String> = self.name_stack.clone();
+                            self.name_stack = curr_name_stack.clone();
 
                             let type_ = {
                                 match ctx.run(|ctx| self.execute(&definition,  ctx)).await {
@@ -4543,7 +4547,7 @@ impl IrGen {
                                 }
                             };
 
-                            self.curr_name   = previous_name;
+                            self.name_stack  = previous_name_stack;
                             self.environment = previous;
 
                             env = tmp_env.borrow_mut();
@@ -4886,8 +4890,8 @@ impl IrGen {
                         let previous = Rc::clone(&self.environment);
                         self.environment = Rc::clone(&tmp_env);
 
-                        let previous_name = self.curr_name.clone();
-                        self.curr_name = curr_name;
+                        let previous_name_stack = self.name_stack.clone();
+                        self.name_stack = curr_name;
 
                         let type_ = {
                             match ctx.run(|ctx| self.execute(&definition, ctx)).await {
@@ -4899,7 +4903,7 @@ impl IrGen {
                             }
                         };
 
-                        self.curr_name   = previous_name;
+                        self.name_stack  = previous_name_stack;
                         self.environment = previous;
 
                         env = tmp_env.borrow_mut();
@@ -5069,25 +5073,39 @@ impl IrGen {
                 let mut search_tok = name.clone();
 
                 let mut object = None;
-                let global_ns = object_expr.is_none();
-                if let Some(object_expr) = object_expr {
-                    let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
+                let mut global_ns = false;
 
-                    if let Some(full_name) = obj.ir_value.type_.static_get(name) {
-                        search_tok.set_lexeme(&full_name);
-                        object = Some(obj);
-                    } else {
-                        if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
-                            ast_error!(
-                                self, object_expr,
-                                format!(
-                                    "Can only statically access namespaces, structs, enums and instances (got {})",
-                                    obj.ir_value.type_.stringify()
-                                ).as_ref()
-                            );
+                match object_expr {
+                    StaticGetTarget::Global => global_ns = true,
+                    StaticGetTarget::Super => {
+                        if let Some(last_name) = self.name_stack.pop() {
+                            let name = self.get_name(&name.lexeme);
+                            self.name_stack.push(last_name);
+                            search_tok.set_lexeme(&name);
+                        } else {
+                            token_error!(self, name, "Cannot use super in the global namespace");
+                            search_tok.set_lexeme(&name.lexeme);
                         }
-                        
-                        return SkyeValue::get_unknown();
+                    }
+                    StaticGetTarget::Expression(object_expr) => {
+                        let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
+
+                        if let Some(full_name) = obj.ir_value.type_.static_get(name) {
+                            search_tok.set_lexeme(&full_name);
+                            object = Some(obj);
+                        } else {
+                            if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
+                                ast_error!(
+                                    self, object_expr,
+                                    format!(
+                                        "Can only statically access namespaces, structs, enums and instances (got {})",
+                                        obj.ir_value.type_.stringify()
+                                    ).as_ref()
+                                );
+                            }
+
+                            return SkyeValue::get_unknown();
+                        }
                     }
                 }
                 
@@ -6292,14 +6310,13 @@ impl IrGen {
                                 );
                                 drop(env);
 
-                                let previous_name = self.curr_name.clone();
-                                self.curr_name = base_name.to_string();
+                                self.name_stack.push(base_name.to_string());
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), ctx
                                 )).await;
-
-                                self.curr_name = previous_name;
+                                
+                                self.name_stack.pop();
 
                                 env = self.globals.borrow_mut();
                                 env.undef(Rc::from("Self"));
@@ -6328,15 +6345,14 @@ impl IrGen {
                                     )
                                 );
                                 drop(env);
-
-                                let previous_name = self.curr_name.clone();
-                                self.curr_name = template_name.to_string();
+                                
+                                self.name_stack.push(template_name.to_string());
 
                                 ctx.run(|ctx| self.execute_block(
                                     statements, Rc::clone(&self.globals), ctx
                                 )).await;
 
-                                self.curr_name = previous_name;
+                                self.name_stack.pop();
 
                                 env = self.globals.borrow_mut();
                                 env.undef(Rc::from("Self"));
@@ -6394,14 +6410,13 @@ impl IrGen {
 
                 drop(env);
 
-                let previous_name = self.curr_name.clone();
-                self.curr_name = full_name.to_string();
+                self.name_stack.push(full_name.to_string());
 
                 ctx.run(|ctx| self.execute_block(
                     body, Rc::clone(&self.globals), ctx
                 )).await;
 
-                self.curr_name = previous_name;
+                self.name_stack.pop();
             }
             Statement::Use { use_expr, as_name: identifier, typedef, bind } => {
                 let use_value = ctx.run(|ctx| self.evaluate(&use_expr, false, ctx)).await;
@@ -7113,7 +7128,7 @@ impl IrGen {
                         SkyeType::Template(
                             full_name, *definition.clone(),
                             generics.clone(), generics_names.clone(),
-                            self.curr_name.clone(), cloned_globals
+                            self.name_stack.clone(), cloned_globals
                         ),
                         true,
                         Some(Box::new(name.clone()))
@@ -7331,7 +7346,7 @@ impl IrGen {
             Statement::Macro { name, params, body } => {
                 let full_name = {
                     if matches!(body, MacroBody::Binding(_)) {
-                        if self.curr_name != "" {
+                        if self.name_stack.len() != 0 {
                             token_warning!(name, "C macro bindings do not support namespaces. This macro will be saved in the global namespace"); // +Wmacro-namespace
                         }
 
@@ -7661,8 +7676,8 @@ impl IrGen {
                                             cases.push(SwitchCase::new(
                                                 Some(vec![
                                                     Expression::StaticGet(
-                                                        Some(Box::new(Expression::StaticGet(
-                                                            Some(Box::new(Expression::Variable(self_type_tok.clone()))),
+                                                        StaticGetTarget::Expression(Box::new(Expression::StaticGet(
+                                                            StaticGetTarget::Expression(Box::new(Expression::Variable(self_type_tok.clone()))),
                                                             kind_type_tok.clone(),
                                                             false
                                                         ))),

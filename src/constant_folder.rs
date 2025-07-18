@@ -1,4 +1,4 @@
-use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement}, ast_error, ast_note, astpos_note, tokens::TokenType};
+use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement, StaticGetTarget}, ast_error, ast_note, astpos_note, tokens::TokenType};
 
 pub struct ConstantFolder {
     ptr_size: u8,
@@ -93,7 +93,7 @@ impl ConstantFolder {
                 ctx.run(|ctx| self.fold_expression(right, ctx)).await;
             }
             Expression::StaticGet(inner, ..) => {
-                if let Some(inner) = inner {
+                if let StaticGetTarget::Expression(inner) = inner {
                     ctx.run(|ctx| self.fold_expression(inner, ctx)).await;
                 }
             }

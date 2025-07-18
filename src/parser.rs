@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StringKind, StructField, SwitchCase},
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase},
     ast_error, ast_note, token_error, token_note,
     tokens::{Token, TokenType}
 };
@@ -281,10 +281,17 @@ impl Parser {
             return Some(Expression::Variable(self.previous().clone()));
         }
 
+        if self.match_(&[TokenType::Super]) {
+            self.consume(TokenType::ColonColon, "Expecting '::' after 'super'")?;
+            let gets_macro = self.match_(&[TokenType::At]);
+            let name = self.consume(TokenType::Identifier, "Expecting identifier after ::")?.clone();
+            return Some(Expression::StaticGet(StaticGetTarget::Super, name, gets_macro));
+        }
+
         if self.match_(&[TokenType::ColonColon]) {
             let gets_macro = self.match_(&[TokenType::At]);
             let name = self.consume(TokenType::Identifier, "Expecting identifier after ::")?.clone();
-            return Some(Expression::StaticGet(None, name, gets_macro));
+            return Some(Expression::StaticGet(StaticGetTarget::Global, name, gets_macro));
         }
 
         if self.match_(&[TokenType::LeftParen]) {
@@ -349,7 +356,7 @@ impl Parser {
         while self.match_(&[TokenType::ColonColon]) {
             let gets_macro = self.match_(&[TokenType::At]);
             let name = self.consume(TokenType::Identifier, "Expecting property name after '::'")?.clone();
-            expr = Expression::StaticGet(Some(Box::new(expr)), name, gets_macro);
+            expr = Expression::StaticGet(StaticGetTarget::Expression(Box::new(expr)), name, gets_macro);
         }
 
         Some(expr)

@@ -85,7 +85,7 @@ namespace build {
     }
 
     impl SkyeConf {
-        use ::build::Platform;
+        use super::Platform;
 
         fn default() Self {
             return Self.{ 
@@ -203,7 +203,7 @@ namespace build {
     }
     
     impl CConf {
-        use ::build::OptLevel;
+        use super::OptLevel;
 
         fn default() Self {
             return Self.{
@@ -277,10 +277,10 @@ namespace build {
     }
 
     impl Conf {
-        use ::build::OptLevel;
-        use ::build::Platform;
-        use ::build::CConf;
-        use ::build::SkyeConf;
+        use super::OptLevel;
+        use super::Platform;
+        use super::CConf;
+        use super::SkyeConf;
 
         fn default() Self {
             return Self.{
