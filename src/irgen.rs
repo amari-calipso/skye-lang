@@ -73,6 +73,8 @@ pub struct IrGen {
     curr_name:     String,
     curr_loop:     Option<CurrLoop>,
 
+    pos_stack: Vec<AstPos>,
+
     pub errors: usize
 }
 
@@ -114,6 +116,7 @@ impl IrGen {
             curr_function: CurrentFn::None,
             string_type: None, tmp_var_cnt: 0,
             curr_loop: None, errors: 0,
+            pos_stack: Vec::new(),
             globals, config,
             source_path: path.map(|x| Box::new(PathBuf::from(x))),
         }
@@ -1651,13 +1654,24 @@ impl IrGen {
                             if matches!(self.config.checks, Checks::Debug) {
                                 let panic_pos = callee_expr.get_pos();
 
+                                let mut pos = format!(
+                                    "{}: line {}, pos {}",
+                                    escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
+                                );
+
+                                for position in self.pos_stack.iter().rev() {
+                                    pos.push_str("\\nexpanded from ");
+                                    pos.push_str(&escape_string(&position.filename));
+                                    pos.push_str(": line ");
+                                    pos.push_str(&(position.line + 1).to_string());
+                                    pos.push_str(", pos ");
+                                    pos.push_str(&position.start.to_string());
+                                }
+
                                 curr_expr = curr_expr.replace_variable(
                                     &Rc::from("PANIC_POS"),
                                     &Expression::StringLiteral { 
-                                        value: Rc::from(format!(
-                                            "{}: line {}, pos {}",
-                                            escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                        )), 
+                                        value: pos.into(), 
                                         tok: Token::dummy(Rc::from("")), 
                                         kind: StringKind::Slice 
                                     }
@@ -2458,7 +2472,10 @@ impl IrGen {
             }
             Expression::InMacro { inner: inner_expr, source } => {
                 let old_errors = self.errors;
+
+                self.pos_stack.push(source.clone());
                 let inner = ctx.run(|ctx| self.evaluate(&inner_expr, allow_unknown, ctx)).await;
+                self.pos_stack.pop();
 
                 if self.errors != old_errors {
                     astpos_note!(source, "This error is a result of this macro expansion");
@@ -2468,10 +2485,12 @@ impl IrGen {
             }
             Expression::MacroExpandedStatements { inner, source } => {
                 let old_errors = self.errors;
-
+                
+                self.pos_stack.push(source.clone());
                 for statement in inner {
                     let _ = ctx.run(|ctx| self.execute(statement, ctx)).await;
                 }
+                self.pos_stack.pop();
 
                 if self.errors != old_errors {
                     astpos_note!(source, "This error is a result of this macro expansion");

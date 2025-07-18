@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, irgen, dot, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
+use crate::{ast::{Ast, AstPos, Expression, MacroBody, MacroParams, Statement, StringKind}, ast_error, ast_note, ast_warning, astpos_note, dot, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -10,6 +10,8 @@ pub struct MacroExpander {
     in_interface: bool,
     in_function:  bool,
     config: CompilerConfig,
+
+    pos_stack: Vec<AstPos>,
 
     pub errors: usize,
 }
@@ -126,6 +128,7 @@ impl MacroExpander {
             in_impl: false,
             in_interface: false,
             in_function: false,
+            pos_stack: Vec::new(),
             errors: 0
         }
     }
@@ -231,7 +234,9 @@ impl MacroExpander {
             Expression::InMacro { inner, source } => {
                 let old_errors = self.errors;
                 
+                self.pos_stack.push(source.clone());
                 let res = ctx.run(|ctx| self.expand_expression(inner, ctx)).await;
+                self.pos_stack.pop();
 
                 if self.errors != old_errors {
                     astpos_note!(source, "This error is a result of this macro expansion");
@@ -242,9 +247,11 @@ impl MacroExpander {
             Expression::MacroExpandedStatements { inner, source } => {
                 let old_errors = self.errors;
                 
+                self.pos_stack.push(source.clone());
                 for statement in inner {
                     ctx.run(|ctx| self.expand_statement(statement, ctx)).await;
                 }
+                self.pos_stack.pop();
 
                 if self.errors != old_errors {
                     astpos_note!(source, "This error is a result of this macro expansion");
@@ -390,13 +397,24 @@ impl MacroExpander {
                                         if matches!(self.config.checks, Checks::Debug) {
                                             let panic_pos = callee_expr.get_pos();
 
+                                            let mut pos = format!(
+                                                "{}: line {}, pos {}",
+                                                escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
+                                            );
+
+                                            for position in self.pos_stack.iter().rev() {
+                                                pos.push_str("\\nexpanded from ");
+                                                pos.push_str(&escape_string(&position.filename));
+                                                pos.push_str(": line ");
+                                                pos.push_str(&(position.line + 1).to_string());
+                                                pos.push_str(", pos ");
+                                                pos.push_str(&position.start.to_string());
+                                            }
+
                                             return_expr = return_expr.replace_variable(
                                                 &Rc::from("PANIC_POS"),
                                                 &Expression::StringLiteral { 
-                                                    value: Rc::from(format!(
-                                                        "{}: line {}, pos {}",
-                                                        escape_string(&panic_pos.filename), panic_pos.line + 1, panic_pos.start
-                                                    )), 
+                                                    value: pos.into(), 
                                                     tok: Token::dummy(Rc::from("")), 
                                                     kind: StringKind::Slice 
                                                 }
