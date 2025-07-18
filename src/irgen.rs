@@ -2380,7 +2380,36 @@ impl IrGen {
         }
     }
 
-    fn resolve_phase2(&self, name: &Token) -> Option<SkyeValue> {
+    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
+        // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
+        if !global_ns && self.environment.borrow().enclosing.is_some() {
+            if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: Rc::clone(&name.lexeme) },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
+        // if it's not found, attempt finding it within the current namespace (if any)
+        if !global_ns && self.name_stack.len() != 0 {
+            let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
+            if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
+                return Some(SkyeValue::with_from(
+                    IrValue::new(
+                        IrValueData::Variable { name: namespaced_name.lexeme },
+                        var_info.type_
+                    ), 
+                    var_info.is_const,
+                    var_info.from
+                ));
+            }
+        }
+
         // if it's not found in the current namespace either, look for it in all environments, from innermost to topmost
         if let Some(var_info) = self.environment.borrow().get(&name) {
             return Some(SkyeValue::with_from(
@@ -2420,39 +2449,6 @@ impl IrGen {
         }
 
         return None;
-    }
-
-    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
-        // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
-        if !global_ns && self.environment.borrow().enclosing.is_some() {
-            if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
-                return Some(SkyeValue::with_from(
-                    IrValue::new(
-                        IrValueData::Variable { name: Rc::clone(&name.lexeme) },
-                        var_info.type_
-                    ), 
-                    var_info.is_const,
-                    var_info.from
-                ));
-            }
-        }
-
-        // if it's not found, attempt finding it within the current namespace (if any)
-        if !global_ns && self.name_stack.len() != 0 {
-            let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
-            if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
-                return Some(SkyeValue::with_from(
-                    IrValue::new(
-                        IrValueData::Variable { name: namespaced_name.lexeme },
-                        var_info.type_
-                    ), 
-                    var_info.is_const,
-                    var_info.from
-                ));
-            }
-        }
-
-        self.resolve_phase2(name)
     }
 
     async fn evaluate(&mut self, expr: &Expression, allow_unknown: bool, ctx: &mut reblessive::Stk) -> SkyeValue {
