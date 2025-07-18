@@ -53,6 +53,13 @@ struct CurrLoop {
     pub continue_: LoopLabel
 }
 
+#[derive(Debug, Clone)]
+enum ResolveMode {
+    Global,
+    Super,
+    Default
+}
+
 pub struct IrGen {
     source_path: Option<Box<PathBuf>>,
     config: CompilerConfig,
@@ -2380,9 +2387,9 @@ impl IrGen {
         }
     }
 
-    fn resolve_variable(&self, name: &Token, global_ns: bool) -> Option<SkyeValue> {
+    fn resolve_variable(&self, name: &Token, mode: ResolveMode) -> Option<SkyeValue> {
         // first, attempt to resolve the variable in the local function scope, without namespacing (only if we're not in the global scope)
-        if !global_ns && self.environment.borrow().enclosing.is_some() {
+        if matches!(mode, ResolveMode::Default) && self.environment.borrow().enclosing.is_some() {
             if let Some(var_info) = self.environment.borrow().get_in_fn_scope(&name) {
                 return Some(SkyeValue::with_from(
                     IrValue::new(
@@ -2396,7 +2403,7 @@ impl IrGen {
         }
 
         // if it's not found, attempt finding it within the current namespace (if any)
-        if !global_ns && self.name_stack.len() != 0 {
+        if !matches!(mode, ResolveMode::Global) && self.name_stack.len() != 0 {
             let namespaced_name = Token::dummy(self.get_name(&name.lexeme));
             if let Some(var_info) = self.environment.borrow().get(&namespaced_name) {
                 return Some(SkyeValue::with_from(
@@ -3899,7 +3906,7 @@ impl IrGen {
                 }
             }
             Expression::Variable(name) => {
-                if let Some(value) = self.resolve_variable(name, false) {
+                if let Some(value) = self.resolve_variable(name, ResolveMode::Default) {
                     return value;
                 }
 
@@ -5069,43 +5076,47 @@ impl IrGen {
                 let mut search_tok = name.clone();
 
                 let mut object = None;
-                let mut global_ns = false;
-
-                match object_expr {
-                    StaticGetTarget::Global => global_ns = true,
-                    StaticGetTarget::Super => {
-                        if let Some(last_name) = self.name_stack.pop() {
-                            let name = self.get_name(&name.lexeme);
-                            self.name_stack.push(last_name);
-                            search_tok.set_lexeme(&name);
-                        } else {
-                            token_error!(self, name, "Cannot use super in the global namespace");
-                            search_tok.set_lexeme(&name.lexeme);
-                        }
-                    }
-                    StaticGetTarget::Expression(object_expr) => {
-                        let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
-
-                        if let Some(full_name) = obj.ir_value.type_.static_get(name) {
-                            search_tok.set_lexeme(&full_name);
-                            object = Some(obj);
-                        } else {
-                            if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
-                                ast_error!(
-                                    self, object_expr,
-                                    format!(
-                                        "Can only statically access namespaces, structs, enums and instances (got {})",
-                                        obj.ir_value.type_.stringify()
-                                    ).as_ref()
-                                );
+                let resolve_mode = {
+                    match object_expr {
+                        StaticGetTarget::Global => ResolveMode::Global,
+                        StaticGetTarget::Super => {
+                            if let Some(last_name) = self.name_stack.pop() {
+                                let name = self.get_name(&name.lexeme);
+                                self.name_stack.push(last_name);
+                                search_tok.set_lexeme(&name);
+                            } else {
+                                token_error!(self, name, "Cannot use super in the global namespace");
+                                search_tok.set_lexeme(&name.lexeme);
                             }
 
-                            return SkyeValue::get_unknown();
+                            ResolveMode::Super
+                        }
+                        StaticGetTarget::Expression(object_expr) => {
+                            let obj = ctx.run(|ctx| self.evaluate(&object_expr, allow_unknown, ctx)).await;
+
+                            if let Some(full_name) = obj.ir_value.type_.static_get(name) {
+                                search_tok.set_lexeme(&full_name);
+                                object = Some(obj);
+                            } else {
+                                if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
+                                    ast_error!(
+                                        self, object_expr,
+                                        format!(
+                                            "Can only statically access namespaces, structs, enums and instances (got {})",
+                                            obj.ir_value.type_.stringify()
+                                        ).as_ref()
+                                    );
+                                }
+
+                                return SkyeValue::get_unknown();
+                            }
+
+                            ResolveMode::Default
                         }
                     }
-                }
+                };
                 
-                if let Some(value) = self.resolve_variable(&search_tok, global_ns) {
+                if let Some(value) = self.resolve_variable(&search_tok, resolve_mode.clone()) {
                     if *gets_macro {
                         let mut operator_token = name.clone();
                         operator_token.set_type(TokenType::At);
@@ -5127,7 +5138,7 @@ impl IrGen {
                         if let SkyeType::Enum(enum_name, ..) = &**inner_type {
                             search_tok.set_lexeme(format!("{}{}{}", enum_name, dot!(), name.lexeme).as_ref());
 
-                            if let Some(value) = self.resolve_variable(&search_tok, global_ns) {
+                            if let Some(value) = self.resolve_variable(&search_tok, resolve_mode) {
                                 return value;
                             }
                         }
