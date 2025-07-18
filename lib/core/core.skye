@@ -330,8 +330,12 @@ impl[T] core::SliceIterator[T] {
         return core::SliceIterator.{ slice, idx: 0 };
     }
 
-    fn next(self) ?T {
-        return self.slice.get(self.idx++);
+    fn next(self) ?(&const T) {
+        if self.idx < self.slice.length {
+            return (?(&const T))::Some(self.slice.ptr + self.idx++);
+        } else {
+            return (?(&const T))::None;
+        }
     }
 }
 
