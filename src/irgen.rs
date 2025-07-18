@@ -7463,7 +7463,7 @@ impl IrGen {
 
                 let mut is_const = true;
                 let mut needs_deref = false;
-                let item_type = {
+                let (item_type, outer_type) = {
                     if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
                         if name.as_ref() != format!("core{}Option", dot!()).as_str() {
                             ast_error!(
@@ -7481,20 +7481,20 @@ impl IrGen {
                             if let SkyeType::Pointer(inner, is_ptr_const, _) = some_variant {
                                 if *reference {
                                     is_const = *is_ptr_const;
-                                    some_variant.clone()
+                                    (some_variant.clone(), some_variant.clone())
                                 } else {
                                     needs_deref = true;
-                                    *inner.clone()
+                                    (*inner.clone(), some_variant.clone())
                                 }
                             } else if !*reference {
-                                some_variant.clone()
+                                (some_variant.clone(), some_variant.clone())
                             } else {
                                 token_error!(self, var_name, "This type cannot be iterated by reference");
-                                SkyeType::get_unknown()
+                                (SkyeType::get_unknown(), SkyeType::get_unknown())
                             }
                         } else {
                             ast_error!(self, iterator_expr, "Cannot iterate over an iterator returning a void item");
-                            SkyeType::get_unknown()
+                            (SkyeType::get_unknown(), SkyeType::get_unknown())
                         }
                     } else {
                         ast_error!(
@@ -7568,14 +7568,21 @@ impl IrGen {
                         from: Box::new(next_call.ir_value), 
                         name: Rc::from("Some")
                     },
-                    SkyeType::Void // TODO
+                    outer_type
                 );
 
                 if needs_deref {
+                    let new_value = self.zero_check(
+                        &SkyeValue::new(initializer, true), 
+                        var_name, 
+                        "Null pointer dereference", 
+                        ctx
+                    ).await;
+
                     initializer = IrValue::new(
                         IrValueData::Dereference { 
                             value: Box::new(IrValue::new(
-                                IrValueData::Grouping(Box::new(initializer)),
+                                IrValueData::Grouping(Box::new(new_value)),
                                 SkyeType::Void // TODO
                             )) 
                         },
