@@ -3,7 +3,7 @@ use std::{cell::{OnceCell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
 
-use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::{fix_raw_string, get_real_string_length}};
+use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::fix_raw_string};
 
 const OUTPUT_INDENT_SPACES: usize = 4;
 
@@ -701,8 +701,8 @@ impl CodeGen {
                                 } else {
                                     let str_index = self.strings.len();
                                     self.strings_code.push(format!(
-                                        "const char __SKYE_STRING_{}[{}] = \"{}\";\n",
-                                        str_index, get_real_string_length(&value), fix_raw_string(&value)
+                                        "const char __SKYE_STRING_{}[] = \"{}\";\n",
+                                        str_index, fix_raw_string(&value)
                                     ).as_ref());
 
                                     self.strings.insert(value, str_index);
@@ -710,26 +710,25 @@ impl CodeGen {
                                 }
                             }
                             StringKind::Slice => {
-                                if let Some(string_const) = self.strings.get(&value) {
-                                    format!(
-                                        "(core{}Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = sizeof(__SKYE_STRING_{}) }}",
-                                        dot!(), string_const, string_const
-                                    ).into()
-                                } else {
-                                    let str_index = self.strings.len();
-                                    let string_len = get_real_string_length(&value);
-                                    self.strings_code.push(format!(
-                                        "const char __SKYE_STRING_{}[{}] = \"{}\";\n",
-                                        str_index, string_len, value
-                                    ).as_ref());
+                                let str_index = {
+                                    if let Some(str_index) = self.strings.get(&value) {
+                                        *str_index
+                                    } else {
+                                        let str_index = self.strings.len();
+                                        self.strings_code.push(format!(
+                                            "const char __SKYE_STRING_{}[] = \"{}\";\n",
+                                            str_index, value
+                                        ).as_ref());
 
-                                    self.strings.insert(value, str_index);
+                                        self.strings.insert(value, str_index);
+                                        str_index
+                                    }
+                                };
 
-                                    format!(
-                                        "(core{}Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = {} }}",
-                                        dot!(), str_index, string_len
-                                    ).into()
-                                }
+                                format!(
+                                    "(core{}Slice_GENOF_char_GENEND_) {{ .ptr = __SKYE_STRING_{}, .length = sizeof(__SKYE_STRING_{}) - 1 }}",
+                                    dot!(), str_index, str_index
+                                ).into()
                             }
                         }
                     }

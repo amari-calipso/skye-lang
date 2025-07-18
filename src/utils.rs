@@ -213,67 +213,6 @@ pub fn is_alphanumeric(c: char) -> bool {
     is_alpha(c) || is_digit(c)
 }
 
-// TODO this actually doesn't work properly,
-// it would need to handle variable length escape codes but it doesn't
-pub fn get_real_string_length(str: &str) -> usize {
-    let mut len: usize = 0;
-    let mut backslash = false;
-
-    let mut current_skip = 0;
-    let mut target_skip = 0;
-
-    for c in str.chars() {
-        if current_skip < target_skip {
-            current_skip += 1;
-            continue;
-        } else {
-            target_skip = 0;
-        }
-
-        if backslash {
-            match c {
-                'x' => {
-                    current_skip = 0;
-                    target_skip = 2;
-                    len += 1;
-                    continue;
-                }
-                'u' => {
-                    current_skip = 0;
-                    target_skip = 4;
-                    len += 2;
-                    continue;
-                }
-                'U' => {
-                    current_skip = 0;
-                    target_skip = 8;
-                    len += 4;
-                    continue;
-                }
-                _ => {
-                    backslash = false;
-
-                    if is_oct_digit(c) {
-                        current_skip = 0;
-                        target_skip = 3;
-                        len += 1;
-                        continue;
-                    } 
-                }
-            }
-        } else {
-            if c == '\\' {
-                backslash = true;
-                continue;
-            }
-        }
-
-        len += 1
-    }
-
-    len
-}
-
 pub fn fix_raw_string(str: &str) -> String {
     let mut buf = String::new();
 
