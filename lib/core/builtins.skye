@@ -108,12 +108,8 @@ namespace core {
             return core::ArrayIterator.{ array, idx: 0 };
         }
 
-        fn next(self) ?&T {
-            if self.idx < self.array.length {
-                return (?&T)::Some(self.array.array.ptr + self.idx++);
-            } else {
-                return (?&T)::None;
-            }
+        fn next(self) ?T {
+            return self.array.get(self.idx++);
         }
     }
 

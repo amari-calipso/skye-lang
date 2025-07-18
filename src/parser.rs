@@ -690,36 +690,15 @@ impl Parser {
             };
 
             if let Some(init) = &initializer {
-                if let Statement::Expression(expr) = &**init {
-                    match expr {
-                        Expression::Variable(var_name) => {
-                            return Some(Statement::Foreach { 
-                                kw, 
-                                variable_name: var_name.clone(), 
-                                iterator: cond, 
-                                body: Box::new(body), 
-                                reference: false 
-                            });
-                        }
-                        Expression::Unary { op, expr: inner, is_prefix } => {
-                            if *is_prefix && op.type_ == TokenType::BitwiseAnd {
-                                if let Expression::Variable(var_name) = &**inner {
-                                    return Some(Statement::Foreach { 
-                                        kw, 
-                                        variable_name: var_name.clone(), 
-                                        iterator: cond, 
-                                        body: Box::new(body), 
-                                        reference: true 
-                                    });
-                                }
-                            }
-                        }
-                        _ => ()
-                    }
-                } 
-            } 
-            
-            token_error!(self, kw, "Expecting variable name in foreach loop");
+                if let Statement::Expression(Expression::Variable(var_name)) = &**init {
+                    return Some(Statement::Foreach { kw, variable_name: var_name.clone(), iterator: cond, body: Box::new(body) })
+                } else {
+                    ast_error!(self, init, "Expecting variable name in foreach loop");
+                }
+            } else {
+                token_error!(self, kw, "Expecting variable name in foreach loop");
+            }
+
             None
         }
     }

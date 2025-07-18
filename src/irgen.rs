@@ -7357,7 +7357,7 @@ impl IrGen {
                     )
                 );
             }
-            Statement::Foreach { kw, variable_name: var_name, iterator: iterator_expr, body, reference } => {
+            Statement::Foreach { kw, variable_name: var_name, iterator: iterator_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
                     token_error!(self, kw, "Only declarations are allowed at top level");
                     token_note!(kw, "Place this for loop inside a function");
@@ -7461,9 +7461,7 @@ impl IrGen {
                 let v = Vec::new();
                 let next_call = ctx.run(|ctx| self.call(&method, iterator_expr, &iterator_expr, &v, false, ctx)).await;
 
-                let mut is_const = true;
-                let mut needs_deref = false;
-                let (item_type, outer_type) = {
+                let item_type = {
                     if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
                         if name.as_ref() != format!("core{}Option", dot!()).as_str() {
                             ast_error!(
@@ -7478,23 +7476,10 @@ impl IrGen {
                         }
 
                         if let Some(some_variant) = variants.as_ref().unwrap().get("Some") {
-                            if let SkyeType::Pointer(inner, is_ptr_const, _) = some_variant {
-                                if *reference {
-                                    is_const = *is_ptr_const;
-                                    (some_variant.clone(), some_variant.clone())
-                                } else {
-                                    needs_deref = true;
-                                    (*inner.clone(), some_variant.clone())
-                                }
-                            } else if !*reference {
-                                (some_variant.clone(), some_variant.clone())
-                            } else {
-                                token_error!(self, var_name, "This type cannot be iterated by reference");
-                                (SkyeType::get_unknown(), SkyeType::get_unknown())
-                            }
+                            some_variant.clone()
                         } else {
                             ast_error!(self, iterator_expr, "Cannot iterate over an iterator returning a void item");
-                            (SkyeType::get_unknown(), SkyeType::get_unknown())
+                            SkyeType::get_unknown()
                         }
                     } else {
                         ast_error!(
@@ -7528,7 +7513,7 @@ impl IrGen {
                         Rc::clone(&var_name.lexeme),
                         SkyeVariable::new(
                             item_type.clone(),
-                            is_const,
+                            true,
                             Some(Box::new(var_name.clone()))
                         )
                     );
@@ -7562,40 +7547,19 @@ impl IrGen {
                         else_branch: None 
                     }
                 });
-
-                let mut initializer = IrValue::new(
-                    IrValueData::Get { 
-                        from: Box::new(next_call.ir_value), 
-                        name: Rc::from("Some")
-                    },
-                    outer_type
-                );
-
-                if needs_deref {
-                    let new_value = self.zero_check(
-                        &SkyeValue::new(initializer, true), 
-                        var_name, 
-                        "Null pointer dereference", 
-                        ctx
-                    ).await;
-
-                    initializer = IrValue::new(
-                        IrValueData::Dereference { 
-                            value: Box::new(IrValue::new(
-                                IrValueData::Grouping(Box::new(new_value)),
-                                SkyeType::Void // TODO
-                            )) 
-                        },
-                        item_type.clone()
-                    );
-                }
                 
                 self.add_statement(IrStatement {
                     pos: var_name.get_pos(),
                     data: IrStatementData::VarDecl { 
                         name: Rc::clone(&var_name.lexeme), 
                         type_: item_type, 
-                        initializer: Some(initializer),
+                        initializer: Some(IrValue::new(
+                            IrValueData::Get { 
+                                from: Box::new(next_call.ir_value), 
+                                name: Rc::from("Some")
+                            },
+                            SkyeType::Void // TODO
+                        )),
                         qualifiers: Vec::new()
                     }
                 });

@@ -509,8 +509,7 @@ pub enum Statement {
         kw: Token,
         variable_name: Token,
         iterator: Expression,
-        body: Box<Statement>,
-        reference: bool
+        body: Box<Statement>
     },
     Interface {
         name: Token,
@@ -719,14 +718,8 @@ impl Ast for Statement {
             Statement::Macro { name: macro_name, params: macro_params, body: macro_body } => {
                 Statement::Macro { name: macro_name.clone(), params: macro_params.clone(), body: macro_body.replace_variable(name, replace_expr) }
             }
-            Statement::Foreach { kw, variable_name: var_name, iterator, body, reference } => {
-                Statement::Foreach { 
-                    kw: kw.clone(), 
-                    variable_name: var_name.clone(), 
-                    iterator: iterator.replace_variable(name, replace_expr), 
-                    body: Box::new(body.replace_variable(name, replace_expr)),
-                    reference: *reference
-                }
+            Statement::Foreach { kw, variable_name: var_name, iterator, body } => {
+                Statement::Foreach { kw: kw.clone(), variable_name: var_name.clone(), iterator: iterator.replace_variable(name, replace_expr), body: Box::new(body.replace_variable(name, replace_expr)) }
             }
             Statement::Interface { name: interface_name, declarations, types } => {
                 Statement::Interface { name: interface_name.clone(), declarations: declarations.as_ref().map(
