@@ -256,6 +256,7 @@ pub fn get_real_string_length(str: &str) -> usize {
                     if is_oct_digit(c) {
                         current_skip = 0;
                         target_skip = 3;
+                        len += 1;
                         continue;
                     } 
                 }
