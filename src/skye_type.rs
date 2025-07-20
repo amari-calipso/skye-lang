@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{Generic, MacroBody, MacroParams, Statement}, environment::Environment, ir::{IrValue, IrValueData}, dot, tokens::Token, utils::OrderedNamedMap};
+use crate::{ast::{Bits, Expression, Generic, MacroBody, MacroParams, Statement}, dot, environment::Environment, ir::{IrValue, IrValueData}, tokens::Token, utils::OrderedNamedMap};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkyeFunctionParam {
@@ -17,6 +17,7 @@ impl SkyeFunctionParam {
 #[derive(Debug, Clone)]
 pub enum GetResultInternal {
     Ok(IrValue, SkyeType, bool), // value holder_type is_const
+    ImmediateOk(IrValue, bool), // value is_const
     InvalidType,
     FieldNotFound
 }
@@ -538,6 +539,10 @@ impl SkyeType {
                 }
 
                 let inner_res = inner_type.get_internal(from, name, *is_pointer_const, d + 1, zero_check);
+                if matches!(inner_res, GetResultInternal::ImmediateOk(..)) {
+                    return inner_res;
+                }
+
                 if let GetResultInternal::Ok(inner_val, holder_type, is_const) = inner_res {
                     let mut tmp_var_type = holder_type.clone();
                     for _ in 0 ..= d {
@@ -623,13 +628,33 @@ impl SkyeType {
                     GetResultInternal::FieldNotFound
                 }
             }
+            SkyeType::Array(_, size) => {
+                if name.lexeme.as_ref() == "length" {
+                    GetResultInternal::ImmediateOk(
+                        IrValue::new(
+                            IrValueData::Literal { 
+                                value: Expression::SignedIntLiteral {
+                                    value: *size as i128, 
+                                    tok: name.clone(), 
+                                    bits: Bits::Any 
+                                } 
+                            },
+                            SkyeType::AnyInt
+                        ),
+                        true
+                    )
+                } else {
+                    GetResultInternal::FieldNotFound
+                }
+            }
             _ => GetResultInternal::InvalidType
         }
     }
 
     pub fn get(&self, from: &IrValue, name: &Token, is_source_const: bool, mut zero_check: Box<impl FnMut(SkyeValue) -> IrValue>) -> GetResult {
         match self.get_internal(from, name, is_source_const, 0, &mut zero_check) {
-            GetResultInternal::Ok(value, _, is_const) => GetResult::Ok(value, is_const),
+            GetResultInternal::Ok(value, _, is_const) |
+            GetResultInternal::ImmediateOk(value, is_const) => GetResult::Ok(value, is_const),
             GetResultInternal::InvalidType => GetResult::InvalidType,
             GetResultInternal::FieldNotFound => GetResult::FieldNotFound,
         }

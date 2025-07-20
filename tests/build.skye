@@ -1,5 +1,6 @@
 import "build";
 
 fn main() {
-    
+    const aStaticArray = [0; 5];
+    let length = aStaticArray.length;
 }
