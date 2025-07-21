@@ -534,7 +534,6 @@ impl IrGen {
                                 do_write = false;
 
                                 if is_format {
-                                    
                                     break 'interpolated_expr_blk Expression::Call(
                                         Box::new(Expression::Variable(Token::dummy(
                                             format!("core{}fmt{}intToBuf", dot!(), dot!()).into()
@@ -1050,15 +1049,7 @@ impl IrGen {
                                     arg_pos.start, arg_pos.end, arg_pos.line
                                 );
 
-                                let ref_expr = Expression::Unary { 
-                                    op: custom_tok, 
-                                    expr: Box::new(Expression::Grouping(
-                                        Box::new(arguments[i - arguments_mod].clone())
-                                    )), 
-                                    is_prefix: true 
-                                };
-
-                                ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
+                                self.get_reference(arg, &custom_tok)
                             } else {
                                 arg
                             }
@@ -1194,15 +1185,7 @@ impl IrGen {
                                             arg_pos.start, arg_pos.end, arg_pos.line
                                         );
 
-                                        let ref_expr = Expression::Unary { 
-                                            op: custom_tok, 
-                                            expr: Box::new(Expression::Grouping(
-                                                Box::new(arguments[i - arguments_mod].clone())
-                                            )), 
-                                            is_prefix: true 
-                                        };
-
-                                        ctx.run(|ctx| self.evaluate(&ref_expr, allow_unknown, ctx)).await
+                                        self.get_reference(call_evaluated, &custom_tok)
                                     } else {
                                         call_evaluated
                                     }
