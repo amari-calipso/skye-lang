@@ -1,6 +1,8 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast::{Ast, AstPos, Expression, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind}, ast_error, ast_note, ast_warning, astpos_note, dot, irgen, parse, skye_type::SkyeType, token_error, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
+use alanglib::{ast::{SourcePos, WithPosition}, error, report::{note, note_pos, warning}};
+
+use crate::{ast::{Ast, Expression, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind}, dot, irgen, parse, skye_type::SkyeType, tokens::{Token, TokenType}, utils::{escape_string, literal_as_string}, Checks, CompilerConfig, TargetOS};
 
 pub struct MacroExpander {
     globals: HashMap<Rc<str>, SkyeType>,
@@ -11,7 +13,7 @@ pub struct MacroExpander {
     in_function:  bool,
     config: CompilerConfig,
 
-    pos_stack: Vec<AstPos>,
+    pos_stack: Vec<SourcePos>,
 
     pub errors: usize,
 }
@@ -48,7 +50,7 @@ macro_rules! at_operator {
                 return $ctx.run(|ctx| $slf.expand_expression($expr, ctx)).await;
             }
 
-            token_error!(
+            error!(
                 $slf, $op,
                 format!(
                     "'@' can only be used on macros (got {})",
@@ -147,18 +149,18 @@ impl MacroExpander {
                 if arguments.len() == 1 {
                     let arg_inner = arguments[0].get_inner();
                     if matches!(arg_inner, Expression::Slice { .. } | Expression::ArrayLiteral { .. }) {
-                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
-                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
-                        ast_note!(callee_expr, "Remove this macro call");
+                        warning(&arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
+                        note(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
+                        note(callee_expr, "Remove this macro call");
                         Some(arg_inner)
                     } else if let Some((value, tok)) = literal_as_string(arg_inner) {
-                        ast_warning!(arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
-                        ast_note!(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
-                        ast_note!(callee_expr, "Remove this macro call");
+                        warning(&arguments[0], "@concat macro is being used with no effect"); // +W-useless-concat
+                        note(callee_expr, "The @concat macro is used to concatenate multiple values together. Calling it with one argument is unnecessary");
+                        note(callee_expr, "Remove this macro call");
                         Some(Expression::StringLiteral { value, tok, kind: StringKind::Slice })
                     } else {
-                        ast_error!(self, arguments[0], "Argument for @concat macro must be a literal");
-                        ast_note!(arguments[0], "The value must be known at compile time");
+                        error!(self, arguments[0], "Argument for @concat macro must be a literal");
+                        note(&arguments[0], "The value must be known at compile time");
                         Some(Expression::StringLiteral { value: Rc::from(""), tok: Token::dummy(Rc::from("")), kind: StringKind::Slice })
                     }
                 } else {
@@ -169,8 +171,8 @@ impl MacroExpander {
                             if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = argument.get_inner() {
                                 result.extend(items);
                             } else {
-                                ast_error!(self, argument, "Argument for @concat macro must be a slice or array literal");
-                                ast_note!(argument, "The value must be known at compile time");
+                                error!(self, argument, "Argument for @concat macro must be a slice or array literal");
+                                note(argument, "The value must be known at compile time");
                             }
                         }
 
@@ -182,8 +184,8 @@ impl MacroExpander {
                             if let Some((value, _)) = literal_as_string(argument.get_inner()) {
                                 result.push_str(&value);
                             } else {
-                                ast_error!(self, argument, "Argument for @concat macro must be a literal");
-                                ast_note!(argument, "The value must be known at compile time");
+                                error!(self, argument, "Argument for @concat macro must be a literal");
+                                note(argument, "The value must be known at compile time");
                             }
                         }
 
@@ -239,7 +241,7 @@ impl MacroExpander {
                 self.pos_stack.pop();
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
 
                 return res;
@@ -254,7 +256,7 @@ impl MacroExpander {
                 self.pos_stack.pop();
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
             }
             Expression::FnPtr { return_type, params, .. } => {
@@ -305,7 +307,7 @@ impl MacroExpander {
                                 self.name_stack.push(last_name);
                                 name
                             } else {
-                                token_error!(self, name, "Cannot use super in the global namespace");
+                                error!(self, name, "Cannot use super in the global namespace");
                                 Rc::clone(&name.lexeme)
                             }
                         }
@@ -316,7 +318,7 @@ impl MacroExpander {
                                 if let Some(value) = object.static_get(&name) {
                                     break 'value_blk value;
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, expression,
                                         format!(
                                             "Can only statically access namespaces, structs, enums and instances (got {})",
@@ -360,7 +362,7 @@ impl MacroExpander {
                     match &params {
                         MacroParams::Some(params) => {
                             if params.len() != args.len() {
-                                ast_error!(
+                                error!(
                                     self, callee_expr,
                                     format!(
                                         "Expecting {} arguments for macro call but got {}",
@@ -373,7 +375,7 @@ impl MacroExpander {
                         }
                         MacroParams::OneN(_) => {
                             if args.len() == 0 {
-                                ast_error!(self, expr, "Expecting at least one argument for macro call but got none");
+                                error!(self, expr, "Expecting at least one argument for macro call but got none");
                                 return None;
                             }
                         }
@@ -514,7 +516,7 @@ impl MacroExpander {
                 }
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "The error(s) were a result of this import");
+                    note_pos(source, "The error(s) were a result of this import");
                 }
             }
             Statement::While { condition, body, .. } |
@@ -665,12 +667,12 @@ impl MacroExpander {
                 }
 
                 if self.in_impl {
-                    token_error!(self, name, "Cannot declare macro in impl block");
+                    error!(self, name, "Cannot declare macro in impl block");
                     return;
                 }
 
                 if self.in_interface {
-                    token_error!(self, name, "Cannot declare macro inside an interface");
+                    error!(self, name, "Cannot declare macro inside an interface");
                     return;
                 }
 

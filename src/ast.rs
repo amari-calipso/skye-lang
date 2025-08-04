@@ -1,35 +1,11 @@
 use std::rc::Rc;
 
+use alanglib::ast::{SourcePos, WithPosition};
+
 use crate::tokens::{Token, TokenType};
-
-#[derive(Clone, PartialEq, PartialOrd)]
-pub struct AstPos {
-    pub source: Rc<str>,
-    pub filename: Rc<str>,
-    pub start: usize,
-    pub end: usize,
-    pub line: usize
-}
-
-impl std::fmt::Debug for AstPos {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AstPos").field("filename", &self.filename).field("start", &self.start).field("end", &self.end).field("line", &self.line).finish()
-    }
-}
-
-impl AstPos {
-    pub fn new(source: Rc<str>, filename: Rc<str>, start: usize, end: usize, line: usize) -> Self {
-        AstPos { source, filename, start, end, line }
-    }
-
-    pub fn empty() -> Self {
-        AstPos { source: Rc::from(""), filename: Rc::from(""), start: 0, end: 1, line: 0 }
-    }
-}
 
 pub trait Ast {
     type Output;
-    fn get_pos(&self) -> AstPos;
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Self::Output;
 }
 
@@ -122,16 +98,14 @@ pub enum Expression {
     Get(Box<Expression>, Token), // object name
     StaticGet(StaticGetTarget, Token, bool), // object name gets_macro
     Slice { opening_brace: Token, items: Vec<Expression> },
-    InMacro { inner: Box<Expression>, source: AstPos },
-    MacroExpandedStatements { inner: Vec<Statement>, source: AstPos },
+    InMacro { inner: Box<Expression>, source: SourcePos },
+    MacroExpandedStatements { inner: Vec<Statement>, source: SourcePos },
     Array { opening_brace: Token, item: Box<Expression>, size: Box<Expression> },
     ArrayLiteral { opening_brace: Token, items: Vec<Expression> },
 }
 
-impl Ast for Expression {
-    type Output = Expression;
-
-    fn get_pos(&self) -> AstPos {
+impl WithPosition for Expression {
+    fn get_pos(&self) -> SourcePos {
         match self {
             Expression::Grouping(expr) => expr.get_pos(),
             Expression::InMacro { source, .. } | Expression::MacroExpandedStatements { source, .. } => source.clone(),
@@ -141,7 +115,7 @@ impl Ast for Expression {
             Expression::StringLiteral { tok, .. } | 
             Expression::VoidLiteral(tok) | 
             Expression::Variable(tok) => {
-                AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
+                SourcePos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
             }
             Expression::Binary { left, op, right } => {
                 let left_pos = left.get_pos();
@@ -150,7 +124,7 @@ impl Ast for Expression {
                 if left_pos.line != right_pos.line || left_pos.filename != right_pos.filename {
                     left_pos
                 } else {
-                    AstPos::new(Rc::clone(&op.source), Rc::clone(&op.filename), left_pos.start, right_pos.end, left_pos.line)
+                    SourcePos::new(Rc::clone(&op.source), Rc::clone(&op.filename), left_pos.start, right_pos.end, left_pos.line)
                 }
             }
             Expression::Unary { op, expr, is_prefix } => {
@@ -158,15 +132,15 @@ impl Ast for Expression {
 
                 if *is_prefix {
                     if op.line != expr_pos.line || op.filename != expr_pos.filename {
-                        AstPos::new(Rc::clone(&op.source), Rc::clone(&op.filename), op.pos, op.end, op.line)
+                        SourcePos::new(Rc::clone(&op.source), Rc::clone(&op.filename), op.pos, op.end, op.line)
                     } else {
-                        AstPos::new(Rc::clone(&op.source), Rc::clone(&op.filename), op.pos, expr.get_pos().end, op.line)
+                        SourcePos::new(Rc::clone(&op.source), Rc::clone(&op.filename), op.pos, expr.get_pos().end, op.line)
                     }
                 } else {
                     if expr_pos.line != op.line || op.filename != expr_pos.filename {
                         expr_pos
                     } else {
-                        AstPos::new(Rc::clone(&expr_pos.source), Rc::clone(&expr_pos.filename), expr_pos.start, op.end, expr_pos.line)
+                        SourcePos::new(Rc::clone(&expr_pos.source), Rc::clone(&expr_pos.filename), expr_pos.start, op.end, expr_pos.line)
                     }
                 }
             }
@@ -177,7 +151,7 @@ impl Ast for Expression {
                 if target_pos.line != value_pos.line || target_pos.filename != value_pos.filename {
                     target_pos
                 } else {
-                    AstPos::new(Rc::clone(&target_pos.source), Rc::clone(&target_pos.filename), target_pos.start, value_pos.end, target_pos.line)
+                    SourcePos::new(Rc::clone(&target_pos.source), Rc::clone(&target_pos.filename), target_pos.start, value_pos.end, target_pos.line)
                 }
             }
             Expression::Call(callee, paren, ..) => {
@@ -186,16 +160,16 @@ impl Ast for Expression {
                 if callee_pos.line != paren.line || callee_pos.filename != paren.filename {
                     callee_pos
                 } else {
-                    AstPos::new(Rc::clone(&callee_pos.source), Rc::clone(&callee_pos.filename), callee_pos.start, paren.end, callee_pos.line)
+                    SourcePos::new(Rc::clone(&callee_pos.source), Rc::clone(&callee_pos.filename), callee_pos.start, paren.end, callee_pos.line)
                 }
             }
             Expression::FnPtr { kw, return_type, params: _ } => {
                 let return_type_pos = return_type.get_pos();
 
                 if kw.line != return_type_pos.line || kw.filename != return_type_pos.filename {
-                    AstPos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, kw.end, kw.line)
+                    SourcePos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, kw.end, kw.line)
                 } else {
-                    AstPos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, return_type_pos.end, kw.line)
+                    SourcePos::new(Rc::clone(&kw.source), Rc::clone(&kw.filename), kw.pos, return_type_pos.end, kw.line)
                 }
             }
             Expression::Ternary { tok: _, condition: cond, then_expr: _, else_expr: else_ } => {
@@ -205,7 +179,7 @@ impl Ast for Expression {
                 if cond_pos.line != else_pos.line || cond_pos.filename != else_pos.filename {
                     cond_pos
                 } else {
-                    AstPos::new(Rc::clone(&cond_pos.source), Rc::clone(&cond_pos.filename), cond_pos.start, else_pos.end, cond_pos.line)
+                    SourcePos::new(Rc::clone(&cond_pos.source), Rc::clone(&cond_pos.filename), cond_pos.start, else_pos.end, cond_pos.line)
                 }
             }
             Expression::CompoundLiteral { type_: struct_, closing_brace, fields: _ } => {
@@ -214,7 +188,7 @@ impl Ast for Expression {
                 if struct_pos.line != closing_brace.line || struct_pos.filename != closing_brace.filename {
                     struct_pos
                 } else {
-                    AstPos::new(Rc::clone(&struct_pos.source), Rc::clone(&struct_pos.filename), struct_pos.start, closing_brace.end, struct_pos.line)
+                    SourcePos::new(Rc::clone(&struct_pos.source), Rc::clone(&struct_pos.filename), struct_pos.start, closing_brace.end, struct_pos.line)
                 }
             }
             Expression::Subscript { subscripted, paren, args: _ } => {
@@ -223,16 +197,16 @@ impl Ast for Expression {
                 if subscripted_pos.line != paren.line || subscripted_pos.filename != paren.filename {
                     subscripted_pos
                 } else {
-                    AstPos::new(Rc::clone(&subscripted_pos.source), Rc::clone(&subscripted_pos.filename), subscripted_pos.start, paren.end, subscripted_pos.line)
+                    SourcePos::new(Rc::clone(&subscripted_pos.source), Rc::clone(&subscripted_pos.filename), subscripted_pos.start, paren.end, subscripted_pos.line)
                 }
             }
             Expression::Get(object, name) => {
                 let object_pos = object.get_pos();
 
                 if object_pos.line != name.line || object_pos.filename != name.filename {
-                    AstPos::new(Rc::clone(&name.source), Rc::clone(&name.filename), name.pos, name.end, name.line)
+                    SourcePos::new(Rc::clone(&name.source), Rc::clone(&name.filename), name.pos, name.end, name.line)
                 } else {
-                    AstPos::new(Rc::clone(&object_pos.source), Rc::clone(&object_pos.filename), object_pos.start, name.end, object_pos.line)
+                    SourcePos::new(Rc::clone(&object_pos.source), Rc::clone(&object_pos.filename), object_pos.start, name.end, object_pos.line)
                 }
             }
             Expression::StaticGet(object, name, _) => {
@@ -245,9 +219,9 @@ impl Ast for Expression {
                 };
 
                 if object_pos.line != name.line || object_pos.filename != name.filename {
-                    AstPos::new(Rc::clone(&name.source), Rc::clone(&name.filename), name.pos, name.end, name.line)
+                    SourcePos::new(Rc::clone(&name.source), Rc::clone(&name.filename), name.pos, name.end, name.line)
                 } else {
-                    AstPos::new(Rc::clone(&object_pos.source), Rc::clone(&object_pos.filename), object_pos.start, name.end, object_pos.line)
+                    SourcePos::new(Rc::clone(&object_pos.source), Rc::clone(&object_pos.filename), object_pos.start, name.end, object_pos.line)
                 }
             }
             Expression::Slice { items: exprs, .. } |
@@ -262,16 +236,20 @@ impl Ast for Expression {
                         if first_pos.line != last_pos.line || first_pos.filename != last_pos.filename {
                             first_pos
                         } else {
-                            AstPos::new(Rc::clone(&first_pos.source), Rc::clone(&first_pos.filename), first_pos.start, last_pos.end, first_pos.line)
+                            SourcePos::new(Rc::clone(&first_pos.source), Rc::clone(&first_pos.filename), first_pos.start, last_pos.end, first_pos.line)
                         }
                     }
                 }
             }
             Expression::Array { opening_brace, .. } => {
-                AstPos::new(Rc::clone(&opening_brace.source), Rc::clone(&opening_brace.filename), opening_brace.pos, opening_brace.end, opening_brace.line)
+                SourcePos::new(Rc::clone(&opening_brace.source), Rc::clone(&opening_brace.filename), opening_brace.pos, opening_brace.end, opening_brace.line)
             }
         }
     }
+}
+
+impl Ast for Expression {
+    type Output = Expression;
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Expression {
         match self {
@@ -447,7 +425,7 @@ pub enum Statement {
     Break(Token), // kw
     Continue(Token), // kw
     Block(Token, Vec<Statement>), // kw statements
-    ImportedBlock { statements: Vec<Statement>, source: AstPos },
+    ImportedBlock { statements: Vec<Statement>, source: SourcePos },
     While { kw: Token, condition: Expression, body: Box<Statement> },
     DoWhile { kw: Token, condition: Expression, body: Box<Statement> },
     Return { kw: Token, value: Option<Expression> },
@@ -539,14 +517,12 @@ pub enum Statement {
     }
 }
 
-impl Ast for Statement {
-    type Output = Statement;
-
-    fn get_pos(&self) -> AstPos {
+impl WithPosition for Statement {
+    fn get_pos(&self) -> SourcePos {
         match self {
             Statement::ImportedBlock { source, .. } => source.clone(), 
             Statement::Empty => {
-                AstPos::new(Rc::from(""), Rc::from(""), 0, 0, 0)
+                SourcePos::new(Rc::from(""), Rc::from(""), 0, 0, 0)
             }
             Statement::Expression(expr) |
             Statement::Impl { object: expr, declarations: _ } |
@@ -574,10 +550,14 @@ impl Ast for Statement {
             Statement::Foreach { kw: tok, .. } |
             Statement::Interface { name: tok, .. } |
             Statement::Extern { kw: tok, .. } => {
-                AstPos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
+                SourcePos::new(Rc::clone(&tok.source), Rc::clone(&tok.filename), tok.pos, tok.end, tok.line)
             }
         }
     }
+}
+
+impl Ast for Statement {
+    type Output = Statement;
 
     fn replace_variable(&self, name: &Rc<str>, replace_expr: &Expression) -> Statement {
         match self {

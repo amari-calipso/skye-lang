@@ -1,7 +1,3 @@
-use std::rc::Rc;
-
-use crate::ast::AstPos;
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Hash, Eq)]
 pub enum TokenType {
     LeftParen, RightParen,
@@ -44,53 +40,10 @@ pub enum TokenType {
     EOF
 }
 
-#[derive(Clone, PartialEq, PartialOrd, Hash, Eq)]
-pub struct Token {
-    pub source: Rc<str>,
-    pub filename: Rc<str>,
-    pub type_: TokenType,
-    pub lexeme: Rc<str>,
-    pub pos: usize,
-    pub end: usize,
-    pub line: usize
-}
-
-impl std::fmt::Debug for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Token").field("type_", &self.type_).field("lexeme", &self.lexeme).field("pos", &self.pos).field("end", &self.end).field("line", &self.line).finish()
+impl Default for TokenType {
+    fn default() -> Self {
+        TokenType::Identifier
     }
 }
 
-impl Token {
-    pub fn new(source: Rc<str>, filename: Rc<str>, type_: TokenType, lexeme: Rc<str>, pos: usize, end: usize, line: usize) -> Self {
-        Token { source, filename, type_, lexeme, pos, end, line }
-    }
-
-    pub fn dummy(lexeme: Rc<str>) -> Self {
-        Token { source: Rc::from(""), filename: Rc::from(""), type_: TokenType::Identifier, lexeme, pos: 0, end: 1, line: 0 }
-    }
-
-    pub fn empty() -> Self {
-        Token::dummy(Rc::from(""))
-    }
-
-    pub fn from_type(type_: TokenType) -> Self {
-        Token { source: Rc::from(""), filename: Rc::from(""), type_, lexeme: Rc::from(""), pos: 0, end: 1, line: 0 }
-    }
-
-    pub fn set_type(&mut self, type_: TokenType) {
-        self.type_ = type_;
-    }
-
-    pub fn set_lexeme(&mut self, lexeme: &str) {
-        self.lexeme = Rc::from(lexeme);
-    }
-
-    pub fn get_pos(&self) -> AstPos {
-        AstPos::new(
-            Rc::clone(&self.source), 
-            Rc::clone(&self.filename), 
-            self.pos, self.end, self.line
-        )
-    }
-}
+pub type Token = alanglib::token::Token<TokenType>;

@@ -20,6 +20,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "alanglib"
+version = "2025.8.4"
+source = "git+https://github.com/amari-calipso/alanglib.git#31e24a990f5aa7e1603b9390656e8394fd3af4ca"
+
+[[package]]
 name = "anstream"
 version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -196,16 +201,6 @@ name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
-
-[[package]]
-name = "colored"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
-dependencies = [
- "lazy_static",
- "windows-sys",
-]
 
 [[package]]
 name = "constant_time_eq"
@@ -615,10 +610,10 @@ checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
 
 [[package]]
 name = "skye"
-version = "2025.7.20"
+version = "2025.8.4"
 dependencies = [
+ "alanglib",
  "clap",
- "colored",
  "lazy_static",
  "reblessive",
  "scopeguard",

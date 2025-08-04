@@ -1,4 +1,6 @@
-use crate::{ast::{Ast, Bits, Expression, MacroBody, Statement, StaticGetTarget}, ast_error, ast_note, astpos_note, tokens::TokenType};
+use alanglib::{error, report::{note, note_pos}};
+
+use crate::{ast::{Bits, Expression, MacroBody, Statement, StaticGetTarget}, tokens::TokenType};
 
 pub struct ConstantFolder {
     ptr_size: u8,
@@ -12,11 +14,11 @@ macro_rules! signed_op_for_bits {
                 if let Some(value) = ($left_value as $op_type).$operator(right_value) {
                     value as i128
                 } else {
-                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                    alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                     0
                 }
             } else {
-                ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                 0
             }    
         }
@@ -31,11 +33,11 @@ macro_rules! unsigned_op_signed_for_bits {
                     let _: $op_type = value;
                     value as u64
                 } else {
-                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                    alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                     0
                 }
             } else {
-                ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                 0
             }
         }
@@ -49,11 +51,11 @@ macro_rules! unsigned_op_for_bits {
                 if let Some(value) = ($left_value as $op_type).$operator(right_value) {
                     value as u64
                 } else {
-                    ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                    alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                     0
                 }
             } else {
-                ast_error!($slf, $expr, "Cannot perform overflowing operation");
+                alanglib::error!($slf, $expr, "Cannot perform overflowing operation");
                 0
             }  
         }
@@ -129,7 +131,7 @@ impl ConstantFolder {
                 ctx.run(|ctx| self.fold_expression(inner, ctx)).await;
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
             }
             Expression::MacroExpandedStatements { inner, source } => {
@@ -140,7 +142,7 @@ impl ConstantFolder {
                 }
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
             }
             Expression::Ternary { condition, then_expr, else_expr, .. } => {
@@ -223,16 +225,16 @@ impl ConstantFolder {
                         match &mut inner {
                             Expression::SignedIntLiteral { value, bits, .. } => {
                                 if *bits == Bits::Any && *value > -(i64::MIN as i128) {
-                                    ast_error!(self, expr, "Cannot apply '-' operator to unsigned integer");
-                                    ast_note!(expr, "This operation will overflow");
+                                    error!(self, expr, "Cannot apply '-' operator to unsigned integer");
+                                    note(expr, "This operation will overflow");
                                 } else {
                                     *value = -*value;
                                     *expr = inner;
                                 }
                             }
                             Expression::UnsignedIntLiteral { .. } => {
-                                ast_error!(self, expr, "Cannot apply '-' operator to unsigned integer");
-                                ast_note!(expr, "This operation will overflow");
+                                error!(self, expr, "Cannot apply '-' operator to unsigned integer");
+                                note(expr, "This operation will overflow");
                             }
                             Expression::FloatLiteral { value, .. } => {
                                 *value = -*value;
@@ -284,7 +286,7 @@ impl ConstantFolder {
                     match arg_inner {
                         Expression::SignedIntLiteral { value, .. } => {
                             if value < 0 {
-                                ast_error!(self, args[0], "Array indices cannot be negative");
+                                error!(self, args[0], "Array indices cannot be negative");
                                 return;
                             }
 
@@ -297,7 +299,7 @@ impl ConstantFolder {
 
                 if let Expression::Slice { items, .. } | Expression::ArrayLiteral { items, .. } = subscripted_inner {
                     if index > items.len() {
-                        ast_error!(
+                        error!(
                             self, args[0], 
                             format!(
                                 "Index {} is out of bounds for length {}",
@@ -305,7 +307,7 @@ impl ConstantFolder {
                             ).as_str()
                         );
 
-                        ast_note!(
+                        note(
                             subscripted,
                             format!("This collection has length {}", items.len()).as_str()
                         );
@@ -346,7 +348,7 @@ impl ConstantFolder {
                                                             }
                                                         }
                                                         
-                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        error!(self, expr, "Cannot perform overflowing operation");
                                                         0
                                                     } else {
                                                         signed_op_for_bits!(self, left_value, right_value, expr, checked_add, i64)
@@ -380,7 +382,7 @@ impl ConstantFolder {
                                                         if let Some(value) = (left_value as u64).checked_add(right_value) {
                                                             value as i128
                                                         } else {
-                                                            ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                            error!(self, expr, "Cannot perform overflowing operation");
                                                             0
                                                         }
                                                     } else {
@@ -434,7 +436,7 @@ impl ConstantFolder {
                                                     if let Some(value) = left_value.checked_add(right_value) {
                                                         value
                                                     } else {
-                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        error!(self, expr, "Cannot perform overflowing operation");
                                                         0
                                                     }
                                                 }
@@ -483,7 +485,7 @@ impl ConstantFolder {
                                                         //     }
                                                         // }
                                                         
-                                                        // ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        // error!(self, expr, "Cannot perform overflowing operation");
                                                         // 0
                                                         return;
                                                     } else {
@@ -518,7 +520,7 @@ impl ConstantFolder {
                                                         if let Some(value) = (left_value as u64).checked_sub(right_value) {
                                                             value as i128
                                                         } else {
-                                                            ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                            error!(self, expr, "Cannot perform overflowing operation");
                                                             0
                                                         }
                                                     } else {
@@ -574,7 +576,7 @@ impl ConstantFolder {
                                                     if let Some(value) = left_value.checked_sub(right_value) {
                                                         value
                                                     } else {
-                                                        ast_error!(self, expr, "Cannot perform overflowing operation");
+                                                        error!(self, expr, "Cannot perform overflowing operation");
                                                         0
                                                     }
                                                 }
@@ -654,7 +656,7 @@ impl ConstantFolder {
                 }
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "The error(s) were a result of this import");
+                    note_pos(source, "The error(s) were a result of this import");
                 }
             }
             Statement::Struct { fields, .. } |

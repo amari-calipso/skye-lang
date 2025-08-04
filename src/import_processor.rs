@@ -1,6 +1,8 @@
 use std::{collections::HashMap, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
 
-use crate::{ast::{Ast, ImportType, MacroBody, Statement}, ast_note, astpos_note, dot, parse_file, token_error, token_note, token_warning, tokens::Token};
+use alanglib::{ast::WithPosition, error, report::{note, note_pos, warning}};
+
+use crate::{ast::{ImportType, MacroBody, Statement}, dot, parse_file, tokens::Token};
 
 pub struct ImportProcessor {
     source_path: Option<Box<PathBuf>>,
@@ -66,32 +68,32 @@ impl ImportProcessor {
                         path = self.skye_path.join("lib").join(path).with_extension("skye");
                         true
                     } else {
-                        token_error!(self, path_tok, "A file extension is required on absolute path imports for Skye to know what kind of import to perform");
-                        token_note!(path_tok, "Add the file extension (\".skye\", \".c\", \".h\", ...)");
+                        error!(self, path_tok, "A file extension is required on absolute path imports for Skye to know what kind of import to perform");
+                        note(path_tok, "Add the file extension (\".skye\", \".c\", \".h\", ...)");
                         return;
                     }
                 };
 
                 if skye_import {
                     if flags.len() != 0 {
-                        token_error!(self, flags.first().unwrap(), "Cannot use flags in a Skye import");
-                        token_note!(path_tok, "Flags are meant to set functionality for C header-only libraries");
+                        error!(self, flags.first().unwrap(), "Cannot use flags in a Skye import");
+                        note(path_tok, "Flags are meant to set functionality for C header-only libraries");
                     }
                 } else {
                     if self.curr_name != "" {
-                        token_warning!(path_tok, "C imports cannot be namespaced. This import will be performed in the global namespace");
+                        warning(path_tok, "C imports cannot be namespaced. This import will be performed in the global namespace");
                     }
                 }
 
                 if !*is_include {
                     if let Some(info) = self.imports.get_mut(&path) {
-                        token_warning!(path_tok, "A duplicate import was performed");
+                        warning(path_tok, "A duplicate import was performed");
 
                         for (_, import_tok) in info.iter() {
-                            token_note!(import_tok, "This file was previously imported here");
+                            note(import_tok, "This file was previously imported here");
                         }
                         
-                        token_note!(path_tok, "If this is intentional, use an 'include' statement instead of 'import', otherwise remove this import");
+                        note(path_tok, "If this is intentional, use an 'include' statement instead of 'import', otherwise remove this import");
 
                         if !skye_import || info.contains_key(&self.curr_name) {
                             // if this import was previously performed in the same namespace as the current one, no need to perform the import again
@@ -101,7 +103,7 @@ impl ImportProcessor {
 
                         if skye_import {
                             if info.len() == 1 {
-                                token_note!(
+                                note(
                                     path_tok, 
                                     concat!(
                                         "The previous import was performed behind another namespace. ",
@@ -109,7 +111,7 @@ impl ImportProcessor {
                                     )
                                 );
                             } else {
-                                token_note!(
+                                note(
                                     path_tok, 
                                     concat!(
                                         "The previous imports were performed behind other namespaces. ",
@@ -133,13 +135,13 @@ impl ImportProcessor {
                             ctx.run(|ctx| self.process_many(&mut statements, ctx)).await;
 
                             if self.errors != old_errors {
-                                ast_note!(stmt, "The error(s) were a result of this import");
+                                note(stmt, "The error(s) were a result of this import");
                             }
 
                             *stmt = Statement::ImportedBlock { statements, source: stmt.get_pos() };
                         }
                         Err(e) => {
-                            token_error!(self, path_tok, format!("Could not import this file. Error: {}", e.to_string()).as_ref());
+                            error!(self, path_tok, format!("Could not import this file. Error: {}", e.to_string()).as_ref());
                         }
                     }
                 }
@@ -153,7 +155,7 @@ impl ImportProcessor {
                 ctx.run(|ctx| self.process_many(statements, ctx)).await;
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "The error(s) were a result of this import");
+                    note_pos(source, "The error(s) were a result of this import");
                 }
             }
             Statement::Namespace { name, body } => {

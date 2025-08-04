@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use alanglib::{ast::SourcePos, report::error_pos, scanner::{is_alpha, is_alphanumeric, is_beginning_digit, is_bin_digit, is_digit, is_hex_digit, is_oct_digit, substring}};
+
 use crate::tokens::{Token, TokenType};
-use crate::utils::{error, is_alpha, is_alphanumeric, is_beginning_digit, is_bin_digit, is_digit, is_hex_digit, is_oct_digit, substring};
 
 pub struct Scanner<'a> {
     source: &'a String,
@@ -107,11 +108,14 @@ impl<'a> Scanner<'a> {
     }
 
     fn error(&mut self, msg: &str) {
-        error(
-            &Rc::from(self.source.as_ref()), msg, 
-            &self.filename,
-            self.start - self.start_positions[self.line], 
-            self.curr - self.start, self.line
+        error_pos(
+            &SourcePos::new(
+                Rc::from(self.source.as_str()),
+                Rc::clone(&self.filename),
+                self.start - self.start_positions[self.line], 
+                self.curr - self.start, self.line
+            ),
+            msg
         );
         
         self.had_error = true;

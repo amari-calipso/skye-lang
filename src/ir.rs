@@ -1,15 +1,17 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::{AstPos, Bits, Expression, StringKind}, skye_type::SkyeType, tokens::Token, utils::OrderedNamedMap};
+use alanglib::ast::SourcePos;
+
+use crate::{ast::{Bits, Expression, StringKind}, skye_type::SkyeType, tokens::Token, utils::OrderedNamedMap};
 
 #[derive(Clone, Debug)]
 pub struct IrStatement {
     pub data: IrStatementData,
-    #[allow(unused)] pub pos: AstPos
+    #[allow(unused)] pub pos: SourcePos
 }
 
 impl IrStatement {
-    pub fn empty_scope(pos: AstPos) -> Self {
+    pub fn empty_scope(pos: SourcePos) -> Self {
         IrStatement { 
             data: IrStatementData::Scope { statements: Rc::new(RefCell::new(Vec::new())) }, 
             pos 

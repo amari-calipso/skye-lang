@@ -1,9 +1,10 @@
 use std::{cell::RefCell, collections::{HashMap, HashSet}, ffi::OsString, path::{Path, PathBuf}, rc::Rc};
 
+use alanglib::{ast::{SourcePos, WithPosition}, error, report::{note, note_pos, warning}};
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, AstPos, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase}, ast_error, ast_note, ast_warning, astpos_note, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, token_error, token_note, token_warning, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase}, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -80,7 +81,7 @@ pub struct IrGen {
     name_stack:    Vec<String>,
     curr_loop:     Option<CurrLoop>,
 
-    pos_stack: Vec<AstPos>,
+    pos_stack: Vec<SourcePos>,
 
     pub errors: usize
 }
@@ -110,7 +111,7 @@ impl IrGen {
                 signature: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true),
                 qualifiers: Vec::new()
             },
-            pos: AstPos::empty()
+            pos: SourcePos::empty()
         })));
 
         IrGen {
@@ -227,18 +228,18 @@ impl IrGen {
                     if inner_type.can_be_instantiated(false) {
                         *inner_type
                     } else {
-                        ast_error!(self, return_type_expr, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
+                        error!(self, return_type_expr, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
                         SkyeType::get_unknown()
                     }
                 } else {
-                    ast_error!(self, return_type_expr, "Cannot use incomplete type directly");
-                    ast_note!(return_type_expr, "Define this type or reference it through a pointer");
+                    error!(self, return_type_expr, "Cannot use incomplete type directly");
+                    note(return_type_expr, "Define this type or reference it through a pointer");
                     SkyeType::get_unknown()
                 }
             }
             SkyeType::Void => val.ir_value.type_,
             _ => {
-                ast_error!(self, return_type_expr, format!("Expecting type as return type (got {})", val.ir_value.type_.stringify()).as_ref());
+                error!(self, return_type_expr, format!("Expecting type as return type (got {})", val.ir_value.type_.stringify()).as_ref());
                 SkyeType::get_unknown()
             }
         }
@@ -256,7 +257,7 @@ impl IrGen {
                             if has_decl {
                                 if let SkyeType::Function(existing_params, ..) = &existing.as_ref().unwrap().type_ {
                                     if !existing_params[i].type_.equals(&inner_type, EqualsLevel::Typewise) {
-                                        ast_error!(
+                                        error!(
                                             self, params[i].type_,
                                             format!(
                                                 "Function parameter type does not match declaration parameter type (expecting {} but got {})",
@@ -269,7 +270,7 @@ impl IrGen {
 
                             *inner_type
                         } else {
-                            ast_error!(
+                            error!(
                                 self, params[i].type_,
                                 format!("Cannot instantiate type {}", inner_type.stringify()).as_ref()
                             );
@@ -277,7 +278,7 @@ impl IrGen {
                             SkyeType::get_unknown()
                         }
                     } else {
-                        ast_error!(
+                        error!(
                             self, params[i].type_,
                             format!(
                                 "Expecting type as parameter type (got {})",
@@ -288,8 +289,8 @@ impl IrGen {
                         SkyeType::get_unknown()
                     }
                 } else {
-                    ast_error!(self, params[i].type_, "Cannot use incomplete type directly");
-                    ast_note!(params[i].type_, "Define this type or reference it through a pointer");
+                    error!(self, params[i].type_, "Cannot use incomplete type directly");
+                    note(&params[i].type_, "Define this type or reference it through a pointer");
                     SkyeType::get_unknown()
                 }
             };
@@ -310,7 +311,7 @@ impl IrGen {
         res.into()
     }
 
-    fn make_temporary_var(&mut self, value: SkyeValue, pos: AstPos) -> Rc<str> {       
+    fn make_temporary_var(&mut self, value: SkyeValue, pos: SourcePos) -> Rc<str> {       
         // https://github.com/amari-calipso/skye-lang/issues/61
         if matches!(value.ir_value.data, IrValueData::Variable { .. }) && matches!(value.from, ValueFrom::Default) {
             if let IrValueData::Variable { name } = value.ir_value.data {
@@ -442,7 +443,7 @@ impl IrGen {
                 let is_fprintln = macro_name.as_ref() == "fprintln";
 
                 if arguments.len() < 2 {
-                    ast_error!(
+                    error!(
                         self, callee_expr,
                         format!(
                             "Expecting at least 2 arguments for macro call but got {}",
@@ -459,8 +460,8 @@ impl IrGen {
                     if let Expression::StringLiteral { value, tok, .. } = arguments[1].get_inner() {
                         (value, tok)
                     } else {
-                        ast_error!(self, arguments[1], "Format string must be a literal");
-                        ast_note!(arguments[1], "The format string must be known at compile time for the compiler to generate the necessary code");
+                        error!(self, arguments[1], "Format string must be a literal");
+                        note(&arguments[1], "The format string must be known at compile time for the compiler to generate the necessary code");
                         return Some(SkyeValue::special(SkyeType::Void));
                     }
                 };
@@ -470,7 +471,7 @@ impl IrGen {
                 let formatting_args_count = arguments.len() - 2;
 
                 if formatted_values_count != formatting_args_count {
-                    ast_error!(
+                    error!(
                         self, arguments[1],
                         format!(
                             "Expecting {} formatting arguments but got {}",
@@ -515,7 +516,7 @@ impl IrGen {
                                     expr.clone()
                                 }
                             } else {
-                                ast_error!(self, callee_expr, "Not enough formatting arguments provided for formatted string");
+                                error!(self, callee_expr, "Not enough formatting arguments provided for formatted string");
                                 break;
                             }
                         }
@@ -617,7 +618,7 @@ impl IrGen {
                                         false
                                     )
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, portion_expr,
                                         format!(
                                             "Type {} is not printable",
@@ -625,8 +626,8 @@ impl IrGen {
                                         ).as_ref()
                                     );
 
-                                    ast_note!(portion_expr, "Implement a \"asString\" or \"toString\" method to be able to print this type");
-                                    token_note!(tok, "This error occurred while evaluating this interpolated string");
+                                    note(&portion_expr, "Implement a \"asString\" or \"toString\" method to be able to print this type");
+                                    note(&tok, "This error occurred while evaluating this interpolated string");
                                     Expression::StringLiteral { value: Rc::from(""), tok: tok.clone(), kind: StringKind::Slice }
                                 }
                             }
@@ -656,7 +657,7 @@ impl IrGen {
                                 statements.push(Statement::Expression(interpolated_expr));
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, arguments[0],
                                 format!(
                                     "Type {} is not a valid string buffer",
@@ -664,7 +665,7 @@ impl IrGen {
                                 ).as_ref()
                             );
 
-                            ast_note!(arguments[0], "This type does not implement a \"pushString\" method");
+                            note(&arguments[0], "This type does not implement a \"pushString\" method");
                         }
                     } else {
                         let search_tok = Token::dummy(Rc::from("write"));
@@ -695,7 +696,7 @@ impl IrGen {
                                 statements.push(Statement::Expression(interpolated_expr));
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, arguments[0],
                                 format!(
                                     "Type {} is not a valid writable object",
@@ -703,7 +704,7 @@ impl IrGen {
                                 ).as_ref()
                             );
 
-                            ast_note!(arguments[0], "This type does not implement a \"write\" method");
+                            note(&arguments[0], "This type does not implement a \"write\" method");
                         }
                     }
                 }
@@ -716,12 +717,12 @@ impl IrGen {
                 let inner = ctx.run(|ctx| self.evaluate(&arguments[0], allow_unknown, ctx)).await;
 
                 match inner.ir_value.type_ {
-                    SkyeType::Void         => ast_error!(self, arguments[0], "Cannot get type of void"),
-                    SkyeType::Type(_)      => ast_error!(self, arguments[0], "Cannot get type of type"),
-                    SkyeType::Group(..)    => ast_error!(self, arguments[0], "Cannot get type of type group"),
-                    SkyeType::Namespace(_) => ast_error!(self, arguments[0], "Cannot get type of namespace"),
-                    SkyeType::Template(..) => ast_error!(self, arguments[0], "Cannot get type of template"),
-                    SkyeType::Macro(..)    => ast_error!(self, arguments[0], "Cannot get type of macro"),
+                    SkyeType::Void         => error!(self, arguments[0], "Cannot get type of void"),
+                    SkyeType::Type(_)      => error!(self, arguments[0], "Cannot get type of type"),
+                    SkyeType::Group(..)    => error!(self, arguments[0], "Cannot get type of type group"),
+                    SkyeType::Namespace(_) => error!(self, arguments[0], "Cannot get type of namespace"),
+                    SkyeType::Template(..) => error!(self, arguments[0], "Cannot get type of template"),
+                    SkyeType::Macro(..)    => error!(self, arguments[0], "Cannot get type of macro"),
                     _ => return Some(SkyeValue::special(SkyeType::Type(Box::new(inner.ir_value.type_.finalize()))))
                 }
 
@@ -737,11 +738,11 @@ impl IrGen {
                     let castable_how = to_cast_type.is_castable_to(&inner_type);
                     if matches!(castable_how, CastableHow::Yes | CastableHow::ConstnessLoss) {
                         if matches!(castable_how, CastableHow::ConstnessLoss) {
-                            ast_warning!(arguments[1], "This cast discards the constness from casted type"); // +W-constness-loss
-                            ast_note!(arguments[0], "Cast to a const variant of this type");
+                            warning(&arguments[1], "This cast discards the constness from casted type"); // +W-constness-loss
+                            note(&arguments[0], "Cast to a const variant of this type");
 
                             if matches!(to_cast_type, SkyeType::Pointer(..)) {
-                                ast_note!(arguments[1], "Since this is a pointer, you can also use the @constCast macro to discard its constness");
+                                note(&arguments[1], "Since this is a pointer, you can also use the @constCast macro to discard its constness");
                             }
                         }
 
@@ -784,7 +785,7 @@ impl IrGen {
                                 let mangled = inner_type.mangle();
                                 if let Some(result) = real_variants.get(&Rc::from(mangled.as_ref())) {
                                     if result.equals(&inner_type, EqualsLevel::Typewise) {
-                                        let mut question = Token::dummy(Rc::from(""));
+                                        let mut question = Token::empty();
                                         let mut custom_tok = question.clone();
                                         question.set_type(TokenType::Question);
                                         custom_tok.set_lexeme(&mangled);
@@ -880,7 +881,7 @@ impl IrGen {
                             }
                         }
 
-                        ast_error!(
+                        error!(
                             self, arguments[1],
                             format!(
                                 "Type {} cannot be casted to type {}",
@@ -892,7 +893,7 @@ impl IrGen {
                         Some(SkyeValue::special(*inner_type))
                     }
                 } else {
-                    ast_error!(
+                    error!(
                         self, arguments[0],
                         format!(
                             "Expecting type as cast type (got {})",
@@ -916,7 +917,7 @@ impl IrGen {
                         Some(to_cast)
                     }
                 } else {
-                    ast_error!(
+                    error!(
                         self, arguments[0],
                         format!(
                             "Expecting pointer as @constCast argument (got {})",
@@ -940,7 +941,7 @@ impl IrGen {
                         Some(to_cast)
                     }
                 } else {
-                    ast_error!(
+                    error!(
                         self, arguments[0],
                         format!(
                             "Expecting pointer or reference as @asPtr argument (got {})",
@@ -955,7 +956,7 @@ impl IrGen {
         }
     }
 
-    fn output_call(&mut self, return_type: SkyeType, callee_value: IrValue, args: Vec<IrValue>, pos: AstPos) -> IrValue {
+    fn output_call(&mut self, return_type: SkyeType, callee_value: IrValue, args: Vec<IrValue>, pos: SourcePos) -> IrValue {
         let call_ir_value = IrValue::new(
             IrValueData::Call { 
                 callee: Box::new(callee_value), 
@@ -1005,7 +1006,7 @@ impl IrGen {
             SkyeType::Unknown(_) => SkyeValue::get_unknown(),
             SkyeType::Function(params, return_type, _) => {
                 if params.len() != arguments_len {
-                    ast_error!(
+                    error!(
                         self, expr,
                         format!(
                             "Expecting {} arguments for function call but got {}",
@@ -1071,7 +1072,7 @@ impl IrGen {
                         if !params[i].type_.equals(&new_arg.ir_value.type_, EqualsLevel::Strict) {
                             if is_self {
                                 if let Some(info) = &callee.self_info {
-                                    ast_error!(
+                                    error!(
                                         self, callee_expr,
                                         format!(
                                             "This method cannot be called from type {}",
@@ -1082,7 +1083,7 @@ impl IrGen {
                                     unreachable!()
                                 }
                             } else {
-                                ast_error!(
+                                error!(
                                     self, arguments[i - arguments_mod],
                                     format!(
                                         "Argument type does not match parameter type (expecting {} but got {})",
@@ -1093,9 +1094,9 @@ impl IrGen {
                         }
                     } else {
                         if is_self {
-                            ast_error!(self, callee_expr, "This method cannot be called from a const source");
+                            error!(self, callee_expr, "This method cannot be called from a const source");
                         } else {
-                            ast_error!(
+                            error!(
                                 self, arguments[i - arguments_mod],
                                 format!(
                                     "Argument type does not match parameter type (expecting {} but got {})",
@@ -1114,7 +1115,7 @@ impl IrGen {
             SkyeType::Template(name, definition, generics, generics_names, curr_name_stack, read_env) => {
                 if let Statement::Function { params, return_type: return_type_expr, .. } = definition {
                     if params.len() != arguments_len {
-                        ast_error!(
+                        error!(
                             self, expr,
                             format!(
                                 "Expecting {} arguments for function call but got {}",
@@ -1215,9 +1216,9 @@ impl IrGen {
                         };
 
                         if !def_type.check_completeness() {
-                            ast_error!(self, params[i].type_, "Cannot use incomplete type directly");
-                            ast_note!(params[i].type_, "Define this type or reference it through a pointer");
-                            ast_note!(expr, "This error is a result of template generation originating from this call");
+                            error!(self, params[i].type_, "Cannot use incomplete type directly");
+                            note(&params[i].type_, "Define this type or reference it through a pointer");
+                            note(expr, "This error is a result of template generation originating from this call");
                         }
 
                         if let SkyeType::Type(inner_type) = &def_type {
@@ -1236,11 +1237,11 @@ impl IrGen {
                                             if let Some(generic_to_find) = generic_to_find {
                                                 // we already found this generic type before, check if this new inference conflicts with the previous one
                                                 if !generic_to_find.equals(&generic_type, EqualsLevel::Typewise) {
-                                                    ast_error!(self, arguments[i - arguments_mod], "Argument type does not match parameter type");
+                                                    error!(self, arguments[i - arguments_mod], "Argument type does not match parameter type");
 
                                                     let found_at_idx = *generics_found_at.get(&generic_name).unwrap();
                                                     let expr: &Expression = &arguments[found_at_idx - arguments_mod];
-                                                    ast_note!(
+                                                    note(
                                                         expr, 
                                                         format!(
                                                             "Based on this argument, {} is inferred to be of type {}...",
@@ -1248,15 +1249,15 @@ impl IrGen {
                                                         ).as_ref()
                                                     );
 
-                                                    ast_note!(
-                                                        arguments[i - arguments_mod], 
+                                                    note(
+                                                        &arguments[i - arguments_mod], 
                                                         format!(
                                                             "...this argument would make {} assume type {}",
                                                             generic_name, generic_type.stringify()
                                                         ).as_ref()
                                                     );
 
-                                                    ast_note!(params[i].type_, "Parameter type defined here");
+                                                    note(&params[i].type_, "Parameter type defined here");
                                                 }
                                             } else {
                                                 generics_to_find.insert(Rc::clone(&generic_name), Some(generic_type));
@@ -1268,7 +1269,7 @@ impl IrGen {
                                     if i == 0 && arguments_mod == 1 {
                                         // the only way self info makes inference error is if method is not available for type
                                         if let Some(info) = &callee.self_info {
-                                            ast_error!(
+                                            error!(
                                                 self, callee_expr,
                                                 format!(
                                                     "This method cannot be called from type {}",
@@ -1279,7 +1280,7 @@ impl IrGen {
                                             unreachable!()
                                         }
                                     } else {
-                                        ast_error!(
+                                        error!(
                                             self, arguments[i - arguments_mod],
                                             format!(
                                                 "Argument type does not match parameter type (expecting {} but got {})",
@@ -1287,15 +1288,15 @@ impl IrGen {
                                             ).as_ref()
                                         );
 
-                                        ast_note!(params[i].type_, "Parameter type defined here");
+                                        note(&params[i].type_, "Parameter type defined here");
                                     }
                                 }
                             } else {
                                 if i == 0 && arguments_mod == 1 {
                                     // the only way self info is not equal to parameter type is if constness is not respected
-                                    ast_error!(self, callee_expr, "This method cannot be called from a const source");
+                                    error!(self, callee_expr, "This method cannot be called from a const source");
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, arguments[i - arguments_mod],
                                         format!(
                                             "Argument type does not match parameter type (expecting {} but got {})",
@@ -1303,11 +1304,11 @@ impl IrGen {
                                         ).as_ref()
                                     );
 
-                                    ast_note!(params[i].type_, "Parameter type defined here");
+                                    note(&params[i].type_, "Parameter type defined here");
                                 }
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, params[i].type_,
                                 format!(
                                     "Expecting type as parameter type (got {})",
@@ -1315,7 +1316,7 @@ impl IrGen {
                                 ).as_ref()
                             );
 
-                            ast_note!(expr, "This error is a result of template generation originating from this call");
+                            note(expr, "This error is a result of template generation originating from this call");
                         }
 
                         args.push(new_call_evaluated.ir_value);
@@ -1340,16 +1341,16 @@ impl IrGen {
                                         if evaluated.ir_value.type_.can_be_instantiated(true) {
                                             Some(evaluated.ir_value.type_)
                                         } else {
-                                            ast_error!(self, default, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
+                                            error!(self, default, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
                                             None
                                         }
                                     } else {
-                                        ast_error!(self, default, "Cannot use incomplete type directly");
-                                        ast_note!(default, "Define this type or reference it through a pointer");
+                                        error!(self, default, "Cannot use incomplete type directly");
+                                        note(default, "Define this type or reference it through a pointer");
                                         None
                                     }
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, default,
                                         format!(
                                             "Expecting type as default generic (got {})",
@@ -1387,7 +1388,7 @@ impl IrGen {
                                         let at = *generics_found_at.get(&expr_generic.name.lexeme).unwrap();
 
                                         if at != 0 || arguments_mod != 1 {
-                                            ast_error!(
+                                            error!(
                                                 self, arguments[at - arguments_mod],
                                                 format!(
                                                     "Generic bound is not respected by this type (expecting {} but got {})",
@@ -1395,11 +1396,11 @@ impl IrGen {
                                                 ).as_ref()
                                             );
 
-                                            token_note!(expr_generic.name, "Generic defined here");
+                                            note(&expr_generic.name, "Generic defined here");
                                         }
                                     }
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, bounds,
                                         format!(
                                             "Expecting type or group as generic bound (got {})",
@@ -1419,9 +1420,9 @@ impl IrGen {
                             }
                         } else {
                             if self.errors == 0 { // avoids having inference errors caused by other errors
-                                ast_error!(self, callee_expr, "Skye cannot infer the generic types for this function");
-                                ast_note!(callee_expr, "This expression is a template and requires generic typing");
-                                ast_note!(callee_expr, "Manually specify the generic types");
+                                error!(self, callee_expr, "Skye cannot infer the generic types for this function");
+                                note(callee_expr, "This expression is a template and requires generic typing");
+                                note(callee_expr, "Manually specify the generic types");
                             }
 
                             return SkyeValue::get_unknown();
@@ -1440,20 +1441,20 @@ impl IrGen {
                         match ret_type {
                             SkyeType::Type(inner_type) => {
                                 if !inner_type.check_completeness() {
-                                    ast_error!(self, return_type_expr, "Cannot use incomplete type directly");
-                                    ast_note!(return_type_expr, "Define this type or reference it through a pointer");
-                                    ast_note!(expr, "This error is a result of template generation originating from this call");
+                                    error!(self, return_type_expr, "Cannot use incomplete type directly");
+                                    note(return_type_expr, "Define this type or reference it through a pointer");
+                                    note(expr, "This error is a result of template generation originating from this call");
                                 }
 
                                 if !inner_type.can_be_instantiated(false) {
-                                    ast_error!(self, return_type_expr, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
+                                    error!(self, return_type_expr, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
                                 }
 
                                 *inner_type.clone()
                             }
                             SkyeType::Void => ret_type,
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, return_type_expr,
                                     format!(
                                         "Expecting type as return type (got {})",
@@ -1461,7 +1462,7 @@ impl IrGen {
                                     ).as_ref()
                                 );
 
-                                ast_note!(expr, "This error is a result of template generation originating from this call");
+                                note(expr, "This error is a result of template generation originating from this call");
                                 SkyeType::get_unknown()
                             }
                         }
@@ -1497,10 +1498,10 @@ impl IrGen {
                             }
                         } else {
                             if let Some(tok) = existing.tok {
-                                ast_error!(self, callee_expr, "Template generation for this call resulted in an invalid type");
-                                token_note!(tok, "This definition is invalid. Change the name of this symbol");
+                                error!(self, callee_expr, "Template generation for this call resulted in an invalid type");
+                                note(&tok, "This definition is invalid. Change the name of this symbol");
                             } else {
-                                ast_error!(self, callee_expr, "Template generation for this call resulted in an invalid type. An invalid symbol definition is present in the code");
+                                error!(self, callee_expr, "Template generation for this call resulted in an invalid type. An invalid symbol definition is present in the code");
                             }
                         }
                     }
@@ -1512,7 +1513,7 @@ impl IrGen {
                     let type_ = {
                         match ctx.run(|ctx| self.execute(&definition, ctx)).await {
                             Ok(item) => item.unwrap_or_else(|| {
-                                ast_error!(self, expr, "Could not process template generation for this expression");
+                                error!(self, expr, "Could not process template generation for this expression");
                                 SkyeType::get_unknown()
                             }),
                             Err(_) => unreachable!("execution interrupt happened out of context")
@@ -1520,7 +1521,7 @@ impl IrGen {
                     };
 
                     if self.errors != old_errors {
-                        ast_note!(expr, "This error is a result of template generation originating from this call");
+                        note(expr, "This error is a result of template generation originating from this call");
                     }
 
                     self.name_stack  = previous_name_stack;
@@ -1550,8 +1551,8 @@ impl IrGen {
 
                     return SkyeValue::new(call_output, false);
                 } else {
-                    ast_error!(self, callee_expr, "Cannot call this expression");
-                    ast_note!(
+                    error!(self, callee_expr, "Cannot call this expression");
+                    note(
                         callee_expr,
                         format!(
                             "This expression has type {}",
@@ -1568,7 +1569,7 @@ impl IrGen {
                 match params_opt {
                     MacroParams::Some(params) => {
                         if params.len() != arguments_len {
-                            ast_error!(
+                            error!(
                                 self, expr,
                                 format!(
                                     "Expecting {} arguments for macro call but got {}",
@@ -1581,7 +1582,7 @@ impl IrGen {
                     }
                     MacroParams::OneN(_) => {
                         if arguments_len == 0 {
-                            ast_error!(self, expr, "Expecting at least one argument for macro call but got none");
+                            error!(self, expr, "Expecting at least one argument for macro call but got none");
                             return SkyeValue::get_unknown();
                         }
                     }
@@ -1633,14 +1634,14 @@ impl IrGen {
                             false
                         )
                     } else {
-                        ast_error!(
+                        error!(
                             self, return_type,
                             format!(
                                 "Expecting type as return type (got {})",
                                 call_return_type.ir_value.type_.stringify()
                             ).as_ref()
                         );
-                        ast_note!(expr, "This error is a result of this macro expansion");
+                        note(expr, "This error is a result of this macro expansion");
                         SkyeValue::get_unknown()
                     }
                 } else if let Some(result) = ctx.run(|ctx| self.handle_builtin_macros(macro_name, arguments, allow_unknown, callee_expr, ctx)).await {
@@ -1699,7 +1700,7 @@ impl IrGen {
                             let res = ctx.run(|ctx| self.evaluate(&curr_expr, allow_unknown, ctx)).await;
 
                             if self.errors != old_errors {
-                                ast_note!(expr, "This error is a result of this macro expansion");
+                                note(expr, "This error is a result of this macro expansion");
                             }
 
                             res
@@ -1707,17 +1708,17 @@ impl IrGen {
                             unreachable!("@panic call in irgen did not have MacroParams::Some");
                         }
                     } else {
-                        ast_error!(self, expr, "Macro call is not allowed here");
+                        error!(self, expr, "Macro call is not allowed here");
                         SkyeValue::get_unknown()
                     }
                 } else {
-                    ast_error!(self, expr, "Macro call is not allowed here");
+                    error!(self, expr, "Macro call is not allowed here");
                     SkyeValue::get_unknown()
                 }
             }
             _ => {
-                ast_error!(self, callee_expr, "Cannot call this expression");
-                ast_note!(
+                error!(self, callee_expr, "Cannot call this expression");
+                note(
                     callee_expr,
                     format!(
                         "This expression has type {}",
@@ -1768,7 +1769,7 @@ impl IrGen {
                     let _ = ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await;
                     inner
                 } else {
-                    token_error!(
+                    error!(
                         self, op,
                         format!(
                             "Prefix unary '{}' operator is not implemented for type {}",
@@ -1780,7 +1781,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                token_error!(
+                error!(
                     self, op,
                     format!(
                         "Type {} cannot use prefix unary '{}' operator",
@@ -1846,7 +1847,7 @@ impl IrGen {
                         false
                     )
                 } else {
-                    token_error!(
+                    error!(
                         self, op,
                         format!(
                             "Postfix unary '{}' operator is not implemented for type {}",
@@ -1858,7 +1859,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                token_error!(
+                error!(
                     self, op,
                     format!(
                         "Type {} cannot use postfix unary '{}' operator",
@@ -1895,7 +1896,7 @@ impl IrGen {
                     let v = Vec::new();
                     ctx.run(|ctx| self.call(&value, expr, inner_expr, &v, allow_unknown, ctx)).await
                 } else {
-                    token_error!(
+                    error!(
                         self, op,
                         format!(
                             "Prefix unary '{}' operator is not implemented for type {}",
@@ -1907,7 +1908,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                token_error!(
+                error!(
                     self, op,
                     format!(
                         "Type {} cannot use prefix unary '{}' operator",
@@ -1955,7 +1956,7 @@ impl IrGen {
                         )
                     }
                 } else {
-                    ast_error!(
+                    error!(
                         self, right_expr,
                         format!(
                             "Left operand type ({}) does not match right operand type ({})",
@@ -1972,7 +1973,7 @@ impl IrGen {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
-                    ast_error!(
+                    error!(
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
@@ -1984,7 +1985,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                ast_error!(
+                error!(
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
@@ -2057,7 +2058,7 @@ impl IrGen {
                         false
                     )
                 } else {
-                    ast_error!(
+                    error!(
                         self, right_expr,
                         format!(
                             "Expecting right operand type to be integer but got {}",
@@ -2074,7 +2075,7 @@ impl IrGen {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
-                    ast_error!(
+                    error!(
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
@@ -2086,7 +2087,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                ast_error!(
+                error!(
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
@@ -2194,7 +2195,7 @@ impl IrGen {
                         )
                     }
                 } else {
-                    ast_error!(
+                    error!(
                         self, right_expr,
                         format!(
                             "Left operand type ({}) does not match right operand type ({})",
@@ -2258,7 +2259,7 @@ impl IrGen {
                     let args = vec![right_expr.clone()];
                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                 } else {
-                    ast_error!(
+                    error!(
                         self, left_expr,
                         format!(
                             "Binary '{}' operator is not implemented for type {}",
@@ -2270,7 +2271,7 @@ impl IrGen {
                 }
             }
             ImplementsHow::No => {
-                ast_error!(
+                error!(
                     self, left_expr,
                     format!(
                         "Type {} cannot use binary '{}' operator",
@@ -2325,7 +2326,7 @@ impl IrGen {
                 SkyeValue::new(IrValue::uint(0, SkyeType::U8, Bits::B8), true)
             }
         } else {
-            ast_error!(
+            error!(
                 self, right_expr,
                 format!(
                     "Left operand type does not match right operand type (expecting type on right operand but got {})",
@@ -2372,7 +2373,7 @@ impl IrGen {
                         )
                     }
                     ImplementsHow::No => {
-                        token_error!(
+                        error!(
                             self, op,
                             format!(
                                 "Type {} cannot use '&' operator",
@@ -2485,7 +2486,7 @@ impl IrGen {
                 self.pos_stack.pop();
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
 
                 inner
@@ -2500,7 +2501,7 @@ impl IrGen {
                 self.pos_stack.pop();
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "This error is a result of this macro expansion");
+                    note_pos(source, "This error is a result of this macro expansion");
                 }
 
                 SkyeValue::special(SkyeType::Void)
@@ -2513,14 +2514,14 @@ impl IrGen {
                     let evaluated = ctx.run(|ctx| self.evaluate(&items[i], allow_unknown, ctx)).await;
 
                     if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
-                        ast_error!(
+                        error!(
                             self, items[i],
                             format!(
                                 "Items inside array do not have matching types (expecting {} but got {})",
                                 output_items[0].type_.stringify(), evaluated.ir_value.type_.stringify()
                             ).as_ref()
                         );
-                        ast_note!(items[0], "First item defined here");
+                        note(&items[0], "First item defined here");
                     }
 
                     output_items.push(evaluated.ir_value);
@@ -2573,8 +2574,8 @@ impl IrGen {
                         Expression::SignedIntLiteral { value, .. } => value as usize,
                         Expression::UnsignedIntLiteral { value, .. } => value as usize,
                         _ => {
-                            ast_error!(self, size_expr, "Array size must be an integer literal");
-                            ast_note!(size_expr, "The value must be known at compile time");
+                            error!(self, size_expr, "Array size must be an integer literal");
+                            note(size_expr, "The value must be known at compile time");
                             return SkyeValue::get_unknown_type();
                         }
                     }
@@ -2589,7 +2590,7 @@ impl IrGen {
                 };
 
                 if size == 0 {
-                    ast_error!(self, size_expr, "Array size cannot be zero");
+                    error!(self, size_expr, "Array size cannot be zero");
                     return SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Array(Box::new(type_), size))));
                 }
 
@@ -2624,14 +2625,14 @@ impl IrGen {
                     let evaluated = ctx.run(|ctx| self.evaluate(&items[i], allow_unknown, ctx)).await;
 
                     if !evaluated.ir_value.type_.equals(&output_items[0].type_, EqualsLevel::Typewise) {
-                        ast_error!(
+                        error!(
                             self, items[i],
                             format!(
                                 "Items inside array do not have matching types (expecting {} but got {})",
                                 output_items[0].type_.stringify(), evaluated.ir_value.type_.stringify()
                             ).as_ref()
                         );
-                        ast_note!(items[0], "First item defined here");
+                        note(&items[0], "First item defined here");
                     }
 
                     output_items.push(evaluated.ir_value);
@@ -2712,10 +2713,10 @@ impl IrGen {
                             let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
-                                ast_error!(self, inner_expr, "Cannot apply '++' operator on const value");
+                                error!(self, inner_expr, "Cannot apply '++' operator on const value");
                                 new_inner
                             } else if !inner_expr.is_valid_assignment_target() {
-                                ast_error!(self, inner_expr, "Can only apply '++' operator on valid assignment targets");
+                                error!(self, inner_expr, "Can only apply '++' operator on valid assignment targets");
                                 new_inner
                             } else {
                                 ctx.run(|ctx| self.pre_eval_unary_operator(
@@ -2730,10 +2731,10 @@ impl IrGen {
                             let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
-                                ast_error!(self, inner_expr, "Cannot apply '--' operator on const value");
+                                error!(self, inner_expr, "Cannot apply '--' operator on const value");
                                 new_inner
                             } else if !inner_expr.is_valid_assignment_target() {
-                                ast_error!(self, inner_expr, "Can only apply '--' operator on valid assignment targets");
+                                error!(self, inner_expr, "Can only apply '--' operator on valid assignment targets");
                                 new_inner
                             } else {
                                 ctx.run(|ctx| self.pre_eval_unary_operator(
@@ -2756,12 +2757,12 @@ impl IrGen {
                                 // !type syntax for void!type (result operator)
 
                                 if !inner.ir_value.type_.check_completeness() {
-                                    ast_error!(self, inner_expr, "Cannot use incomplete type directly");
-                                    ast_note!(inner_expr, "Define this type or reference it through a pointer");
+                                    error!(self, inner_expr, "Cannot use incomplete type directly");
+                                    note(inner_expr, "Define this type or reference it through a pointer");
                                 }
 
                                 if !inner.ir_value.type_.can_be_instantiated(true) {
-                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify()).as_ref());
+                                    error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify()).as_ref());
                                 }
 
                                 let mut custom_token = op.clone();
@@ -2790,12 +2791,12 @@ impl IrGen {
                                 // option operator
 
                                 if !inner.ir_value.type_.check_completeness() {
-                                    ast_error!(self, inner_expr, "Cannot use incomplete type directly");
-                                    ast_note!(inner_expr, "Define this type or reference it through a pointer");
+                                    error!(self, inner_expr, "Cannot use incomplete type directly");
+                                    note(inner_expr, "Define this type or reference it through a pointer");
                                 }
 
                                 if !inner.ir_value.type_.can_be_instantiated(true) {
-                                    ast_error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify()).as_ref());
+                                    error!(self, inner_expr, format!("Cannot instantiate type {}", inner.ir_value.type_.stringify()).as_ref());
                                 }
 
                                 let mut custom_token = op.clone();
@@ -2809,7 +2810,7 @@ impl IrGen {
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await
                             } else {
-                                ast_error!(
+                                error!(
                                     self, inner_expr,
                                     format!(
                                         "Invalid operand for option operator (expecting type but got {})",
@@ -2863,7 +2864,7 @@ impl IrGen {
                                             )
                                         }
                                         ImplementsHow::No => {
-                                            token_error!(
+                                            error!(
                                                 self, op,
                                                 format!(
                                                     "Type {} cannot use '&const' operator",
@@ -2881,7 +2882,7 @@ impl IrGen {
                             match inner.ir_value.type_ {
                                 SkyeType::Pointer(ref ptr_type, is_const, _) => {
                                     if matches!(**ptr_type, SkyeType::Void) {
-                                        ast_error!(self, inner_expr, "Cannot dereference a voidptr");
+                                        error!(self, inner_expr, "Cannot dereference a voidptr");
                                         SkyeValue::get_unknown()
                                     } else {
                                         let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", ctx)).await;
@@ -2897,7 +2898,7 @@ impl IrGen {
                                 }
                                 SkyeType::Type(type_type) => {
                                     if !type_type.can_be_instantiated(false) {
-                                        ast_error!(self, inner_expr, format!("Cannot instantiate type {}", type_type.stringify()).as_ref());
+                                        error!(self, inner_expr, format!("Cannot instantiate type {}", type_type.stringify()).as_ref());
                                     }
 
                                     SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(type_type, false, false))))
@@ -2940,7 +2941,7 @@ impl IrGen {
                                                         if let SkyeType::Pointer(inner, ptr_is_const, _) = &value.ir_value.type_ {
                                                             (*inner.clone(), *ptr_is_const)
                                                         } else {
-                                                            token_error!(
+                                                            error!(
                                                                 self, op,
                                                                 format!(
                                                                     "Expecting pointer as return type of {} (got {})",
@@ -2966,7 +2967,7 @@ impl IrGen {
                                         ImplementsHow::No => (),
                                     }
 
-                                    token_error!(
+                                    error!(
                                         self, op,
                                         format!(
                                             "Type {} cannot use prefix unary '*' operator",
@@ -2982,7 +2983,7 @@ impl IrGen {
                             match inner.ir_value.type_ {
                                 SkyeType::Pointer(ref ptr_type, ..) => { // readonly dereference
                                     if matches!(**ptr_type, SkyeType::Void) {
-                                        ast_error!(self, inner_expr, "Cannot dereference a voidptr");
+                                        error!(self, inner_expr, "Cannot dereference a voidptr");
                                         SkyeValue::get_unknown()
                                     } else {
                                         let inner_value = ctx.run(|ctx| self.zero_check(&inner, op, "Null pointer dereference", ctx)).await;
@@ -2998,7 +2999,7 @@ impl IrGen {
                                 }
                                 SkyeType::Type(type_type) => {
                                     if !type_type.can_be_instantiated(false) {
-                                        ast_error!(self, inner_expr, format!("Cannot instantiate type {}", type_type.stringify()).as_ref());
+                                        error!(self, inner_expr, format!("Cannot instantiate type {}", type_type.stringify()).as_ref());
                                     }
 
                                     SkyeValue::special(SkyeType::Type(Box::new(SkyeType::Pointer(type_type, true, false))))
@@ -3017,7 +3018,7 @@ impl IrGen {
                         }
                         TokenType::Try => {
                             if matches!(self.curr_function, CurrentFn::None) {
-                                token_error!(self, op, "Can only use \"try\" operator inside functions");
+                                error!(self, op, "Can only use \"try\" operator inside functions");
                                 return SkyeValue::get_unknown();
                             }
 
@@ -3028,7 +3029,7 @@ impl IrGen {
                                             if return_variants.is_some() && name.as_ref() == return_type_name.as_ref() {
                                                 (return_type.clone(), return_type_expr.clone())
                                             } else {
-                                                token_error!(
+                                                error!(
                                                     self, op,
                                                     format!(
                                                         "Can only use \"try\" operator inside functions returning core::Result or core::Option (got {})",
@@ -3036,11 +3037,11 @@ impl IrGen {
                                                     ).as_ref()
                                                 );
 
-                                                ast_note!(return_type_expr, "Return type defined here");
+                                                note(return_type_expr, "Return type defined here");
                                                 return SkyeValue::get_unknown();
                                             }
                                         } else {
-                                            token_error!(
+                                            error!(
                                                 self, op,
                                                 format!(
                                                     "Can only use \"try\" operator inside functions returning core::Result or core::Option (got {})",
@@ -3048,7 +3049,7 @@ impl IrGen {
                                                 ).as_ref()
                                             );
 
-                                            ast_note!(return_type_expr, "Return type defined here");
+                                            note(return_type_expr, "Return type defined here");
                                             return SkyeValue::get_unknown();
                                         }
                                     } else {
@@ -3222,7 +3223,7 @@ impl IrGen {
                                                         }
                                                     });
                                                 } else {
-                                                    ast_error!(
+                                                    error!(
                                                         self, expr,
                                                         format!(
                                                             "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type ({})",
@@ -3230,10 +3231,10 @@ impl IrGen {
                                                         ).as_ref()
                                                     );
 
-                                                    ast_note!(return_expr, "Return type defined here");
+                                                    note(&return_expr, "Return type defined here");
                                                 }
                                             } else {
-                                                ast_error!(
+                                                error!(
                                                     self, expr,
                                                     format!(
                                                         "core::Result \"Error\" variant type (void) does not match with return type's \"Error\" variant type ({})",
@@ -3241,10 +3242,10 @@ impl IrGen {
                                                     ).as_ref()
                                                 );
 
-                                                ast_note!(return_expr, "Return type defined here");
+                                                note(&return_expr, "Return type defined here");
                                             }
                                         } else if let Some(variant) = variants.as_ref().unwrap().get("Error") {
-                                            ast_error!(
+                                            error!(
                                                 self, expr,
                                                 format!(
                                                     "core::Result \"Error\" variant type ({}) does not match with return type's \"Error\" variant type (void)",
@@ -3252,7 +3253,7 @@ impl IrGen {
                                                 ).as_ref()
                                             );
 
-                                            ast_note!(return_expr, "Return type defined here");
+                                            note(&return_expr, "Return type defined here");
                                         } else {
                                             Self::add_statement_to_scope(&scope.data, IrStatement {
                                                 pos: expr.get_pos(),
@@ -3287,7 +3288,7 @@ impl IrGen {
                                         SkyeValue::special(SkyeType::Void)
                                     }
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, inner_expr,
                                         format!(
                                             "Can only use \"try\" operator on expressions returning core::Result or core::Option (got {})",
@@ -3298,7 +3299,7 @@ impl IrGen {
                                     SkyeValue::get_unknown()
                                 }
                             } else {
-                                ast_error!(
+                                error!(
                                     self, inner_expr,
                                     format!(
                                         "Can only use \"try\" operator on expressions returning core::Result or core::Option (got {})",
@@ -3318,8 +3319,8 @@ impl IrGen {
 
                                             if let SkyeType::Type(inner_type) = ret_type.ir_value.type_ {
                                                 if !inner_type.check_completeness() {
-                                                    ast_error!(self, return_type, "Cannot use incomplete type directly");
-                                                    ast_note!(return_type, "Define this type or reference it through a pointer");
+                                                    error!(self, return_type, "Cannot use incomplete type directly");
+                                                    note(return_type, "Define this type or reference it through a pointer");
                                                 }
 
                                                 SkyeValue::new(
@@ -3330,7 +3331,7 @@ impl IrGen {
                                                     true
                                                 )
                                             } else {
-                                                ast_error!(
+                                                error!(
                                                     self, return_type,
                                                     format!(
                                                         "Expecting type as return type (got {})",
@@ -3338,14 +3339,14 @@ impl IrGen {
                                                     ).as_ref()
                                                 );
 
-                                                ast_note!(expr, "This error is a result of this macro expansion");
+                                                note(expr, "This error is a result of this macro expansion");
                                                 SkyeValue::get_unknown()
                                             }
                                         } else {
-                                            ast_error!(self, expr, "Macro is not allowed here");
+                                            error!(self, expr, "Macro is not allowed here");
 
                                             if matches!(self.curr_function, CurrentFn::None) {
-                                                ast_note!(expr, "If your macro expands to a declaration, use the \"use ... as _;\" syntax to expand it");
+                                                note(expr, "If your macro expands to a declaration, use the \"use ... as _;\" syntax to expand it");
                                             }
 
                                             SkyeValue::get_unknown()
@@ -3361,7 +3362,7 @@ impl IrGen {
                                     }
                                 } else {
                                     if !matches!(&*inner_type, SkyeType::Unknown(_)) {
-                                        token_error!(
+                                        error!(
                                             self, op,
                                             format!(
                                                 "'@' can only be used on macros (got {})",
@@ -3374,7 +3375,7 @@ impl IrGen {
                                 }
                             } else {
                                 if !matches!(inner.ir_value.type_, SkyeType::Unknown(_)) {
-                                    token_error!(
+                                    error!(
                                         self, op,
                                         format!(
                                             "'@' can only be used on macros (got {})",
@@ -3394,10 +3395,10 @@ impl IrGen {
                             let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
-                                ast_error!(self, inner_expr, "Cannot apply '++' operator on const value");
+                                error!(self, inner_expr, "Cannot apply '++' operator on const value");
                                 new_inner
                             } else if !inner_expr.is_valid_assignment_target() {
-                                ast_error!(self, inner_expr, "Can only apply '++' operator on valid assignment targets");
+                                error!(self, inner_expr, "Can only apply '++' operator on valid assignment targets");
                                 new_inner
                             } else {
                                 ctx.run(|ctx| self.post_eval_unary_operator(
@@ -3412,10 +3413,10 @@ impl IrGen {
                             let new_inner = inner.follow_reference(self.external_zero_check(op));
 
                             if new_inner.is_const {
-                                ast_error!(self, inner_expr, "Cannot apply '--' operator on const value");
+                                error!(self, inner_expr, "Cannot apply '--' operator on const value");
                                 new_inner
                             } else if !inner_expr.is_valid_assignment_target() {
-                                ast_error!(self, inner_expr, "Can only apply '--' operator on valid assignment targets");
+                                error!(self, inner_expr, "Can only apply '--' operator on valid assignment targets");
                                 new_inner
                             } else {
                                 ctx.run(|ctx| self.post_eval_unary_operator(
@@ -3551,7 +3552,7 @@ impl IrGen {
                                     result_type.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                                     compatible_types.contains(&right.ir_value.type_)
                                 ) {
-                                    ast_error!(
+                                    error!(
                                         self, right_expr,
                                         format!(
                                             "Left operand type ({}) does not match right operand type ({})",
@@ -3591,7 +3592,7 @@ impl IrGen {
                                     let args = vec![*right_expr.clone()];
                                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, left_expr,
                                         format!(
                                             "Binary '||' operator is not implemented for type {}",
@@ -3603,7 +3604,7 @@ impl IrGen {
                                 }
                             }
                             ImplementsHow::No => {
-                                ast_error!(
+                                error!(
                                     self, left_expr,
                                     format!(
                                         "Type {} cannot use binary '||' operator",
@@ -3683,7 +3684,7 @@ impl IrGen {
                                     result_type.equals(&right.ir_value.type_, EqualsLevel::Typewise) ||
                                     compatible_types.contains(&right.ir_value.type_)
                                 ) {
-                                    ast_error!(
+                                    error!(
                                         self, right_expr,
                                         format!(
                                             "Left operand type ({}) does not match right operand type ({})",
@@ -3723,7 +3724,7 @@ impl IrGen {
                                     let args = vec![*right_expr.clone()];
                                     ctx.run(|ctx| self.call(&value, expr, left_expr, &args, allow_unknown, ctx)).await
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, left_expr,
                                         format!(
                                             "Binary '&&' operator is not implemented for type {}",
@@ -3735,7 +3736,7 @@ impl IrGen {
                                 }
                             }
                             ImplementsHow::No => {
-                                ast_error!(
+                                error!(
                                     self, left_expr,
                                     format!(
                                         "Type {} cannot use binary '&&' operator",
@@ -3761,7 +3762,7 @@ impl IrGen {
                             if right.ir_value.type_.is_type() || matches!(right.ir_value.type_, SkyeType::Void) {
                                 SkyeValue::special(SkyeType::Group(Box::new(left.ir_value.type_), Box::new(right.ir_value.type_)))
                             } else {
-                                ast_error!(
+                                error!(
                                     self, right_expr,
                                     format!(
                                         "Left operand type ({}) does not match right operand type ({})",
@@ -3844,12 +3845,12 @@ impl IrGen {
                         let left_ok = matches!(left.ir_value.type_, SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_));
                         if left_ok {
                             if !left.ir_value.type_.check_completeness() {
-                                ast_error!(self, left_expr, "Cannot use incomplete type directly");
-                                ast_note!(left_expr, "Define this type or reference it through a pointer");
+                                error!(self, left_expr, "Cannot use incomplete type directly");
+                                note(left_expr, "Define this type or reference it through a pointer");
                             }
 
                             if !left.ir_value.type_.can_be_instantiated(true) {
-                                ast_error!(self, left_expr, format!("Cannot instantiate type {}", left.ir_value.type_.stringify()).as_ref());
+                                error!(self, left_expr, format!("Cannot instantiate type {}", left.ir_value.type_.stringify()).as_ref());
                             }
 
                             let right = ctx.run(|ctx| self.evaluate(&right_expr, allow_unknown, ctx)).await;
@@ -3858,12 +3859,12 @@ impl IrGen {
                                 // result operator
 
                                 if !right.ir_value.type_.check_completeness() {
-                                    ast_error!(self, right_expr, "Cannot use incomplete type directly");
-                                    ast_note!(left_expr, "Define this type or reference it through a pointer");
+                                    error!(self, right_expr, "Cannot use incomplete type directly");
+                                    note(left_expr, "Define this type or reference it through a pointer");
                                 }
 
                                 if !right.ir_value.type_.can_be_instantiated(true) {
-                                    ast_error!(self, left_expr, format!("Cannot instantiate type {}", right.ir_value.type_.stringify()).as_ref());
+                                    error!(self, left_expr, format!("Cannot instantiate type {}", right.ir_value.type_.stringify()).as_ref());
                                 }
 
                                 let mut custom_token = op.clone();
@@ -3880,7 +3881,7 @@ impl IrGen {
 
                                 ctx.run(|ctx| self.evaluate(&subscript_expr, allow_unknown, ctx)).await
                             } else {
-                                ast_error!(
+                                error!(
                                     self, right_expr,
                                     format!(
                                         "Invalid operand for result operator (expecting type but got {})",
@@ -3891,7 +3892,7 @@ impl IrGen {
                                 SkyeValue::get_unknown()
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, left_expr,
                                 format!(
                                     "Invalid operand for result operator (expecting type but got {})",
@@ -3913,7 +3914,7 @@ impl IrGen {
                 if allow_unknown {
                     SkyeValue::special(SkyeType::Unknown(Rc::clone(&name.lexeme)))
                 } else {
-                    token_error!(
+                    error!(
                         self, name,
                         format!(
                             "Cannot reference undefined symbol \"{}\"",
@@ -3930,11 +3931,11 @@ impl IrGen {
 
                 if matches!(op.type_, TokenType::Equal) {
                     if target.is_const {
-                        ast_error!(self, target_expr, "Assignment target is const");
+                        error!(self, target_expr, "Assignment target is const");
                     }
                 } else {
                     if target.follow_reference(self.external_zero_check(op)).is_const {
-                        ast_error!(self, target_expr, "Assignment target is const");
+                        error!(self, target_expr, "Assignment target is const");
                     }
                 }
 
@@ -3955,7 +3956,7 @@ impl IrGen {
                                 true
                             )
                         } else {
-                            ast_error!(
+                            error!(
                                 self, value_expr,
                                 format!(
                                     "Value type ({}) does not match target type ({})",
@@ -4056,7 +4057,7 @@ impl IrGen {
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
-                        ast_error!(
+                        error!(
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for ternary operator condition (got {})",
@@ -4080,7 +4081,7 @@ impl IrGen {
                 self.curr_definition = previous_definition;
 
                 if !then_branch.ir_value.type_.equals(&else_branch.ir_value.type_, EqualsLevel::Typewise) {
-                    ast_error!(
+                    error!(
                         self, else_branch_expr,
                         format!(
                             "Ternary operator then branch type ({}) does not match else branch type ({})",
@@ -4162,15 +4163,15 @@ impl IrGen {
                 match &identifier_type.ir_value.type_ {
                     SkyeType::Type(inner_type) => {
                         if !inner_type.check_completeness() {
-                            ast_error!(self, identifier_expr, "Cannot use incomplete type directly");
-                            ast_note!(identifier_expr, "Define this type or reference it through a pointer");
+                            error!(self, identifier_expr, "Cannot use incomplete type directly");
+                            note(identifier_expr, "Define this type or reference it through a pointer");
                         }
 
                         match &**inner_type {
                             SkyeType::Struct(_, def_fields, _) => {
                                 if let Some(defined_fields) = def_fields {
                                     if fields.len() != defined_fields.len() {
-                                        ast_error!(self, expr, format!(
+                                        error!(self, expr, format!(
                                             "Expecting {} fields but got {}",
                                             defined_fields.len(), fields.len()
                                         ).as_str());
@@ -4183,7 +4184,7 @@ impl IrGen {
                                             let field_evaluated = ctx.run(|ctx| self.evaluate(&field.expr, allow_unknown, ctx)).await;
 
                                             if !defined_field.type_.equals(&field_evaluated.ir_value.type_, EqualsLevel::Strict) {
-                                                ast_error!(
+                                                error!(
                                                     self, field.expr,
                                                     format!(
                                                         "Invalid type for this field (expecting {} but got {})",
@@ -4194,7 +4195,7 @@ impl IrGen {
 
                                             fields_output.insert(Rc::clone(&field.name.lexeme), field_evaluated.ir_value);
                                         } else {
-                                            token_error!(self, field.name, "Unknown struct field");
+                                            error!(self, field.name, "Unknown struct field");
                                         }
                                     }
                                     
@@ -4206,14 +4207,14 @@ impl IrGen {
                                         true
                                     )
                                 } else {
-                                    ast_error!(self, identifier_expr, "Cannot initialize struct that is declared but has no definition");
+                                    error!(self, identifier_expr, "Cannot initialize struct that is declared but has no definition");
                                     SkyeValue::get_unknown()
                                 }
                             }
                             SkyeType::Union(_, def_fields) => {
                                 if let Some(defined_fields) = def_fields {
                                     if fields.len() != 1 {
-                                        ast_error!(self, expr, "Can only assign one field of a union");
+                                        error!(self, expr, "Can only assign one field of a union");
                                         return SkyeValue::special(*inner_type.clone());
                                     }
 
@@ -4222,7 +4223,7 @@ impl IrGen {
                                         let field_evaluated = ctx.run(|ctx| self.evaluate(&fields[0].expr, allow_unknown, ctx)).await;
 
                                         if !defined_field.type_.equals(&field_evaluated.ir_value.type_, EqualsLevel::Strict) {
-                                            ast_error!(
+                                            error!(
                                                 self, fields[0].expr,
                                                 format!(
                                                     "Invalid type for this field (expecting {} but got {})",
@@ -4233,7 +4234,7 @@ impl IrGen {
 
                                         fields_output.insert(Rc::clone(&fields[0].name.lexeme), field_evaluated.ir_value);
                                     } else {
-                                        token_error!(self, fields[0].name, "Unknown union field");
+                                        error!(self, fields[0].name, "Unknown union field");
                                     }
 
                                     SkyeValue::new(
@@ -4244,12 +4245,12 @@ impl IrGen {
                                         true
                                     )
                                 } else {
-                                    ast_error!(self, identifier_expr, "Cannot initialize union that is declared but has no definition");
+                                    error!(self, identifier_expr, "Cannot initialize union that is declared but has no definition");
                                     SkyeValue::get_unknown()
                                 }
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, identifier_expr,
                                     format!(
                                         "Expecting struct, struct template, union, or bitfield type as compound literal identifier (got {})",
@@ -4264,7 +4265,7 @@ impl IrGen {
                     SkyeType::Template(name, definition, generics, generics_names, curr_name_stack, read_env) => {
                         if let Statement::Struct { name: struct_name, fields: defined_fields, .. } = &definition {
                             if fields.len() != defined_fields.len() {
-                                ast_error!(self, expr, format!(
+                                error!(self, expr, format!(
                                     "Expecting {} fields but got {}",
                                     defined_fields.len(), fields.len()
                                 ).as_str());
@@ -4279,7 +4280,7 @@ impl IrGen {
                             let mut fields_map = HashMap::new();
                             for field in defined_fields {
                                 if fields_map.contains_key(&field.name.lexeme) {
-                                    token_error!(self, field.name, "Cannot define the same struct field multiple times");
+                                    error!(self, field.name, "Cannot define the same struct field multiple times");
                                 } else {
                                     fields_map.insert(Rc::clone(&field.name.lexeme), field.expr.clone());
                                 }
@@ -4319,9 +4320,9 @@ impl IrGen {
                                     };
 
                                     if !def_type.check_completeness() {
-                                        ast_error!(self, def_field_expr, "Cannot use incomplete type directly");
-                                        ast_note!(def_field_expr, "Define this type or reference it through a pointer");
-                                        ast_note!(expr, "This error is a result of template generation originating from this compound literal");
+                                        error!(self, def_field_expr, "Cannot use incomplete type directly");
+                                        note(def_field_expr, "Define this type or reference it through a pointer");
+                                        note(expr, "This error is a result of template generation originating from this compound literal");
                                     }
 
                                     if let SkyeType::Type(inner_type) = &def_type {
@@ -4340,20 +4341,20 @@ impl IrGen {
                                                         if let Some(generic_to_find) = generic_to_find {
                                                             // we already found this generic type before, check if this new inference conflicts with the previous one
                                                             if !generic_to_find.equals(&generic_type, EqualsLevel::Typewise) {
-                                                                ast_error!(self, field.expr, "Field type does not match definition field type");
+                                                                error!(self, field.expr, "Field type does not match definition field type");
 
                                                                 let found_at_idx = *generics_found_at.get(&generic_name).unwrap();
                                                                 let previous_field: &StructField = &fields[found_at_idx];
-                                                                ast_note!(
-                                                                    previous_field.expr, 
+                                                                note(
+                                                                    &previous_field.expr, 
                                                                     format!(
                                                                         "Based on this field, {} is inferred to be of type {}...",
                                                                         generic_name, generic_to_find.stringify()
                                                                     ).as_ref()
                                                                 );
 
-                                                                ast_note!(
-                                                                    field.expr, 
+                                                                note(
+                                                                    &field.expr, 
                                                                     format!(
                                                                         "...this field would make {} assume type {}",
                                                                         generic_name, generic_type.stringify()
@@ -4367,7 +4368,7 @@ impl IrGen {
                                                     }
                                                 }
                                             } else {
-                                                ast_error!(
+                                                error!(
                                                     self, field.expr,
                                                     format!(
                                                         "Field type does not match definition field type (expecting {} but got {})",
@@ -4376,7 +4377,7 @@ impl IrGen {
                                                 );
                                             }
                                         } else {
-                                            ast_error!(
+                                            error!(
                                                 self, field.expr,
                                                 format!(
                                                     "Field type does not match definition field type (expecting {} but got {})",
@@ -4385,7 +4386,7 @@ impl IrGen {
                                             );
                                         }
                                     } else {
-                                        ast_error!(
+                                        error!(
                                             self, field.expr,
                                             format!(
                                                 "Expecting type as field type (got {})",
@@ -4396,7 +4397,7 @@ impl IrGen {
 
                                     fields_output.insert(Rc::clone(&field.name.lexeme), literal_evaluated.ir_value);
                                 } else {
-                                    token_error!(self, field.name, "Unknown struct field");
+                                    error!(self, field.name, "Unknown struct field");
                                 }
                             }
 
@@ -4419,16 +4420,16 @@ impl IrGen {
                                                 if evaluated.ir_value.type_.can_be_instantiated(false) {
                                                     Some(evaluated.ir_value.type_)
                                                 } else {
-                                                    ast_error!(self, default, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
+                                                    error!(self, default, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
                                                     None
                                                 }
                                             } else {
-                                                ast_error!(self, default, "Cannot use incomplete type directly");
-                                                ast_note!(default, "Define this type or reference it through a pointer");
+                                                error!(self, default, "Cannot use incomplete type directly");
+                                                note(default, "Define this type or reference it through a pointer");
                                                 None
                                             }
                                         } else {
-                                            ast_error!(
+                                            error!(
                                                 self, default,
                                                 format!(
                                                     "Expecting type as default generic (got {})",
@@ -4465,7 +4466,7 @@ impl IrGen {
                                             } else {
                                                 let at = *generics_found_at.get(&expr_generic.name.lexeme).unwrap();
 
-                                                ast_error!(
+                                                error!(
                                                     self, fields[at].expr,
                                                     format!(
                                                         "Generic bound is not respected by this type (expecting {} but got {})",
@@ -4473,10 +4474,10 @@ impl IrGen {
                                                     ).as_ref()
                                                 );
 
-                                                token_note!(expr_generic.name, "Generic defined here");
+                                                note(&expr_generic.name, "Generic defined here");
                                             }
                                         } else {
-                                            ast_error!(
+                                            error!(
                                                 self, bounds,
                                                 format!(
                                                     "Expecting type or group as generic bound (got {})",
@@ -4496,9 +4497,9 @@ impl IrGen {
                                     }
                                 } else {
                                     if self.errors == 0 { // avoids having inference errors caused by other errors
-                                        ast_error!(self, identifier_expr, "Skye cannot infer the generic types for this struct literal");
-                                        ast_note!(identifier_expr, "This expression is a template and requires generic typing");
-                                        ast_note!(identifier_expr, "Manually specify the generic types");
+                                        error!(self, identifier_expr, "Skye cannot infer the generic types for this struct literal");
+                                        note(identifier_expr, "This expression is a template and requires generic typing");
+                                        note(identifier_expr, "Manually specify the generic types");
                                     }
 
                                     return SkyeValue::get_unknown();
@@ -4525,10 +4526,10 @@ impl IrGen {
                                         true
                                     );
                                 } else if let Some(orig_tok) = var.tok {
-                                    token_error!(self, struct_name, "This struct's generic type name resolves to an invalid type");
-                                    token_note!(orig_tok, "This definition is invalid. Change the name of this symbol");
+                                    error!(self, struct_name, "This struct's generic type name resolves to an invalid type");
+                                    note(&orig_tok, "This definition is invalid. Change the name of this symbol");
                                 } else {
-                                    token_error!(self, struct_name, "This struct's generic type name resolves to an invalid type. An invalid symbol definition is present in the code");
+                                    error!(self, struct_name, "This struct's generic type name resolves to an invalid type. An invalid symbol definition is present in the code");
                                 }
                             }
 
@@ -4543,7 +4544,7 @@ impl IrGen {
                             let type_ = {
                                 match ctx.run(|ctx| self.execute(&definition,  ctx)).await {
                                     Ok(item) => item.unwrap_or_else(|| {
-                                        ast_error!(self, expr, "Could not process template generation for this expression");
+                                        error!(self, expr, "Could not process template generation for this expression");
                                         SkyeType::get_unknown()
                                     }),
                                     Err(_) => unreachable!("execution interrupt happened out of context")
@@ -4577,7 +4578,7 @@ impl IrGen {
                                 panic!("struct template generation resulted in not a type");
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, identifier_expr,
                                 format!(
                                     "Expecting struct, struct template, union, or bitfield type as compound literal identifier (got {})",
@@ -4589,7 +4590,7 @@ impl IrGen {
                         }
                     }
                     _ => {
-                        ast_error!(
+                        error!(
                             self, identifier_expr,
                             format!(
                                 "Expecting struct, struct template, union, or bitfield type as compound literal identifier (got {})",
@@ -4611,7 +4612,7 @@ impl IrGen {
                         assert!(!is_reference); // if the references were followed correctly, this cannot be a reference
 
                         if arguments.len() != 1 {
-                            token_error!(self, paren, "Expecting one subscript argument for pointer offset");
+                            error!(self, paren, "Expecting one subscript argument for pointer offset");
                             return SkyeValue::special(*inner_type.clone());
                         }
 
@@ -4635,7 +4636,7 @@ impl IrGen {
                                 );                                
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, &arguments[0],
                                     format!(
                                         "Expecting integer for subscripting operation (got {})",
@@ -4649,7 +4650,7 @@ impl IrGen {
                     }
                     SkyeType::Array(inner_type, size) => {
                         if arguments.len() != 1 {
-                            token_error!(self, paren, "Expecting one subscript argument for array access");
+                            error!(self, paren, "Expecting one subscript argument for array access");
                             return SkyeValue::special(*inner_type.clone());
                         }
 
@@ -4669,7 +4670,7 @@ impl IrGen {
 
                                 if let Some(index) = index {
                                     if index > size {
-                                        ast_error!(
+                                        error!(
                                             self, arguments[0], 
                                             format!(
                                                 "Index {} is out of bounds for length {}",
@@ -4677,7 +4678,7 @@ impl IrGen {
                                             ).as_str()
                                         );
 
-                                        ast_note!(
+                                        note(
                                             subscripted_expr,
                                             format!("This array has length {}", size).as_str()
                                         );
@@ -4698,7 +4699,7 @@ impl IrGen {
                                 )
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, &arguments[0],
                                     format!(
                                         "Expecting integer for subscripting operation (got {})",
@@ -4720,7 +4721,7 @@ impl IrGen {
                             }
 
                             if arguments.len() < needed_cnt || arguments.len() > generics.len() {
-                                ast_error!(
+                                error!(
                                     self, expr,
                                     format!(
                                         "Expecting at least {} generic arguments and {} at most but got {}",
@@ -4763,7 +4764,7 @@ impl IrGen {
                             match &evaluated {
                                 SkyeType::Type(_) | SkyeType::Void | SkyeType::Unknown(_) => (),
                                 _ => {
-                                    ast_error!(
+                                    error!(
                                         self, arguments[i - offs],
                                         format!(
                                             "Expecting type as generic type (got {})",
@@ -4776,12 +4777,12 @@ impl IrGen {
                             }
 
                             if !evaluated.check_completeness() {
-                                ast_error!(self, arguments[i - offs], "Cannot use incomplete type directly");
-                                ast_note!(arguments[i - offs], "Define this type or reference it through a pointer");
+                                error!(self, arguments[i - offs], "Cannot use incomplete type directly");
+                                note(&arguments[i - offs], "Define this type or reference it through a pointer");
                             }
 
                             if !evaluated.can_be_instantiated(true) {
-                                ast_error!(self, arguments[i - offs], format!("Cannot instantiate type {}", evaluated.stringify()).as_ref());
+                                error!(self, arguments[i - offs], format!("Cannot instantiate type {}", evaluated.stringify()).as_ref());
                             }
 
                             if let Some(bounds) = &generic.bounds {
@@ -4794,7 +4795,7 @@ impl IrGen {
 
                                 if evaluated_bound.ir_value.type_.is_type() || matches!(evaluated_bound.ir_value.type_, SkyeType::Void) {
                                     if !evaluated_bound.ir_value.type_.is_respected_by(&evaluated) {
-                                        ast_error!(
+                                        error!(
                                             self, arguments[i - offs],
                                             format!(
                                                 "Generic bound is not respected by this type (expecting {} but got {})",
@@ -4802,10 +4803,10 @@ impl IrGen {
                                             ).as_ref()
                                         );
 
-                                        token_note!(generic.name, "Generic defined here");
+                                        note(&generic.name, "Generic defined here");
                                     }
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, bounds,
                                         format!(
                                             "Expecting type or group as generic bound (got {})",
@@ -4899,7 +4900,7 @@ impl IrGen {
                         let type_ = {
                             match ctx.run(|ctx| self.execute(&definition, ctx)).await {
                                 Ok(item) => item.unwrap_or_else(|| {
-                                    ast_error!(self, expr, "Could not process template generation for this expression");
+                                    error!(self, expr, "Could not process template generation for this expression");
                                     SkyeType::get_unknown()
                                 }),
                                 Err(_) => unreachable!("execution interrupt happened out of context")
@@ -4970,7 +4971,7 @@ impl IrGen {
                                             is_const
                                         )
                                     } else {
-                                        ast_error!(
+                                        error!(
                                             self, subscripted_expr,
                                             format!(
                                                 "Expecting pointer as return type of {} (got {})",
@@ -5007,7 +5008,7 @@ impl IrGen {
                                                 is_const
                                             )
                                         } else {
-                                            ast_error!(
+                                            error!(
                                                 self, subscripted_expr,
                                                 format!(
                                                     "Expecting pointer as return type of {} (got {})",
@@ -5018,7 +5019,7 @@ impl IrGen {
                                             SkyeValue::get_unknown()
                                         }
                                     } else {
-                                        ast_error!(
+                                        error!(
                                             self, subscripted_expr,
                                             format!(
                                                 "Subscripting operation is not implemented for type {}",
@@ -5031,7 +5032,7 @@ impl IrGen {
                                 }
                             }
                             ImplementsHow::No => {
-                                ast_error!(
+                                error!(
                                     self, subscripted_expr,
                                     format!(
                                         "Type {} cannot be subscripted",
@@ -5053,7 +5054,7 @@ impl IrGen {
                         return SkyeValue::new(value, is_const)
                     }
                     GetResult::InvalidType => {
-                        ast_error!(
+                        error!(
                             self, object_expr,
                             format!(
                                 "Can only get properties from structs and sum type enums (got {})",
@@ -5065,7 +5066,7 @@ impl IrGen {
                         if let Some(value) = self.get_method(&object, name, false) {
                             return value;
                         } else {
-                            token_error!(self, name, format!("Undefined property \"{}\"", name.lexeme).as_ref());
+                            error!(self, name, format!("Undefined property \"{}\"", name.lexeme).as_ref());
                         }
                     }
                 }
@@ -5085,7 +5086,7 @@ impl IrGen {
                                 self.name_stack.push(last_name);
                                 search_tok.set_lexeme(&name);
                             } else {
-                                token_error!(self, name, "Cannot use super in the global namespace");
+                                error!(self, name, "Cannot use super in the global namespace");
                                 search_tok.set_lexeme(&name.lexeme);
                             }
 
@@ -5099,7 +5100,7 @@ impl IrGen {
                                 object = Some(obj);
                             } else {
                                 if !matches!(obj.ir_value.type_, SkyeType::Unknown(_)) {
-                                    ast_error!(
+                                    error!(
                                         self, object_expr,
                                         format!(
                                             "Can only statically access namespaces, structs, enums and instances (got {})",
@@ -5145,7 +5146,7 @@ impl IrGen {
                     } 
                 }
                 
-                token_error!(self, name, "Undefined property");
+                error!(self, name, "Undefined property");
                 SkyeValue::get_unknown()
             }
         }
@@ -5190,7 +5191,7 @@ impl IrGen {
                         self.add_statement(output);
 
                         if i != statements.len() - 1 {
-                            ast_warning!(statements[i + 1], "Unreachable code");
+                            warning(&statements[i + 1], "Unreachable code");
                             break;
                         }
                     }
@@ -5201,7 +5202,7 @@ impl IrGen {
                         self.add_statement(output);
 
                         if i != statements.len() - 1 {
-                            ast_warning!(statements[i + 1], "Unreachable code");
+                            warning(&statements[i + 1], "Unreachable code");
                             break;
                         }
                     }
@@ -5243,20 +5244,20 @@ impl IrGen {
                 }
 
                 if self.errors != old_errors {
-                    astpos_note!(source, "The error(s) were a result of this import");
+                    note_pos(source, "The error(s) were a result of this import");
                 }
             }
             Statement::Expression(expr) => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    ast_error!(self, expr, "Only declarations are allowed at top level");
-                    ast_note!(expr, "Place this expression inside a function");
+                    error!(self, expr, "Only declarations are allowed at top level");
+                    note(expr, "Place this expression inside a function");
                 }
 
                 let value = ctx.run(|ctx| self.evaluate(&expr, false, ctx)).await;
 
                 if !value.ir_value.type_.can_be_instantiated(true) {
-                    ast_error!(self, expr, "Cannot use compile-time type as a standalone expression");
-                    ast_note!(
+                    error!(self, expr, "Cannot use compile-time type as a standalone expression");
+                    note(
                         expr,
                         format!(
                             "This expression has type {}",
@@ -5268,8 +5269,8 @@ impl IrGen {
                 if !matches!(expr.get_inner(), Expression::Assign { .. }) {
                     if let SkyeType::Enum(.., base_name) = &value.ir_value.type_ {
                         if base_name.as_ref() == format!("core{}Result", dot!()).as_str() {
-                            ast_warning!(expr, "Error is being ignored implictly");
-                            ast_note!(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
+                            warning(expr, "Error is being ignored implictly");
+                            note(expr, "Handle this error or discard it using the \"let _ = x\" syntax");
                         }
                     }
                 }
@@ -5300,17 +5301,17 @@ impl IrGen {
                                 if inner_type.check_completeness() {
                                     Some(*inner_type)
                                 } else {
-                                    ast_error!(self, type_, "Cannot use incomplete type directly");
-                                    ast_note!(type_, "Define this type or reference it through a pointer");
+                                    error!(self, type_, "Cannot use incomplete type directly");
+                                    note(type_, "Define this type or reference it through a pointer");
                                     Some(SkyeType::get_unknown())
                                 }
                             }
                             SkyeType::Group(..) => {
-                                ast_error!(self, type_, "Cannot use type group for variable declaration");
+                                error!(self, type_, "Cannot use type group for variable declaration");
                                 Some(SkyeType::get_unknown())
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, type_,
                                     format!(
                                         "Invalid expression as type specifier (expecting type but got {})",
@@ -5327,13 +5328,13 @@ impl IrGen {
                 };
 
                 if value.is_none() && type_spec.is_none() {
-                    token_error!(self, name, "Variable declaration without initializer needs a type specifier");
-                    token_note!(name, "Add a type specifier after the variable name");
+                    error!(self, name, "Variable declaration without initializer needs a type specifier");
+                    note(name, "Add a type specifier after the variable name");
                     return Ok(None);
                 }
 
                 if value.is_some() && type_spec.is_some() && !type_spec.as_ref().unwrap().equals(&value.as_ref().unwrap().ir_value.type_, EqualsLevel::Strict) {
-                    ast_error!(
+                    error!(
                         self, initializer.as_ref().unwrap(),
                         format!(
                             "Initializer type ({}) does not match declared type ({})",
@@ -5342,8 +5343,8 @@ impl IrGen {
                         ).as_ref()
                     );
 
-                    ast_note!(initializer.as_ref().unwrap(), "Is this expression correct?");
-                    ast_note!(type_spec_expr.as_ref().unwrap(), "If the initializer is correct, consider changing or removing the type specifier");
+                    note(initializer.as_ref().unwrap(), "Is this expression correct?");
+                    note(type_spec_expr.as_ref().unwrap(), "If the initializer is correct, consider changing or removing the type specifier");
                 }
 
                 let type_ = {
@@ -5356,9 +5357,9 @@ impl IrGen {
 
                 if !type_.can_be_instantiated(false) {
                     if let Some(expr) = type_spec_expr {
-                        ast_error!(self, expr, format!("Cannot instantiate type {}", type_.stringify()).as_ref());
+                        error!(self, expr, format!("Cannot instantiate type {}", type_.stringify()).as_ref());
                     } else if let Some(expr) = initializer {
-                        ast_error!(self, expr, format!("Cannot instantiate type {}", type_.stringify()).as_ref());
+                        error!(self, expr, format!("Cannot instantiate type {}", type_.stringify()).as_ref());
                     }
                 }
 
@@ -5368,12 +5369,12 @@ impl IrGen {
                 if is_discard {
                     if let Some(init) = initializer {
                         if is_global {
-                            ast_error!(self, init, "Cannot discard a value in the global scope");
-                            ast_note!(init, "Move the statement inside a function");
+                            error!(self, init, "Cannot discard a value in the global scope");
+                            note(init, "Move the statement inside a function");
                         }
                     } else {
-                        token_error!(self, name, "Cannot use this name for variable declaration");
-                        token_note!(name, "Rename this variable");
+                        error!(self, name, "Cannot use this name for variable declaration");
+                        note(name, "Rename this variable");
                     }
 
                     let filtered = value.unwrap().ir_value.keep_side_effects();
@@ -5404,11 +5405,11 @@ impl IrGen {
 
                     if is_global {
                         if *is_const {
-                            token_error!(self, name, "Global constants are not allowed");
-                            token_note!(name, "If you want to create a compile-time constant, use a macro");
+                            error!(self, name, "Global constants are not allowed");
+                            note(name, "If you want to create a compile-time constant, use a macro");
                         } else if let Some(init) = initializer {
-                            ast_error!(self, init, "Cannot assign a value to a global variable directly");
-                            ast_note!(init, "Remove the initializer and assign this value through a function");
+                            error!(self, init, "Cannot assign a value to a global variable directly");
+                            note(init, "Remove the initializer and assign this value through a function");
                         }
 
                         self.definitions.push(Rc::new(RefCell::new(definition)));
@@ -5419,10 +5420,10 @@ impl IrGen {
                     let mut env = self.environment.borrow_mut();
 
                     if let Some(var) = env.get_in_scope(&Token::dummy(Rc::clone(&full_name))) {
-                        token_error!(self, name, "Cannot declare variable with same name as existing symbol defined in the same scope");
+                        error!(self, name, "Cannot declare variable with same name as existing symbol defined in the same scope");
 
                         if let Some(token) = &var.tok {
-                            token_note!(*token, "Previously defined here");
+                            note(token, "Previously defined here");
                         }
                     }
 
@@ -5487,10 +5488,10 @@ impl IrGen {
                         if let Some(var) = &existing {
                             if let SkyeType::Function(.., has_body) = var.type_ {
                                 if has_body && body.is_some() {
-                                    token_error!(self, name, "Cannot redeclare functions");
+                                    error!(self, name, "Cannot redeclare functions");
 
                                     if let Some(token) = &var.tok {
-                                        token_note!(*token, "Previously defined here");
+                                        note(token, "Previously defined here");
                                     }
 
                                     false
@@ -5498,10 +5499,10 @@ impl IrGen {
                                     true
                                 }
                             } else {
-                                token_error!(self, name, "Cannot declare function with same name as existing symbol");
+                                error!(self, name, "Cannot declare function with same name as existing symbol");
 
                                 if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
+                                    note(token, "Previously defined here");
                                 }
 
                                 false
@@ -5521,7 +5522,7 @@ impl IrGen {
                 if has_decl {
                     if let SkyeType::Function(_, existing_return_type, _) = &existing.as_ref().unwrap().type_ {
                         if !existing_return_type.equals(&return_type, EqualsLevel::Typewise) {
-                            ast_error!(
+                            error!(
                                 self, return_type_expr,
                                 format!(
                                     "Function return type ({}) does not match declaration return type ({})",
@@ -5540,15 +5541,15 @@ impl IrGen {
 
                 if info.init {
                     if params.len() != 0 {
-                        token_error!(self, name, "#init function must take no parameters");
+                        error!(self, name, "#init function must take no parameters");
                     }
 
                     if !has_body {
-                        token_error!(self, name, "#init function must have a body");
+                        error!(self, name, "#init function must have a body");
                     }
 
                     if full_name.as_ref() == "main" {
-                        token_error!(self, name, "\"main\" function cannot be #init");
+                        error!(self, name, "\"main\" function cannot be #init");
                     }
 
                     self.add_statement_at_idx(
@@ -5576,7 +5577,7 @@ impl IrGen {
                 // main function handling
                 if has_body && full_name.as_ref() == "main" {
                     if info.bind {
-                        token_error!(self, name, "Cannot bind \"main\" function");
+                        error!(self, name, "Cannot bind \"main\" function");
                     }
 
                     let returns_void        = return_stringified == "void";
@@ -5615,7 +5616,7 @@ impl IrGen {
                     if (returns_void || returns_i32 || returns_i32_result || returns_void_result) && (no_args || has_args || has_stdargs) {
                         full_name = Rc::from("_SKYE_MAIN");
                     } else {
-                        token_error!(self, name, "Invalid function signature for \"main\" function");
+                        error!(self, name, "Invalid function signature for \"main\" function");
                     }
                 }
 
@@ -5736,8 +5737,8 @@ impl IrGen {
             }
             Statement::If { kw, condition: cond_expr, then_branch, else_branch } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this if statement inside a function");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Place this if statement inside a function");
                 }
 
                 let cond = ctx.run(|ctx| self.evaluate(cond_expr, false, ctx)).await;
@@ -5747,7 +5748,7 @@ impl IrGen {
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
-                        ast_error!(
+                        error!(
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for if condition (got {})",
@@ -5783,8 +5784,8 @@ impl IrGen {
             }
             Statement::While { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this while loop inside a function");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Place this while loop inside a function");
                 }
 
                 let body_scope = IrStatement::empty_scope(kw.get_pos());
@@ -5804,7 +5805,7 @@ impl IrGen {
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
-                        ast_error!(
+                        error!(
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for while condition (got {})",
@@ -5868,8 +5869,8 @@ impl IrGen {
             }
             Statement::For { kw, initializer, condition: cond_expr, increments, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this for loop inside a function");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Place this for loop inside a function");
                 }
 
                 let previous = Rc::clone(&self.environment);
@@ -5900,7 +5901,7 @@ impl IrGen {
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
-                        ast_error!(
+                        error!(
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for for condition (got {})",
@@ -5974,8 +5975,8 @@ impl IrGen {
             }
             Statement::DoWhile { kw, condition: cond_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this do-while loop inside a function");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Place this do-while loop inside a function");
                 }
 
                 let body_scope = IrStatement::empty_scope(kw.get_pos());
@@ -6011,7 +6012,7 @@ impl IrGen {
                     SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 |
                     SkyeType::AnyInt | SkyeType::Unknown(_) => (),
                     _ => {
-                        ast_error!(
+                        error!(
                             self, cond_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type for while condition (got {})",
@@ -6059,8 +6060,8 @@ impl IrGen {
             }
             Statement::Return { kw, value: ret_expr } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Cannot return from top-level code");
-                    token_note!(kw, "Remove this return statement");
+                    error!(self, kw, "Cannot return from top-level code");
+                    note(kw, "Remove this return statement");
                 }
 
                 if let Some(expr) = ret_expr {
@@ -6071,11 +6072,11 @@ impl IrGen {
                         is_void = matches!(return_type, SkyeType::Void);
 
                         if is_void && !matches!(value.ir_value.type_, SkyeType::Void) {
-                            ast_error!(self, expr, "Cannot return value in a function that returns void");
-                            ast_note!(expr, "Remove this expression");
-                            ast_note!(return_type_expr, "Return type defined here");
+                            error!(self, expr, "Cannot return value in a function that returns void");
+                            note(expr, "Remove this expression");
+                            note(return_type_expr, "Return type defined here");
                         } else if !return_type.equals(&value.ir_value.type_, EqualsLevel::Typewise) {
-                            ast_error!(
+                            error!(
                                 self, expr,
                                 format!(
                                     "Returned value type ({}) does not match function return type ({})",
@@ -6083,7 +6084,7 @@ impl IrGen {
                                 ).as_ref()
                             );
 
-                            ast_note!(return_type_expr, "Return type defined here");
+                            note(return_type_expr, "Return type defined here");
                         }
                     } else {
                         unreachable!();
@@ -6121,9 +6122,9 @@ impl IrGen {
                 } else {
                     if let CurrentFn::Some { return_type, return_type_expr } = &self.curr_function {
                         if !matches!(return_type, SkyeType::Void) {
-                            token_error!(self, kw, "Cannot return no value in this function");
-                            token_note!(kw, "Add a return value");
-                            ast_note!(return_type_expr, "Return type defined here");
+                            error!(self, kw, "Cannot return no value in this function");
+                            note(kw, "Add a return value");
+                            note(return_type_expr, "Return type defined here");
                         }
                     } else {
                         unreachable!();
@@ -6149,24 +6150,24 @@ impl IrGen {
                         if let SkyeType::Type(inner_type) = &var.type_ {
                             if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
                                 if *has_body && existing_fields.is_some() {
-                                    token_error!(self, name, "Cannot redefine structs");
+                                    error!(self, name, "Cannot redefine structs");
 
                                     if let Some(token) = &var.tok {
-                                        token_note!(*token, "Previously defined here");
+                                        note(token, "Previously defined here");
                                     }
                                 }
                             } else {
-                                token_error!(self, name, "Cannot declare struct with same name as existing symbol");
+                                error!(self, name, "Cannot declare struct with same name as existing symbol");
 
                                 if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
+                                    note(token, "Previously defined here");
                                 }
                             }
                         } else {
-                            token_error!(self, name, "Cannot declare struct with same name as existing symbol");
+                            error!(self, name, "Cannot declare struct with same name as existing symbol");
 
                             if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
+                                note(token, "Previously defined here");
                             }
                         }
                     }
@@ -6217,14 +6218,14 @@ impl IrGen {
                                         if inner_type.check_completeness() {
                                             *inner_type
                                         } else {
-                                            ast_error!(self, field.expr, "Cannot use incomplete type directly");
-                                            ast_note!(field.expr, "Define this type or reference it through a pointer");
+                                            error!(self, field.expr, "Cannot use incomplete type directly");
+                                            note(&field.expr, "Define this type or reference it through a pointer");
                                             SkyeType::get_unknown()
                                         }
                                     }
                                     SkyeType::Unknown(_) => tmp,
                                     _ => {
-                                        ast_error!(
+                                        error!(
                                             self, field.expr,
                                             format!(
                                                 "Expecting type as field type (got {})",
@@ -6238,7 +6239,7 @@ impl IrGen {
                             };
 
                             if output_fields.contains_key(&field.name.lexeme) {
-                                token_error!(self, field.name, "Cannot define the same struct field multiple times");
+                                error!(self, field.name, "Cannot define the same struct field multiple times");
                             } else {
                                 let bits = {
                                     if let Some(bits_expr) = &field.bits {
@@ -6246,8 +6247,8 @@ impl IrGen {
                                             Expression::SignedIntLiteral { value, .. } => Some(value as u64),
                                             Expression::UnsignedIntLiteral { value, .. } => Some(value as u64),
                                             _ => {
-                                                ast_error!(self, bits_expr, "Bit size must be an integer literal");
-                                                ast_note!(bits_expr, "The value must be known at compile time");
+                                                error!(self, bits_expr, "Bit size must be an integer literal");
+                                                note(bits_expr, "The value must be known at compile time");
                                                 None
                                             }
                                         }
@@ -6274,8 +6275,8 @@ impl IrGen {
                 };
 
                 if type_.is_recursive() {
-                    ast_error!(self, stmt, "Cannot declare a recursive data structure");
-                    ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                    error!(self, stmt, "Cannot declare a recursive data structure");
+                    note(stmt, "If you are referencing the type through itself, use a reference");
                 }
 
                 if binding.is_none() {
@@ -6329,7 +6330,7 @@ impl IrGen {
                                 env.undef(Rc::from("Self"));
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, struct_expr,
                                     format!(
                                         "Can only implement structs and enums or their templates (got {})",
@@ -6365,7 +6366,7 @@ impl IrGen {
                                 env.undef(Rc::from("Self"));
                             }
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, struct_expr,
                                     format!(
                                         "Can only implement structs and enums or their templates (got {})",
@@ -6376,7 +6377,7 @@ impl IrGen {
                         }
                     }
                     _ => {
-                        ast_error!(
+                        error!(
                             self, struct_expr,
                             format!(
                                 "Can only implement structs and enums or their templates (got {})",
@@ -6388,7 +6389,7 @@ impl IrGen {
             }
             Statement::Namespace { name, body } => {
                 if matches!(self.curr_function, CurrentFn::Some { .. }) {
-                    token_error!(self, name, "Namespaces are only allowed in the global scope");
+                    error!(self, name, "Namespaces are only allowed in the global scope");
                 }
 
                 let full_name = self.get_name(&name.lexeme);
@@ -6396,10 +6397,10 @@ impl IrGen {
                 let mut env = self.globals.borrow_mut();
                 if let Some(var) = env.get(name) {
                     if !matches!(var.type_, SkyeType::Namespace(_)) {
-                        token_error!(self, name, "Cannot declare namespace with same name as existing symbol");
+                        error!(self, name, "Cannot declare namespace with same name as existing symbol");
 
                         if let Some(token) = &var.tok {
-                            token_note!(*token, "Previously defined here");
+                            note(token, "Previously defined here");
                         }
 
                         return Ok(None);
@@ -6456,10 +6457,10 @@ impl IrGen {
 
                     let mut env = self.environment.borrow_mut();
                     if let Some(existing) = env.get_in_scope(&Token::dummy(Rc::clone(&full_name))) {
-                        token_error!(self, identifier, "Cannot define identifier with same name as existing symbol defined in the same scope");
+                        error!(self, identifier, "Cannot define identifier with same name as existing symbol defined in the same scope");
 
                         if let Some(token) = &existing.tok {
-                            token_note!(*token, "Previously defined here");
+                            note(token, "Previously defined here");
                         }
                     }
 
@@ -6491,7 +6492,7 @@ impl IrGen {
                             SkyeType::U8  | SkyeType::I8  | SkyeType::U16 | SkyeType::I16 |
                             SkyeType::U32 | SkyeType::I32 | SkyeType::U64 | SkyeType::I64 => *inner_type.clone(),
                             _ => {
-                                ast_error!(
+                                error!(
                                     self, type_expr,
                                     format!(
                                         "Expecting primitive arithmetic type as enum type (got {})",
@@ -6503,7 +6504,7 @@ impl IrGen {
                             }
                         }
                     } else {
-                        ast_error!(
+                        error!(
                             self, type_expr,
                             format!(
                                 "Expecting type as enum type (got {})",
@@ -6537,10 +6538,10 @@ impl IrGen {
                         if let Some(var) = env.get(&search_tok) {
                             drop(env);
                             if generics.len() == 0 {
-                                token_error!(self, name, "Cannot redefine enums");
+                                error!(self, name, "Cannot redefine enums");
 
                                 if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
+                                    note(token, "Previously defined here");
                                 }
                             }
                         } else {
@@ -6583,8 +6584,8 @@ impl IrGen {
                                         if matches!(default, Expression::SignedIntLiteral { .. } | Expression::UnsignedIntLiteral { .. }) {
                                             value = Some(ctx.run(|ctx| self.evaluate(default, false, ctx)).await.ir_value);
                                         } else {
-                                            ast_error!(self, default, "Enum value must be a literal");
-                                            ast_note!(default, "The value must be known at compile time");
+                                            error!(self, default, "Enum value must be a literal");
+                                            note(default, "The value must be known at compile time");
                                         }
                                     }
 
@@ -6628,17 +6629,17 @@ impl IrGen {
                                             if inner_type.can_be_instantiated(false) {
                                                 *inner_type
                                             } else {
-                                                ast_error!(self, variant.type_, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
+                                                error!(self, variant.type_, format!("Cannot instantiate type {}", inner_type.stringify()).as_ref());
                                                 SkyeType::get_unknown()
                                             }
                                         } else {
-                                            ast_error!(self, variant.type_, "Cannot use incomplete type directly");
-                                            ast_note!(variant.type_, "Define this type or reference it through a pointer");
+                                            error!(self, variant.type_, "Cannot use incomplete type directly");
+                                            note(&variant.type_, "Define this type or reference it through a pointer");
                                             SkyeType::get_unknown()
                                         }
                                     }
                                     _ => {
-                                        ast_error!(
+                                        error!(
                                             self, variant.type_,
                                             format!(
                                                 "Expecting type as enum variant type (got {})",
@@ -6704,8 +6705,8 @@ impl IrGen {
                             );
 
                             if struct_output_type.is_recursive() {
-                                ast_error!(self, stmt, "Cannot declare a recursive data structure");
-                                ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                                error!(self, stmt, "Cannot declare a recursive data structure");
+                                note(stmt, "If you are referencing the type through itself, use a reference");
                             }
 
                             for variant in evaluated_variants {
@@ -6903,24 +6904,24 @@ impl IrGen {
                         if let SkyeType::Type(inner_type) = &var.type_ {
                             if let SkyeType::Enum(_, existing_fields, _) = &**inner_type {
                                 if *has_body && existing_fields.is_some() {
-                                    token_error!(self, name, "Cannot redefine enums");
+                                    error!(self, name, "Cannot redefine enums");
 
                                     if let Some(token) = &var.tok {
-                                        token_note!(*token, "Previously defined here");
+                                        note(token, "Previously defined here");
                                     }
                                 }
                             } else {
-                                token_error!(self, name, "Cannot declare enum with same name as existing symbol");
+                                error!(self, name, "Cannot declare enum with same name as existing symbol");
 
                                 if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
+                                    note(token, "Previously defined here");
                                 }
                             }
                         } else {
-                            token_error!(self, name, "Cannot declare enum with same name as existing symbol");
+                            error!(self, name, "Cannot declare enum with same name as existing symbol");
 
                             if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
+                                note(token, "Previously defined here");
                             }
                         }
                     }
@@ -6942,14 +6943,14 @@ impl IrGen {
             }
             Statement::Defer { kw, statement } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Remove this defer statement");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Remove this defer statement");
                 }
 
                 match &**statement {
                     Statement::Return { kw, .. } | Statement::Break(kw) |
                     Statement::Continue(kw) | Statement::Defer { kw, .. } => {
-                        token_error!(self, kw, "Cannot use this statement inside a defer statement");
+                        error!(self, kw, "Cannot use this statement inside a defer statement");
                     }
                     _ => ()
                 }
@@ -6958,8 +6959,8 @@ impl IrGen {
             }
             Statement::Switch { kw, expr: switch_expr, cases } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Remove this switch statement");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Remove this switch statement");
                 }
 
                 let switch = ctx.run(|ctx| self.evaluate(&switch_expr, false, ctx)).await;
@@ -6974,13 +6975,13 @@ impl IrGen {
                         is_classic = false;
 
                         if !inner.can_be_instantiated(false) {
-                            ast_error!(self, switch_expr, format!("Cannot instantiate type {}", inner.stringify()).as_ref());
+                            error!(self, switch_expr, format!("Cannot instantiate type {}", inner.stringify()).as_ref());
                         }
                     }
                     SkyeType::Void => is_classic = false,
                     SkyeType::Enum(_, variants, _) => {
                         if variants.is_some() {
-                            ast_error!(
+                            error!(
                                 self, switch_expr,
                                 format!(
                                     "Expecting expression of primitive arithmetic type, simple enum or type for switch condition (got {})",
@@ -6990,7 +6991,7 @@ impl IrGen {
                         }
                     }
                     _ => {
-                        ast_error!(
+                        error!(
                             self, switch_expr,
                             format!(
                                 "Expecting expression of primitive arithmetic type, simple enum or type for switch condition (got {})",
@@ -7020,7 +7021,7 @@ impl IrGen {
                                     SkyeType::AnyFloat | SkyeType::Char | SkyeType::Unknown(_) => (),
                                     SkyeType::Enum(_, variants, _) => {
                                         if variants.is_some() {
-                                            ast_error!(
+                                            error!(
                                                 self, switch_expr,
                                                 format!(
                                                     "Expecting expression of primitive arithmetic type or simple enum for case expression (got {})",
@@ -7030,7 +7031,7 @@ impl IrGen {
                                         }
                                     }
                                     _ => {
-                                        ast_error!(
+                                        error!(
                                             self, real_case,
                                             format!(
                                                 "Expecting expression of primitive arithmetic type or simple enum for case expression (got {})",
@@ -7042,7 +7043,7 @@ impl IrGen {
 
                                 cases_output.push(real_case_evaluated.ir_value);
                             } else if !matches!(real_case_evaluated.ir_value.type_, SkyeType::Type(_) | SkyeType::Void) {
-                                ast_error!(
+                                error!(
                                     self, real_case,
                                     format!(
                                         "Expecting type or void for case expression (got {})",
@@ -7151,7 +7152,7 @@ impl IrGen {
                         data: IrStatementData::Goto { label: Rc::clone(&curr_loop.break_.label) }
                     }));
                 } else {
-                    token_error!(self, kw, "Can only use break inside loops");
+                    error!(self, kw, "Can only use break inside loops");
                 }
             }
             Statement::Continue(kw) => {
@@ -7163,7 +7164,7 @@ impl IrGen {
                         data: IrStatementData::Goto { label: Rc::clone(&curr_loop.continue_.label) }
                     }));
                 } else {
-                    token_error!(self, kw, "Can only use continue inside loops");
+                    error!(self, kw, "Can only use continue inside loops");
                 }
             }
             Statement::Import { path: path_tok, type_: import_type, flags, .. } => {
@@ -7206,24 +7207,24 @@ impl IrGen {
                     if let SkyeType::Type(inner_type) = &var.type_ {
                         if let SkyeType::Union(_, existing_fields) = &**inner_type {
                             if *has_body && existing_fields.is_some() {
-                                token_error!(self, name, "Cannot redefine unions");
+                                error!(self, name, "Cannot redefine unions");
 
                                 if let Some(token) = &var.tok {
-                                    token_note!(*token, "Previously defined here");
+                                    note(token, "Previously defined here");
                                 }
                             } 
                         } else {
-                            token_error!(self, name, "Cannot declare union with same name as existing symbol");
+                            error!(self, name, "Cannot declare union with same name as existing symbol");
 
                             if let Some(token) = &var.tok {
-                                token_note!(*token, "Previously defined here");
+                                note(token, "Previously defined here");
                             }
                         }
                     } else {
-                        token_error!(self, name, "Cannot declare union with same name as existing symbol");
+                        error!(self, name, "Cannot declare union with same name as existing symbol");
 
                         if let Some(token) = &var.tok {
-                            token_note!(*token, "Previously defined here");
+                            note(token, "Previously defined here");
                         }
                     }
                 }
@@ -7272,13 +7273,13 @@ impl IrGen {
                                     if inner_type.check_completeness() {
                                         *inner_type
                                     } else {
-                                        ast_error!(self, field.expr, "Cannot use incomplete type directly");
-                                        ast_note!(field.expr, "Define this type or reference it through a pointer");
+                                        error!(self, field.expr, "Cannot use incomplete type directly");
+                                        note(&field.expr, "Define this type or reference it through a pointer");
                                         SkyeType::get_unknown()
                                     }
 
                                 } else {
-                                    ast_error!(
+                                    error!(
                                         self, field.expr,
                                         format!(
                                             "Expecting type as field type (got {})",
@@ -7291,7 +7292,7 @@ impl IrGen {
                             };
 
                             if output_fields.contains_key(&field.name.lexeme) {
-                                token_error!(self, field.name, "Cannot define the same union field multiple times");
+                                error!(self, field.name, "Cannot define the same union field multiple times");
                             } else {
                                 let bits = {
                                     if let Some(bits_expr) = &field.bits {
@@ -7299,8 +7300,8 @@ impl IrGen {
                                             Expression::SignedIntLiteral { value, .. } => Some(value as u64),
                                             Expression::UnsignedIntLiteral { value, .. } => Some(value as u64),
                                             _ => {
-                                                ast_error!(self, bits_expr, "Bit size must be an integer literal");
-                                                ast_note!(bits_expr, "The value must be known at compile time");
+                                                error!(self, bits_expr, "Bit size must be an integer literal");
+                                                note(bits_expr, "The value must be known at compile time");
                                                 None
                                             }
                                         }
@@ -7327,8 +7328,8 @@ impl IrGen {
                 };
 
                 if type_.is_recursive() {
-                    ast_error!(self, stmt, "Cannot declare a recursive data structure");
-                    ast_note!(stmt, "If you are referencing the type through itself, use a reference");
+                    error!(self, stmt, "Cannot declare a recursive data structure");
+                    note(stmt, "If you are referencing the type through itself, use a reference");
                 }
 
                 if binding.is_none() {
@@ -7354,7 +7355,7 @@ impl IrGen {
                 let full_name = {
                     if matches!(body, MacroBody::Binding(_)) {
                         if self.name_stack.len() != 0 {
-                            token_warning!(name, "C macro bindings do not support namespaces. This macro will be saved in the global namespace"); // +Wmacro-namespace
+                            warning(name, "C macro bindings do not support namespaces. This macro will be saved in the global namespace"); // +Wmacro-namespace
                         }
 
                         Rc::clone(&name.lexeme)
@@ -7381,8 +7382,8 @@ impl IrGen {
             }
             Statement::Foreach { kw, variable_name: var_name, iterator: iterator_expr, body } => {
                 if matches!(self.curr_function, CurrentFn::None) {
-                    token_error!(self, kw, "Only declarations are allowed at top level");
-                    token_note!(kw, "Place this for loop inside a function");
+                    error!(self, kw, "Only declarations are allowed at top level");
+                    note(kw, "Place this for loop inside a function");
                 }
 
                 let toplevel_scope = IrStatement::empty_scope(kw.get_pos());
@@ -7393,7 +7394,7 @@ impl IrGen {
                 let iterator_raw = ctx.run(|ctx| self.evaluate(iterator_expr, false, ctx)).await;
 
                 if !matches!(iterator_raw.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
-                    ast_error!(
+                    error!(
                         self, iterator_expr,
                         format!(
                             "This type ({}) is not iterable",
@@ -7427,7 +7428,7 @@ impl IrGen {
 
                             let iterator_type_stringified = iterator_call.ir_value.type_.stringify();
                             if iterator_type_stringified.len() == 0 || !matches!(iterator.ir_value.type_, SkyeType::Struct(..) | SkyeType::Enum(..)) {
-                                ast_error!(
+                                error!(
                                     self, iterator_expr,
                                     format!(
                                         "The implementation of iter for this type ({}) returns an invalid type (expecting struct or enum type but got {})",
@@ -7444,7 +7445,7 @@ impl IrGen {
                             if let Some(final_method) = self.get_method(&iterator_val, &search_tok, false) {
                                 final_method
                             } else {
-                                ast_error!(
+                                error!(
                                     self, iterator_expr,
                                     format!(
                                         "The iterator object (of type {}) returned by iter has no next method",
@@ -7455,7 +7456,7 @@ impl IrGen {
                                 return Ok(None);
                             }
                         } else {
-                            ast_error!(
+                            error!(
                                 self, iterator_expr,
                                 format!(
                                     "Type {} is not iterable",
@@ -7486,7 +7487,7 @@ impl IrGen {
                 let item_type = {
                     if let SkyeType::Enum(_, variants, name) = &next_call.ir_value.type_ {
                         if name.as_ref() != format!("core{}Option", dot!()).as_str() {
-                            ast_error!(
+                            error!(
                                 self, iterator_expr,
                                 format!(
                                     "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
@@ -7500,11 +7501,11 @@ impl IrGen {
                         if let Some(some_variant) = variants.as_ref().unwrap().get("Some") {
                             some_variant.clone()
                         } else {
-                            ast_error!(self, iterator_expr, "Cannot iterate over an iterator returning a void item");
+                            error!(self, iterator_expr, "Cannot iterate over an iterator returning a void item");
                             SkyeType::get_unknown()
                         }
                     } else {
-                        ast_error!(
+                        error!(
                             self, iterator_expr,
                             format!(
                                 "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
@@ -7518,7 +7519,7 @@ impl IrGen {
 
                 // TODO i don't think this is even possible
                 if !item_type.can_be_instantiated(false) {
-                    ast_error!(
+                    error!(
                         self, iterator_expr,
                         format!(
                             "The implementation of next for this iterator returns an invalid type (expecting core::Option but got {})",
@@ -7632,7 +7633,7 @@ impl IrGen {
                         for bound_type in bound_types {
                             let evaluated = ctx.run(|ctx| self.evaluate(&bound_type, false, ctx)).await;
                             if matches!(evaluated.ir_value.type_, SkyeType::Void) || !evaluated.ir_value.type_.can_be_instantiated(true) {
-                                ast_error!(self, bound_type, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
+                                error!(self, bound_type, format!("Cannot instantiate type {}", evaluated.ir_value.type_.stringify()).as_ref());
                             }
 
                             let mut name_tok = name.clone();
@@ -7730,7 +7731,7 @@ impl IrGen {
                                     info: info.clone()
                                 });
                             } else {
-                                ast_error!(self, statement, "Can only define functions in interface body");
+                                error!(self, statement, "Can only define functions in interface body");
                             }
                         }
 
@@ -7756,7 +7757,7 @@ impl IrGen {
                         let impl_def = Statement::Impl { object: Expression::Variable(custom_tok), declarations: functions };
 
                         if old_errors != self.errors {
-                            token_note!(
+                            note(
                                 name,
                                 concat!(
                                     "This error is a result of code generation for this interface. ",
@@ -7773,7 +7774,7 @@ impl IrGen {
                             if let Statement::Function { name: fn_name, params, return_type, body: fn_body, generics_names, info } = statement {
                                 // if the interface function has a body, use that as default implementation
                                 if fn_body.is_some() {
-                                    token_error!(self, fn_name, "Cannot define function body in forward declaration of interface");
+                                    error!(self, fn_name, "Cannot define function body in forward declaration of interface");
                                 }
 
                                 functions.push(Statement::Function {
@@ -7785,7 +7786,7 @@ impl IrGen {
                                     info: info.clone()
                                 });
                             } else {
-                                ast_error!(self, statement, "Can only define functions in interface body");
+                                error!(self, statement, "Can only define functions in interface body");
                             }
                         }
 
@@ -7832,13 +7833,13 @@ impl IrGen {
             }
             Statement::Extern { kw, libraries } => {
                 if matches!(self.curr_function, CurrentFn::Some { .. }) {
-                    token_error!(self, kw, "Extern declarations are only allowed in the global scope");
+                    error!(self, kw, "Extern declarations are only allowed in the global scope");
                 }
 
                 for library in libraries {
                     if let Some(existing) = self.extern_libs.get(&library.lexeme) {
-                        token_error!(self, library, "Cannot declare library as extern multiple times");
-                        token_note!(existing, "Previously declared here");
+                        error!(self, library, "Cannot declare library as extern multiple times");
+                        note(existing, "Previously declared here");
                     } else {
                         self.extern_libs.insert(Rc::clone(&library.lexeme), library.clone());
                     }

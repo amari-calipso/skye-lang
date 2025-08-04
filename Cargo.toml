@@ -1,6 +1,6 @@
 [package]
 name = "skye"
-version = "2025.7.20"
+version = "2025.8.4"
 edition = "2021"
 description = "Skye ~ The retrofuturistic programming language"
 
@@ -11,7 +11,7 @@ opt-level = 3
 lto = true
 
 [dependencies]
-colored = "2.1.0"
+alanglib = { git = "https://github.com/amari-calipso/alanglib.git" }
 clap = { version = "4.5.13", features = ["derive"] }
 zip = "2.2.0"
 scopeguard = "1.2.0"
