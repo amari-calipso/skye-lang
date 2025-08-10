@@ -343,21 +343,21 @@ namespace std {
 
                     if self.stdIn {
                         if (pipe(@cast(*i32, stdinPipe))) return SpawnResult::Error;
-                        const file = fdopen(stdinPipe[1], `w\0`);
+                        const file = fdopen(stdinPipe[1], c"w");
                         if (file == @nullptr) return SpawnResult::Error;
                         process.stdIn = (?File)::Some(File::fromCFile(file));
                     }
 
                     if self.stdOut {
                         if (pipe(@cast(*i32, stdoutPipe))) return SpawnResult::Error;
-                        const file = fdopen(stdoutPipe[0], `r\0`);
+                        const file = fdopen(stdoutPipe[0], c"r");
                         if (file == @nullptr) return SpawnResult::Error;
                         process.stdOut = (?File)::Some(File::fromCFile(file));
                     }
 
                     if self.stdErr {
                         if (pipe(@cast(*i32, stderrPipe))) return SpawnResult::Error;
-                        const file = fdopen(stderrPipe[0], `r\0`);
+                        const file = fdopen(stderrPipe[0], c"r");
                         if (file == @nullptr) return SpawnResult::Error;
                         process.stdErr = (?File)::Some(File::fromCFile(file));
                     }

@@ -517,7 +517,6 @@ impl<'a> Scanner<'a> {
             }
 
             '"'  => self.string_char_literal('"',  TokenType::String),
-            '`'  => self.string_char_literal('`',  TokenType::RawString),
             '\'' => self.string_char_literal('\'', TokenType::Char),
             ' ' | '\r' | '\t' => (),
             '\n' => self.line += 1,
@@ -528,7 +527,13 @@ impl<'a> Scanner<'a> {
                 if is_beginning_digit(c) {
                     self.number(true);
                 } else if is_alpha(c) {
-                    self.identifier();
+                    if c == 'c' && self.peek() == '"' {
+                        self.advance();
+                        self.start += 1; // ignores "c"
+                        self.string_char_literal('"',  TokenType::CString);
+                    } else {
+                        self.identifier();
+                    }                    
                 } else {
                     self.error("Unexpected character");
                 }

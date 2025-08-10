@@ -3,7 +3,7 @@ use std::{cell::{OnceCell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
 
-use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}, utils::fix_raw_string};
+use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}};
 
 const OUTPUT_INDENT_SPACES: usize = 4;
 
@@ -695,14 +695,14 @@ impl CodeGen {
                     Expression::StringLiteral { value, kind, .. } => {
                         match kind {
                             StringKind::Char => format!("'{}'", value).into(),
-                            StringKind::Raw => {
+                            StringKind::C => {
                                 if let Some(string_const) = self.strings.get(&value) {
                                     format!("__SKYE_STRING_{}", string_const).into()
                                 } else {
                                     let str_index = self.strings.len();
                                     self.strings_code.push(format!(
                                         "const char __SKYE_STRING_{}[] = \"{}\";\n",
-                                        str_index, fix_raw_string(&value)
+                                        str_index, value
                                     ).as_ref());
 
                                     self.strings.insert(value, str_index);

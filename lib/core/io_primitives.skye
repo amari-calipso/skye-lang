@@ -118,9 +118,9 @@ namespace core {
         impl core::io::FileOpenMode {
             fn toCMode(const self) *const char {
                 return {
-                     `r\0`,   `w\0`,   `a\0`,  `r+\0`,
-                    `w+\0`,  `a+\0`,  `rb\0`,  `wb\0`,
-                    `ab\0`, `rb+\0`, `wb+\0`, `ab+\0`
+                    c"r",  c"w",   c"a",   c"a+",
+                    c"w+", c"a+",  c"rb",  c"wb",
+                    c"ab", c"rb+", c"wb+", c"ab+"
                 }.ptr[@cast(u8, *self)];
             }
 

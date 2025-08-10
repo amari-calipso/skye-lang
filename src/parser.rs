@@ -341,9 +341,9 @@ impl Parser {
         match_float_literal!(self,      F64, B64);
         match_float_literal!(self, AnyFloat, Any);
 
-        match_string_literal!(self,    String, Slice);
-        match_string_literal!(self, RawString,   Raw);
-        match_string_literal!(self,      Char,  Char);
+        match_string_literal!(self,  String, Slice);
+        match_string_literal!(self, CString, C);
+        match_string_literal!(self,    Char, Char);
 
         let last = self.peek();
         error!(self, last, "Expecting expression");

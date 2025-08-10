@@ -24,7 +24,7 @@ pub enum TokenType {
     LogicAnd, LogicOr,
     BitwiseAnd, BitwiseOr, BitwiseXor,
 
-    Identifier, RawString, String, Char,
+    Identifier, CString, String, Char,
     U8, U16, U32, U64, Usz,
     I8, I16, I32, I64, AnyInt,
     F32, F64, AnyFloat,

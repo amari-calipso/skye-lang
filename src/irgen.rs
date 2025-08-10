@@ -2664,7 +2664,7 @@ impl IrGen {
                 let data = IrValueData::Literal { value: expr.clone() };
                 match kind {
                     StringKind::Char => SkyeValue::new(IrValue::new(data, SkyeType::Char), true),
-                    StringKind::Raw  => SkyeValue::new(IrValue::new(data, SkyeType::Pointer(Box::new(SkyeType::Char), true, false)), true),
+                    StringKind::C => SkyeValue::new(IrValue::new(data, SkyeType::Pointer(Box::new(SkyeType::Char), true, false)), true),
                     StringKind::Slice => {
                         if self.string_type.is_none() {
                             if let SkyeType::Type(inner_type) = &self.globals.borrow().get(

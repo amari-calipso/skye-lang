@@ -58,40 +58,6 @@ impl<T> OrderedNamedMap<T> {
     }
 }
 
-pub fn fix_raw_string(str: &str) -> String {
-    let mut buf = String::new();
-
-    let mut backslash = false;
-    for c in str.chars() {
-        if backslash {
-            if c == '`' {
-                buf.push(c);
-            } else {
-                buf.push('\\');
-                buf.push(c);
-            }
-
-            backslash = false;
-            continue;
-        }
-
-        if c == '"' {
-            buf.push('\\');
-            buf.push('"');
-            continue;
-        }
-
-        if c == '\\' {
-            backslash = true;
-            continue;
-        }
-
-        buf.push(c);
-    }
-
-    buf
-}
-
 pub fn escape_string(str: &str) -> String {
     str.replace('\\', "\\\\")
 }

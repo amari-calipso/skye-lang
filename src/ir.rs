@@ -340,7 +340,7 @@ impl IrValue {
             IrValueData::Grouping(inner) => inner.is_valid_assignment_target(),
             IrValueData::Literal { value } => {
                 if let Expression::StringLiteral { kind, .. } = value {
-                    matches!(kind, StringKind::Slice | StringKind::Raw)
+                    matches!(kind, StringKind::Slice | StringKind::C)
                 } else {
                     false
                 }

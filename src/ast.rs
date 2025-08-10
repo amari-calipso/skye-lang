@@ -16,7 +16,7 @@ pub enum Bits {
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum StringKind {
-    Slice, Raw, Char
+    Slice, C, Char
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]

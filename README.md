@@ -112,7 +112,6 @@ let myEmptyArray = Array::new[f32]();
 ```
 
 # Strings
-There are two main types of strings in Skye: raw strings, and strings.
 
 A String is defined by using quotes (") around your text:
 ```
@@ -121,10 +120,10 @@ let stringLength = myString.length; // 16
 ```
 The String type in Skye is not null terminated and stores its length separately. Effectively, a Skye string is just a `Slice` of `char`s.
 
-A raw string is mostly used for C interop. It's like a C string, but not null terminated.
+You can also define a string as a null-terminated sequence of chars, that is, a C string. To do that, add "c" before your string.
 ```
-let myRawString: *const char = `This is a raw string\0`;
-let rawStringLength = core::utils::cStringLength(myRawString); // 22
+let myCString: *const char = c"This is a C string";
+let myCStringLength = core::utils::cStringLength(myCString); // 20
 ```
 
 # Conditionals
@@ -234,7 +233,7 @@ aFunctionPointer(3);
 # Pointers
 There are two types of pointers in Skye: the raw pointer, and the reference.
 
-Pointers are their own type. They point to a location in memory, support pointer arithmetics, and behave as an indipendent type.
+Pointers are their own type. They point to a location in memory, support pointer arithmetics, and behave as an independent type.
 On the other hand, references internally work like pointers, but they just operate as the underlying data type. For example, if you have two references to `i32`s, you can add them directly without dereferencing them, because the compiler does it automatically.
 
 Pointers and references also have their own `const`ness associated to them. If a pointer or a reference are `const`, the value they point to cannot be mutated.
