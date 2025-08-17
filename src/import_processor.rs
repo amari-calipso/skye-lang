@@ -11,10 +11,6 @@ pub struct ImportProcessor {
     curr_name: String,
     imports: HashMap<PathBuf, HashMap</* namespace */ String, Token>>,
 
-    in_function: bool,
-    in_impl: bool,
-    in_interface: bool,
-
     pub errors: usize,
 }
 
@@ -24,9 +20,6 @@ impl ImportProcessor {
             skye_path,
             imports: HashMap::new(),
             curr_name: String::new(),
-            in_function: false,
-            in_impl: false,
-            in_interface: false,
             source_path: path.map(|x| Box::new(PathBuf::from(x))),
             errors: 0
         }
@@ -146,7 +139,8 @@ impl ImportProcessor {
                     }
                 }
             }
-            Statement::Block(_, body) => {
+            Statement::Block(_, body) | 
+            Statement::Impl { declarations: body, .. } => {
                 ctx.run(|ctx| self.process_many(body, ctx)).await;
             }
             Statement::ImportedBlock { statements, source } => {
@@ -166,26 +160,10 @@ impl ImportProcessor {
                 ctx.run(|ctx| self.process_many(body, ctx)).await;
                 self.curr_name = previous_name;
             }
-            Statement::Impl { declarations: body, .. } => {
-                let previous_impl = self.in_impl;
-                self.in_impl = true;
-                ctx.run(|ctx| self.process_many(body, ctx)).await;
-                self.in_impl = previous_impl;
-            }
-            Statement::Function { body, .. } => {
-                if let Some(body) = body {
-                    let previous_fn = self.in_function;
-                    self.in_function = true;
-                    ctx.run(|ctx| self.process_many(body, ctx)).await;
-                    self.in_function = previous_fn;
-                }
-            }
+            Statement::Function { body, .. } |
             Statement::Interface { declarations: body, .. } => {
                 if let Some(body) = body {
-                    let previous_interface = self.in_interface;
-                    self.in_interface = true;
                     ctx.run(|ctx| self.process_many(body, ctx)).await;
-                    self.in_interface = previous_interface;
                 }
             }
             Statement::While { body, .. } | 
