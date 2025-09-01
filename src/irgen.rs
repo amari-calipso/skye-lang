@@ -6130,12 +6130,12 @@ impl IrGen {
                 let base_name = self.get_name(&name.lexeme);
                 let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
-                let env = self.globals.borrow();
-                let existing = env.get(
-                    &Token::dummy(Rc::clone(&full_name))
-                );
-
                 if !has_unknown {
+                    let env = self.globals.borrow();
+                    let existing = env.get(
+                        &Token::dummy(Rc::clone(&full_name))
+                    );
+
                     if let Some(var) = &existing {
                         if let SkyeType::Type(inner_type) = &var.type_ {
                             if let SkyeType::Struct(_, existing_fields, _) = &**inner_type {
@@ -6162,8 +6162,6 @@ impl IrGen {
                         }
                     }
                 }
-
-                drop(env);
 
                 if let Some(bound_name) = binding {
                     if !*bind_typedefed {
@@ -6281,7 +6279,7 @@ impl IrGen {
                 let mut env = self.globals.borrow_mut();
 
                 env.define(
-                    Rc::clone(&full_name),
+                    full_name,
                     SkyeVariable::new(
                         output_type.clone(), true,
                         Some(Box::new(name.clone()))
