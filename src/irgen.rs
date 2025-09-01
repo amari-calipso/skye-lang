@@ -6045,6 +6045,13 @@ impl IrGen {
                 if matches!(self.curr_function, CurrentFn::None) {
                     error!(self, kw, "Cannot return from top-level code");
                     note(kw, "Remove this return statement");
+
+                    // evaluate the inner expression (if any) to provide error messages
+                    if let Some(expr) = ret_expr {
+                        ctx.run(|ctx| self.evaluate(expr, false, ctx)).await;
+                    }
+
+                    return Ok(None);
                 }
 
                 if let Some(expr) = ret_expr {
