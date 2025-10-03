@@ -7,6 +7,7 @@ import <"fcntl.h">;
 
 if core::compiler::os::@WINDOWS {
     import <"io.h">;
+    import <"handleapi.h">;
 } else {
     import <"unistd.h">;
     import <"sys/wait.h">;
