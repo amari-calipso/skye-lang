@@ -7,6 +7,7 @@ if core::compiler::os::@WINDOWS {
     import <"synchapi.h">;
     import <"namedpipeapi.h">;
     import <"windows.h">;
+    macro DWORD -> @typeOf(u32);
 } else {
     #bind #linkName(fork)    fn fork() i32;
     #bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
@@ -100,7 +101,7 @@ namespace std {
                 #bind #linkName(SetHandleInformation) fn setHandleInformation(hObject: voidptr, dwMask: u32, dwFlags: u32) bool;
                 #bind #linkName(GetStdHandle) fn getStdHandle(nStdHandle: u32) voidptr;
                 #bind #linkName(WaitForSingleObject) fn waitForSingleObject(hHandle: voidptr, dwMilliseconds: u32) u32;
-                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *u32) bool;
+                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *@DWORD) bool;
                 #bind #linkName(CreateProcess) fn createProcess(
                     lpApplicationName: *const char, 
                     lpCommandLine: *const char,
@@ -142,7 +143,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    let status: u32;
+                    let status: @DWORD;
                     if !windows::getExitCodeProcess(self.__handle, &status) {
                         return (i32!void)::Error;
                     }
