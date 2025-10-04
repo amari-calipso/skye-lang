@@ -4,6 +4,9 @@
 
 if core::compiler::os::@WINDOWS {
     import <"processthreadsapi.h">;
+    import <"synchapi.h">;
+    import <"namedpipeapi.h">;
+    import <"windows.h">;
 } else {
     #bind #linkName(fork)    fn fork() i32;
     #bind #linkName(dup2)    fn dup2(oldfd: i32, newfd: i32) i32;
@@ -139,7 +142,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    let status: u32;
+                    let status: u64;
                     if !windows::getExitCodeProcess(self.__handle, &status) {
                         return (i32!void)::Error;
                     }
