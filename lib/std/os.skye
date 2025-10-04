@@ -100,7 +100,7 @@ namespace std {
                 #bind #linkName(SetHandleInformation) fn setHandleInformation(hObject: voidptr, dwMask: u32, dwFlags: u32) bool;
                 #bind #linkName(GetStdHandle) fn getStdHandle(nStdHandle: u32) voidptr;
                 #bind #linkName(WaitForSingleObject) fn waitForSingleObject(hHandle: voidptr, dwMilliseconds: u32) u32;
-                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *u32) bool;
+                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *u64) bool;
                 #bind #linkName(CreateProcess) fn createProcess(
                     lpApplicationName: *const char, 
                     lpCommandLine: *const char,
