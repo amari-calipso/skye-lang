@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use alanglib::{error, report::note};
 
 use crate::{
-    ast::{Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase},
+    ast::{Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase},
     tokens::{Token, TokenType}
 };
 
@@ -147,7 +147,7 @@ macro_rules! suffix_unary {
 
 pub struct Qualifier {
     pub name: Token,
-    pub arg: Option<Token>
+    pub args: Vec<Token>
 }
 
 pub struct Parser {
@@ -868,10 +868,10 @@ impl Parser {
         for (name, qualifier) in self.curr_qualifiers.iter() {
             match name.as_ref() {
                 "static" | "extern" | "volatile" => {
-                    if let Some(arg) = &qualifier.arg {
+                    if qualifier.args.len() != 0 {
                         error!(
-                            self, arg, 
-                            format!("\"{}\" qualifier doesn't accept an argument", qualifier.name.lexeme).as_str()
+                            self, qualifier.args.first().unwrap(), 
+                            format!("\"{}\" qualifier doesn't accept arguments", qualifier.name.lexeme).as_str()
                         );
                     }   
 
@@ -960,10 +960,10 @@ impl Parser {
         let mut link_name = None;
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
-            if qualifier.arg.is_some() && matches!(name.as_ref(), "static" | "extern" | "inline" | "init" | "bind") {
+            if qualifier.args.len() != 0 && matches!(name.as_ref(), "static" | "extern" | "inline" | "init" | "bind") {
                 error!(
-                    self, qualifier.arg.as_ref().unwrap(), 
-                    format!("\"{}\" qualifier doesn't accept an argument", qualifier.name.lexeme).as_str()
+                    self, qualifier.args.first().unwrap(), 
+                    format!("\"{}\" qualifier doesn't accept arguments", qualifier.name.lexeme).as_str()
                 );
             }
 
@@ -972,10 +972,16 @@ impl Parser {
                 "init" => init = true,
                 "bind" => bind = true,
                 "linkName" => {
-                    if let Some(arg) = &qualifier.arg {
-                        link_name = Some(arg.clone());
+                    if qualifier.args.len() == 1 {
+                        link_name = Some(qualifier.args[0].clone());
                     } else {
-                        error!(self, qualifier.name, "Missing argument for #linkName qualifier");
+                        error!(
+                            self, qualifier.name, 
+                            format!(
+                                "Expecting 1 argument for #linkName qualifier but got {}", 
+                                qualifier.args.len()
+                            ).as_str()
+                        );
                     }
                 }
                 _ => error!(self, qualifier.name, "Unsupported qualifier for function definition")
@@ -1087,48 +1093,74 @@ impl Parser {
         }
     }
 
-    fn struct_decl(&mut self, incoming_generics: &Vec<Generic>) -> Option<Statement> {
+    fn struct_qualifiers(&mut self, type_name: &str) -> (Option<Token>, bool, bool, bool) {
         let mut typedefed = false;
+        let mut namespaced = false;
         let mut bind = false;
+        let mut binding = None;
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
-            if qualifier.arg.is_some() && matches!(name.as_ref(), "typedef" | "bind") {
-                error!(
-                    self, qualifier.arg.as_ref().unwrap(), 
-                    format!("\"{}\" qualifier doesn't accept an argument", qualifier.name.lexeme).as_str()
-                );
-            }
-
             match name.as_ref() {
                 "typedef" => typedefed = true,
-                "bind" => bind = true,
-                _ => error!(self, qualifier.name, "Unsupported qualifier for struct definition")
+                "bind" => {
+                    bind = true;
+
+                    if qualifier.args.len() != 0 {
+                        let mut expecting_bind_name = false;
+                        let mut expecting_bind_qualifier = false;
+                        for arg in &qualifier.args {
+                            if expecting_bind_name {
+                                expecting_bind_name = false;
+                                binding = Some(arg.clone());
+                            } else if expecting_bind_qualifier {
+                                expecting_bind_qualifier = false;
+                                match arg.lexeme.as_ref() {
+                                    "typedef" => typedefed = true,
+                                    "namespaced" => namespaced = true,
+                                    _ => error!(self, arg, "Unknown bind qualifier")
+                                }
+                            } else {
+                                match arg.type_ {
+                                    TokenType::As => expecting_bind_name = true,
+                                    TokenType::Hash => expecting_bind_qualifier = true,
+                                    _ => error!(self, arg, "Expecting 'as' or '#' for bind qualifier arguments")
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => error!(self, qualifier.name, format!("Unsupported qualifier for {} definition", type_name).as_str())
             }
         }
 
         self.curr_qualifiers.clear();
+        (binding, bind, typedefed, namespaced)
+    }
 
+    fn validate_struct_qualifiers(
+        &mut self, type_name: &str, name: &Token, generics: &Vec<Generic>, 
+        mut binding: Option<Token>, bind: bool, typedefed: bool, namespaced: bool
+    ) -> StructInfo {
+        if bind && binding.is_none() {
+            binding = Some(name.clone());
+        }
+
+        if binding.is_some() && generics.len() != 0 {
+            error!(self, self.previous(), format!("Cannot use generics in a C {} binding", type_name).as_str());
+        }
+
+        StructInfo {
+            binding: binding,
+            bind_typedefed: typedefed,
+            bind_namespaced: namespaced,
+        }
+    }
+
+    fn struct_decl(&mut self, incoming_generics: &Vec<Generic>) -> Option<Statement> {
+        let (binding, bind, typedefed, namespaced) = self.struct_qualifiers("struct");
         let name = self.consume(TokenType::Identifier, "Expecting struct name")?.clone();
         let generics = self.parse_generics(incoming_generics)?;
-
-        let binding = {
-            if bind {
-                Some(name.clone())
-            } else if self.match_(&[TokenType::Colon]) {
-                if generics.len() != 0 {
-                    error!(self, self.previous(), "Cannot use generics in a C struct binding");
-                    None
-                } else {
-                    Some(self.consume(TokenType::Identifier, "Expecting C struct name after struct binding")?.clone())
-                }
-            } else {
-                if typedefed {
-                    error!(self, self.previous(), "Cannot use #typedef qualifier on struct that is not a binding");
-                }
-
-                None
-            }
-        };
+        let info = self.validate_struct_qualifiers("struct", &name, &generics, binding, bind, typedefed, namespaced);
 
         let mut fields = Vec::new();
 
@@ -1167,14 +1199,14 @@ impl Parser {
         };
 
         if generics.len() == 0 {
-            Some(Statement::Struct { name, fields, has_body, binding, generics_names: Vec::new(), bind_typedefed: typedefed })
+            Some(Statement::Struct { name, fields, has_body, generics_names: Vec::new(), info })
         } else {
             let mut generic_names = Vec::new();
             for generic in &generics {
                 generic_names.push(generic.name.clone());
             }
 
-            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Struct { name, fields, has_body, binding, generics_names: generic_names.clone(), bind_typedefed: typedefed }), generics, generics_names: generic_names })
+            Some(Statement::Template { name: name.clone(), declaration: Box::new(Statement::Struct { name, fields, has_body, generics_names: generic_names.clone(), info }), generics, generics_names: generic_names })
         }
     }
 
@@ -1259,28 +1291,10 @@ impl Parser {
     }
 
     fn enum_decl(&mut self, incoming_generics: &Vec<Generic>) -> Option<Statement> {
-        let mut typedefed = false;
-        let mut bind = false;
-
-        for (name, qualifier) in self.curr_qualifiers.iter() {
-            if qualifier.arg.is_some() && matches!(name.as_ref(), "typedef" | "bind") {
-                error!(
-                    self, qualifier.arg.as_ref().unwrap(), 
-                    format!("\"{}\" qualifier doesn't accept an argument", qualifier.name.lexeme).as_str()
-                );
-            }
-
-            match name.as_ref() {
-                "typedef" => typedefed = true,
-                "bind" => bind = true,
-                _ => error!(self, qualifier.name, "Unsupported qualifier for enum definition")
-            }
-        }
-
-        self.curr_qualifiers.clear();
-
+        let (binding, bind, typedefed, namespaced) = self.struct_qualifiers("enum");
         let name = self.consume(TokenType::Identifier, "Expecting enum name")?.clone();
         let generics = self.parse_generics(incoming_generics)?;
+        let info = self.validate_struct_qualifiers("enum", &name, &generics, binding, bind, typedefed, namespaced);
 
         let binding = {
             if bind {
@@ -1375,9 +1389,8 @@ impl Parser {
                 variants, 
                 is_simple, 
                 has_body, 
-                binding, 
                 generics_names: Vec::new(), 
-                bind_typedefed: typedefed 
+                info
             })
         } else {
             let mut generics_names = Vec::new();
@@ -1393,9 +1406,8 @@ impl Parser {
                     variants, 
                     is_simple, 
                     has_body, 
-                    binding, 
                     generics_names: generics_names.clone(), 
-                    bind_typedefed: typedefed 
+                    info
                 }), 
                 generics, 
                 generics_names 
@@ -1474,44 +1486,13 @@ impl Parser {
     }
 
     fn union_decl(&mut self) -> Option<Statement> {
-        let mut typedefed = false;
-        let mut bind = false;
-
-        for (name, qualifier) in self.curr_qualifiers.iter() {
-            if qualifier.arg.is_some() && matches!(name.as_ref(), "typedef" | "bind") {
-                error!(
-                    self, qualifier.arg.as_ref().unwrap(), 
-                    format!("\"{}\" qualifier doesn't accept an argument", qualifier.name.lexeme).as_str()
-                );
-            }
-
-            match name.as_ref() {
-                "typedef" => typedefed = true,
-                "bind" => bind = true,
-                _ => error!(self, qualifier.name, "Unsupported qualifier for union definition")
-            }
-        }
-
-        self.curr_qualifiers.clear();
-
+        let (binding, bind, typedefed, namespaced) = self.struct_qualifiers("union");
         let name = self.consume(TokenType::Identifier, "Expecting union name")?.clone();
         if self.parse_generics(&Vec::new())?.len() != 0 {
             error!(self, self.previous(), "Generics are not allowed in unions");
         }
 
-        let binding = {
-            if bind {
-                Some(name.clone())
-            } else if self.match_(&[TokenType::Colon]) {
-                Some(self.consume(TokenType::Identifier, "Expecting C union name after union binding")?.clone())
-            } else {
-                if typedefed {
-                    error!(self, self.previous(), "Cannot use #typedef qualifier on union that is not a binding");
-                }
-
-                None
-            }
-        };
+        let info = self.validate_struct_qualifiers("union", &name, &Vec::new(), binding, bind, typedefed, namespaced);
 
         let mut fields = Vec::new();
 
@@ -1549,7 +1530,7 @@ impl Parser {
             }
         };
 
-        Some(Statement::Union { name, fields, has_body, binding, bind_typedefed: typedefed })
+        Some(Statement::Union { name, fields, has_body, info })
     }
 
     fn macro_decl(&mut self) -> Option<Statement> {
@@ -1732,13 +1713,28 @@ impl Parser {
                 }
             };
 
-            let arg = {
+            let args = {
                 if self.match_(&[TokenType::LeftParen]) {
-                    let arg = Some(self.consume(TokenType::Identifier, "Expecting identifier as qualifier argument")?.clone());
-                    self.consume(TokenType::RightParen, "Expecting ')' after qualifier argument")?;
-                    arg
+                    let mut l = 1usize;
+                    let mut args = Vec::new();
+                    while !self.is_at_end() {
+                        let next = self.advance().clone();
+
+                        if matches!(next.type_, TokenType::LeftParen) {
+                            l += 1;
+                        } else if matches!(next.type_, TokenType::RightParen) {
+                            l -= 1;
+                            if l == 0 {
+                                break;
+                            }
+                        }
+
+                        args.push(next);
+                    }
+
+                    args
                 } else {
-                    None
+                    Vec::new()
                 }
             };
             
@@ -1746,7 +1742,7 @@ impl Parser {
                 error!(self, name, "Cannot use same qualifier twice");
                 note(&old_tok.name, "Previously specified here");
             } else {
-                self.curr_qualifiers.insert(Rc::clone(&name.lexeme), Qualifier { name, arg });
+                self.curr_qualifiers.insert(Rc::clone(&name.lexeme), Qualifier { name, args });
             }
 
             return self.declaration(method, incoming_generics, self_generics);

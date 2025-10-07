@@ -419,6 +419,13 @@ pub struct FunctionInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct StructInfo {
+    pub binding: Option<Token>,
+    pub bind_typedefed: bool,
+    pub bind_namespaced: bool
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Statement {
     Empty, // placeholder
     Expression(Expression),
@@ -467,9 +474,8 @@ pub enum Statement {
         name: Token,
         fields: Vec<StructField>,
         has_body: bool,
-        binding: Option<Token>,
         generics_names: Vec<Token>,
-        bind_typedefed: bool
+        info: StructInfo,
     },
     Use {
         use_expr: Expression,
@@ -483,9 +489,8 @@ pub enum Statement {
         variants: Vec<EnumVariant>,
         is_simple: bool,
         has_body: bool,
-        binding: Option<Token>,
         generics_names: Vec<Token>,
-        bind_typedefed: bool
+        info: StructInfo,
     },
     Template {
         name: Token,
@@ -497,8 +502,7 @@ pub enum Statement {
         name: Token,
         fields: Vec<StructField>,
         has_body: bool,
-        binding: Option<Token>,
-        bind_typedefed: bool
+        info: StructInfo,
     },
     Foreach {
         kw: Token,
@@ -630,7 +634,7 @@ impl Ast for Statement {
             Statement::Return { kw, value: return_expr } => {
                 Statement::Return { kw: kw.clone(), value: return_expr.as_ref().map(|x| x.replace_variable(name, replace_expr)) }
             }
-            Statement::Struct { name: struct_name, fields, has_body, binding, generics_names, bind_typedefed } => {
+            Statement::Struct { name: struct_name, fields, has_body, generics_names, info } => {
                 Statement::Struct {
                     name: struct_name.clone(),
                     fields: {
@@ -644,9 +648,8 @@ impl Ast for Statement {
                         ).collect()
                     },
                     has_body: *has_body,
-                    binding: binding.clone(),
                     generics_names: generics_names.clone(),
-                    bind_typedefed: *bind_typedefed
+                    info: info.clone()
                 }
             }
             Statement::Impl { object: struct_, declarations } => {
@@ -658,16 +661,15 @@ impl Ast for Statement {
             Statement::Use { use_expr: expression, as_name: alias, typedef, bind } => {
                 Statement::Use { use_expr: expression.replace_variable(name, replace_expr), as_name: alias.clone(), typedef: *typedef, bind: *bind }
             }
-            Statement::Enum { name: enum_name, kind_type, variants, is_simple, has_body, binding, generics_names, bind_typedefed } => {
+            Statement::Enum { name: enum_name, kind_type, variants, is_simple, has_body, generics_names, info } => {
                 Statement::Enum {
                     name: enum_name.clone(),
                     kind_type: kind_type.replace_variable(name, replace_expr),
                     variants: variants.iter().map(|x| EnumVariant::new(x.name.clone(), x.type_.replace_variable(name, replace_expr), x.default.clone())).collect(),
                     is_simple: *is_simple,
                     has_body: *has_body,
-                    binding: binding.clone(),
                     generics_names: generics_names.clone(),
-                    bind_typedefed: *bind_typedefed
+                    info: info.clone()
                 }
             }
             Statement::Defer { kw, statement } => {
@@ -694,7 +696,7 @@ impl Ast for Statement {
                         )
                     ).collect(), generics_names: generics_names.clone() }
             }
-            Statement::Union { name: union_name, fields, has_body, binding, bind_typedefed } => {
+            Statement::Union { name: union_name, fields, has_body, info } => {
                 Statement::Union {
                     name: union_name.clone(),
                     fields: {
@@ -708,8 +710,7 @@ impl Ast for Statement {
                         ).collect()
                     },
                     has_body: *has_body,
-                    binding: binding.clone(),
-                    bind_typedefed: *bind_typedefed
+                    info: info.clone()
                 }
             }
             Statement::Macro { name: macro_name, params: macro_params, body: macro_body } => {

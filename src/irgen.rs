@@ -4,7 +4,7 @@ use alanglib::{ast::{SourcePos, WithPosition}, error, report::{note, note_pos, w
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, SwitchCase}, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase}, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -6126,7 +6126,7 @@ impl IrGen {
                     }));
                 }
             }
-            Statement::Struct { name, fields, has_body, binding, generics_names: generics, bind_typedefed } => {
+            Statement::Struct { name, fields, has_body, generics_names: generics, info } => {
                 let base_name = self.get_name(&name.lexeme);
                 let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
@@ -6163,8 +6163,8 @@ impl IrGen {
                     }
                 }
 
-                if let Some(bound_name) = binding {
-                    if !*bind_typedefed {
+                if let Some(bound_name) = &info.binding {
+                    if !info.bind_typedefed {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
@@ -6179,7 +6179,7 @@ impl IrGen {
                                 typedef: true 
                             }
                         })));
-                    } else if bound_name.lexeme != full_name {
+                    } else if bound_name.lexeme != full_name && !(info.bind_namespaced && bound_name.lexeme == name.lexeme) {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
@@ -6267,7 +6267,7 @@ impl IrGen {
                     note(stmt, "If you are referencing the type through itself, use a reference");
                 }
 
-                if binding.is_none() {
+                if info.binding.is_none() {
                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
                         pos: stmt.get_pos(),
                         data: IrStatementData::Struct { type_: type_.clone() }
@@ -6468,7 +6468,7 @@ impl IrGen {
                     );
                 }
             }
-            Statement::Enum { name, kind_type: type_expr, variants, is_simple, has_body, binding, generics_names: generics, bind_typedefed } => {
+            Statement::Enum { name, kind_type: type_expr, variants, is_simple, has_body, generics_names: generics, info } => {
                 let base_name = self.get_name(&name.lexeme);
                 let (full_name, has_unknown) = self.get_generics(&base_name, generics, &self.environment);
 
@@ -6535,8 +6535,8 @@ impl IrGen {
                         } else {
                             drop(env);
                             
-                            if let Some(bound_name) = binding {
-                                if !*bind_typedefed {
+                            if let Some(bound_name) = &info.binding {
+                                if !info.bind_typedefed {
                                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
                                         pos: stmt.get_pos(),
                                         data: IrStatementData::Define { 
@@ -6551,7 +6551,7 @@ impl IrGen {
                                             typedef: true 
                                         }
                                     })));
-                                } else if bound_name.lexeme != full_name {
+                                } else if bound_name.lexeme != full_name && !(info.bind_namespaced && bound_name.lexeme == name.lexeme) {
                                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
                                         pos: stmt.get_pos(),
                                         data: IrStatementData::Define { 
@@ -6603,7 +6603,7 @@ impl IrGen {
                             );
                         }
 
-                        let write_output = binding.is_none() && !*is_simple;
+                        let write_output = info.binding.is_none() && !*is_simple;
 
                         let mut output_fields = OrderedNamedMap::new();
                         let mut evaluated_variants = Vec::with_capacity(variants.len());
@@ -6646,7 +6646,7 @@ impl IrGen {
                             ));
 
                             let mut env = self.globals.borrow_mut();
-                            if binding.is_some() {
+                            if info.binding.is_some() {
                                 env.define(
                                     Rc::clone(&variant.name.lexeme),
                                     SkyeVariable::with_from(
@@ -7185,7 +7185,7 @@ impl IrGen {
                     self.add_statement(statement);
                 }
             }
-            Statement::Union { name, fields, has_body, binding, bind_typedefed } => {
+            Statement::Union { name, fields, has_body, info } => {
                 let full_name = self.get_name(&name.lexeme);
 
                 let env = self.globals.borrow();
@@ -7219,8 +7219,8 @@ impl IrGen {
 
                 drop(env);
 
-                if let Some(bound_name) = binding {
-                    if !*bind_typedefed {
+                if let Some(bound_name) = &info.binding {
+                    if !info.bind_typedefed {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
@@ -7235,7 +7235,7 @@ impl IrGen {
                                 typedef: true 
                             }
                         })));
-                    } else if bound_name.lexeme != full_name {
+                    } else if bound_name.lexeme != full_name && !(info.bind_namespaced && bound_name.lexeme == name.lexeme) {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
                             pos: stmt.get_pos(),
                             data: IrStatementData::Define { 
@@ -7320,7 +7320,7 @@ impl IrGen {
                     note(stmt, "If you are referencing the type through itself, use a reference");
                 }
 
-                if binding.is_none() {
+                if info.binding.is_none() {
                     self.definitions.push(Rc::new(RefCell::new(IrStatement {
                         pos: stmt.get_pos(),
                         data: IrStatementData::Union { type_: type_.clone() }
@@ -7732,9 +7732,12 @@ impl IrGen {
                             variants, 
                             is_simple: false, 
                             has_body: true, 
-                            binding: None, 
                             generics_names: Vec::new(), 
-                            bind_typedefed: false 
+                            info: StructInfo {
+                                binding: None,
+                                bind_typedefed: false,
+                                bind_namespaced: false,
+                            }
                         };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
@@ -7787,9 +7790,12 @@ impl IrGen {
                             variants: Vec::new(),
                             is_simple: false,
                             has_body: false,
-                            binding: None,
                             generics_names: Vec::new(),
-                            bind_typedefed: false
+                            info: StructInfo {
+                                binding: None,
+                                bind_typedefed: false,
+                                bind_namespaced: false,
+                            }
                         };
 
                         let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;
@@ -7811,9 +7817,12 @@ impl IrGen {
                         variants: Vec::new(), 
                         is_simple: false, 
                         has_body: false, 
-                        binding: None, 
                         generics_names: Vec::new(), 
-                        bind_typedefed: false 
+                        info: StructInfo {
+                            binding: None,
+                            bind_typedefed: false,
+                            bind_namespaced: false,
+                        }
                     };
 
                     let _ = ctx.run(|ctx| self.execute(&enum_def, ctx)).await;

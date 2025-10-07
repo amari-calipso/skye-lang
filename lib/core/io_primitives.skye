@@ -22,7 +22,7 @@ if core::compiler::os::@WINDOWS {
 #bind fn free(ptr: voidptr);
 #bind fn exit(code: i32);
 
-#typedef struct CFile: FILE;
+#bind(#typedef as FILE) struct CFile;
 #bind fn fopen(filename: *const char, mode: *const char) *CFile;
 #bind fn fclose(file: *CFile) i32;
 #bind fn fwrite(ptr: voidptr, size: usz, nmemb: usz, file: *CFile) usz;

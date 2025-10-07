@@ -376,24 +376,43 @@ fn test() {
 
 It's possible to bind all user defined types to C defined types with the following syntax:
 ```
-struct MyStructBinding: CStructName {
+#bind(as CStructName)
+struct MyStructBinding {
     x: f32,
     y: f32
 }
 
-enum MyEnumBinding: CEnumName {
+#bind(as CEnumName)
+enum MyEnumBinding {
     FIRST_FIELD,
     SECOND_FIELD
 }
 
-bitfield MyBitfieldBinding: CBitfieldName {
-    a: 23,
-    b: 1
-}
-
-union MyUnionBinding: CUnionName {
+#bind(as CUnionName)
+union MyUnionBinding {
     a: i32,
     b: f32
+}
+
+// if the type was `typedef`ed in C, you can use the `typedef` argument
+#bind(#typedef as CTypedefedStruct)
+struct MyBindingToTheTypedefedStruct {
+    x: f32,
+    y: f32
+}
+
+// you can also omit the C name if it's the same as what you want to call the item in Skye
+#bind struct StructWithTheSameNameInC {
+    a: i64
+}
+
+// by default, bindings bind to something in the global namespace... because C doesn't have namespaces.
+// if you want though, you can also bind to something in the same namespace as you are. this is 
+// useful if you want to bind to compiled Skye code
+namespace myNamespace {
+    #bind(#namespaced) struct NamespacedStruct {
+        a: u64
+    }
 }
 ```
 Structs, bitfields, and unions can be initialized through a compound literal:

@@ -62,6 +62,11 @@ namespace core {
         const ptr: *const T,
         const length: usz
     }
+
+    namespace ffi {
+        #bind(#namespaced #typedef) struct cLong {}
+        #bind(#namespaced #typedef) struct cUnsignedLong {}
+    }
 }
 
 use core::Slice[char] as String;

@@ -19,8 +19,8 @@ import <"dirent.h">;
 
 namespace std {
     namespace os {
-        #typedef struct CDir: DIR;
-        struct CDirent: dirent {
+        #bind(#typedef as DIR) struct CDir;
+        #bind(as dirent) struct CDirent {
             // other fields currently aren't relevant for us
             const d_name: *const char
         }
@@ -62,13 +62,15 @@ namespace std {
 
                 macro INFINITE 0xFFFFFFFF;
 
-                #typedef struct SecurityAttributes: SECURITY_ATTRIBUTES {
+                #bind(#typedef as SECURITY_ATTRIBUTES)
+                struct SecurityAttributes {
                     nLength: u32,
                     lpSecurityDescriptor: voidptr,
                     bInheritHandle: bool
                 }
 
-                #typedef struct StartupInfo: STARTUPINFOA {
+                #bind(#typedef as STARTUPINFOA) 
+                struct StartupInfo {
                     cb: u32,
                     lpReserved: *const char,
                     lpDesktop: *const char,
@@ -89,7 +91,8 @@ namespace std {
                     hStdError: voidptr,
                 }
 
-                #typedef struct ProcessInformation: PROCESS_INFORMATION {
+                #bind(#typedef as PROCESS_INFORMATION)
+                struct ProcessInformation{
                     hProcess: voidptr,
                     hThread: voidptr,
                     dwProcessId: u32,
@@ -100,7 +103,7 @@ namespace std {
                 #bind #linkName(SetHandleInformation) fn setHandleInformation(hObject: voidptr, dwMask: u32, dwFlags: u32) bool;
                 #bind #linkName(GetStdHandle) fn getStdHandle(nStdHandle: u32) voidptr;
                 #bind #linkName(WaitForSingleObject) fn waitForSingleObject(hHandle: voidptr, dwMilliseconds: u32) u32;
-                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *u32) bool;
+                #bind #linkName(GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *core::ffi::cUnsignedLong) bool;
                 #bind #linkName(CreateProcess) fn createProcess(
                     lpApplicationName: *const char, 
                     lpCommandLine: *const char,
@@ -142,7 +145,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    let status: u32;
+                    let status: core::ffi::cUnsignedLong;
                     if !windows::getExitCodeProcess(self.__handle, &status) {
                         return (i32!void)::Error;
                     }

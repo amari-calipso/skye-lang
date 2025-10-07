@@ -1398,7 +1398,11 @@ impl CodeGen {
             }
         };
 
-        let mut output = String::from("// Hello from Skye!! ^_^\n\n");
+        let mut output = format!(r#"// Hello from Skye!! ^_^
+
+typedef long core{}ffi{}cLong; 
+typedef unsigned long core{}ffi{}cUnsignedLong; 
+"#, dot!(), dot!(), dot!(), dot!());
 
         if self.includes.code.len() != 0 {
             output.push_str(&self.includes.code);
