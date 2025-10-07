@@ -150,7 +150,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    return (i32!void)::Ok(@cast(i32, status));
+                    return (i32!void)::Ok(*@cast(*i32, @cast(voidptr, &status)));
                 }
             }
         } else {
