@@ -718,7 +718,7 @@ This approach to type dispatching has been experimented with in Rust, and has sh
 | Const dereference | `*const x` | Dereferences a pointer and returns a `const` value. Can also define a const pointer type if applied to a type [*4](#additional-information) |
 | Option | `?x` | Defines an `Option[x]` type where `x` is a type |
 | Try | `try x` | Returns the `Ok` or `Some` value of `x` where `x` is a `Result` or `Option`. Propagates the `Error` or `None` if the set variant is not `Ok` or `Some` |
-| Access | `x.y` | Accesses the `y` property of `x`, whether it's a method or a field, where `x` is an instance of a struct, sum type enum, union or bitfield. Automatically dereferences pointers if necessary [*4](#additional-information) |
+| Access | `x.y` | Accesses the `y` property of `x`, whether it's a method or a field, where `x` is an instance of a struct, sum type enum or union. Automatically dereferences pointers if necessary [*4](#additional-information) |
 | Static access | `x::y` | Accesses the `y` property of `x` statically, where `x` is a namespace, a struct type, an enum type, or an instance of the above. This operator will automatically follow pointers at compile time if necessary |
 | Addition | `x + y` `x += y` | ... |
 | Subtraction | `x - y` `x -= y` | ... |
