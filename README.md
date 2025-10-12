@@ -415,12 +415,10 @@ namespace myNamespace {
     }
 }
 ```
-Structs, bitfields, and unions can be initialized through a compound literal:
+Structs and unions can be initialized through a compound literal:
 ```
-let myStructInstance = MyStructBinding.{ x: 1.0, y: 2.0 };
-let a = 2;
-// field name can be omitted when it collides with the expression name
-let myBitfieldInstance = MyBitfieldBinding.{ a, b: 1 };
+let y = 2.0;
+let myStructInstance = MyStructBinding.{ x: 1.0, y }; // field name can be omitted when it collides with the expression name
 let myUnionInstance = MyUnionBinding.{ a }; // only one field of a union can be initialized
 ```
 # Impl
@@ -644,7 +642,12 @@ namespace myNamespace {
 You can create macros with variable parameter length using the following syntax:
 ```
 macro variableArgumentsMacro(args*) {
+    // this macro can take 0-N arguments
     // `args` will be bound to a `Slice` of whatever arguments it got passed
+}
+
+macro anotherVariableArgumentsMacro(args+) {
+    // this macro can take 1-N arguments
 }
 ```
 # Interfaces
