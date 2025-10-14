@@ -275,16 +275,6 @@ fn main() {
 }
 ```
 
-# Qualifiers
-It's possible to use C qualifiers on function and variable declarations using the `#` operator
-```
-#inline
-fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-#volatile let a = 3;
-```
 # Defer
 The `defer` statement is used to execute a statement while exiting the current scope.
 ```
@@ -374,47 +364,8 @@ fn test() {
 }
 ```
 
-It's possible to bind all user defined types to C defined types with the following syntax:
-```
-#bind(as CStructName)
-struct MyStructBinding {
-    x: f32,
-    y: f32
-}
+Refer to the section on [qualifiers](#qualifiers) for binding to C structures;
 
-#bind(as CEnumName)
-enum MyEnumBinding {
-    FIRST_FIELD,
-    SECOND_FIELD
-}
-
-#bind(as CUnionName)
-union MyUnionBinding {
-    a: i32,
-    b: f32
-}
-
-// if the type was `typedef`ed in C, you can use the `typedef` argument
-#bind(#typedef as CTypedefedStruct)
-struct MyBindingToTheTypedefedStruct {
-    x: f32,
-    y: f32
-}
-
-// you can also omit the C name if it's the same as what you want to call the item in Skye
-#bind struct StructWithTheSameNameInC {
-    a: i64
-}
-
-// by default, bindings bind to something in the global namespace... because C doesn't have namespaces.
-// if you want though, you can also bind to something in the same namespace as you are. this is 
-// useful if you want to bind to compiled Skye code
-namespace myNamespace {
-    #bind(#namespaced) struct NamespacedStruct {
-        a: u64
-    }
-}
-```
 Structs and unions can be initialized through a compound literal:
 ```
 let y = 2.0;
@@ -539,6 +490,90 @@ You can also use `extern` to define libraries to link with.
 ```
 extern pthread; // will automatically pass -lpthread
 ```
+
+# Qualifiers
+It's possible to use qualifiers on several types of declarations using the `#` operator
+```
+#inline
+fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+#volatile let a = 3;
+```
+
+## Variable and function qualifiers
+- `#link`: Change linking configuration. Possible arguments:
+    - `#private`: Make the item visible only to the current compilation unit. Only applicable if the item is global;
+    - `#extern`: This item is declared in a separate compilation unit;
+    - `as`: Specify a custom link name for the item. Example: `#link(as myCustomName)`;
+    - These arguments can be combined. For example: `#link(#extern as myExternName)`.
+- `#bind`: This is a binding to an item existing in C code. Generate no code for it.
+
+## Variable qualifiers
+- `#static`: Equivalent to C static in local contexts. Only applicable if the variable is local;
+- `#volatile`: Equivalent to C volatile;
+
+## Function qualifiers
+- `#init`: This function will be executed before `main` is called;
+- `#inline`: Will hint the compiler to inline this function.
+
+## Structure qualifiers
+Structure qualifiers can be applied structs, enums and unions.
+- `#bind`: This is a binding to a structure existing in C code. Generate no code for it. Possible arguments:
+    - `#typedef`: Bind to a `typedef` item instead of a non-`typedef` one. For example, if in C a struct is declared like `typedef struct { ... } MyStruct`, you would bind to it using `#bind(#typedef)`;
+    - `#namespaced`: The struct we are binding to is located in the same namespace as the declaration. Useful to bind to compiled Skye code;
+    - `as`: Specify the name of the structure you're binding to. By default, it's the name provided in the declaration, but you can change it using this syntax. Example: `#bind(as MyStructBinding)`;
+    - These arguments can be combined. For example: `#bind(#typedef as MyTypedefedStructBinding)`.
+
+
+Some examples:
+```
+#bind(as CStructName)
+struct MyStructBinding {
+    x: f32,
+    y: f32
+}
+
+#bind(as CEnumName)
+enum MyEnumBinding {
+    FIRST_FIELD,
+    SECOND_FIELD
+}
+
+#bind(as CUnionName)
+union MyUnionBinding {
+    a: i32,
+    b: f32
+}
+
+// if the type was `typedef`ed in C, you can use the `typedef` argument
+#bind(#typedef as CTypedefedStruct)
+struct MyBindingToTheTypedefedStruct {
+    x: f32,
+    y: f32
+}
+
+// you can also omit the C name if it's the same as what you want to call the item in Skye
+#bind struct StructWithTheSameNameInC {
+    a: i64
+}
+
+// by default, bindings bind to something in the global namespace... because C doesn't have namespaces.
+// if you want though, you can also bind to something in the same namespace as you are. this is 
+// useful if you want to bind to compiled Skye code
+namespace myNamespace {
+    #bind(#namespaced) struct NamespacedStruct {
+        a: u64
+    }
+}
+```
+
+## Use qualifiers
+Use qualifiers are only applicable to `use` statements.
+- `#typedef`: Generate a `typedef` instead of a `#define`;
+- `#bind`: This is a binding to an item existing in C code. Generate no code for it.
+
 # Generics
 Structs, sum type enums, and functions can use generics to accept multiple types
 ```
