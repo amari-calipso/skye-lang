@@ -51,7 +51,7 @@ let errno: i32;
 
 namespace core {
     namespace utils {
-        #bind #linkName(strlen) fn cStringLength(const str: *const char) usz;
+        #bind #link(as strlen) fn cStringLength(const str: *const char) usz;
     }
 
     namespace ops {

@@ -412,10 +412,35 @@ impl MacroBody {
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct FunctionInfo {
-    pub qualifiers: Vec<Token>,
-    pub bind: bool,
-    pub init: bool,
+    pub private:   bool,
+    pub extern_:   bool,
+    pub inline:    bool,
+    pub bind:      bool,
+    pub init:      bool,
     pub link_name: Option<Token>
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct VarDeclInfo {
+    pub private:   bool,
+    pub extern_:   bool,
+    pub static_:   bool,
+    pub volatile:  bool,
+    pub bind:      bool,
+    pub link_name: Option<Token>
+}
+
+impl Default for VarDeclInfo {
+    fn default() -> Self {
+        Self {
+            private:   false,
+            extern_:   false,
+            static_:   false,
+            volatile:  false,
+            bind:      false,
+            link_name: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -447,7 +472,7 @@ pub enum Statement {
         initializer: Option<Expression>,
         type_: Option<Expression>,
         is_const: bool,
-        qualifiers: Vec<Token>
+        info: VarDeclInfo
     },
     If {
         kw: Token,
@@ -572,13 +597,13 @@ impl Ast for Statement {
             Statement::Extern { .. } => self.clone(),
 
             Statement::Expression(expression) => Statement::Expression(expression.replace_variable(name, replace_expr)),
-            Statement::VarDecl { name: var_name, initializer, type_, is_const, qualifiers } => {
+            Statement::VarDecl { name: var_name, initializer, type_, is_const, info } => {
                 Statement::VarDecl {
                     name: var_name.clone(),
                     initializer: initializer.as_ref().map(|x| x.replace_variable(name, replace_expr)),
                     type_: type_.as_ref().map(|x| x.replace_variable(name, replace_expr)),
                     is_const: *is_const,
-                    qualifiers: qualifiers.clone()
+                    info: info.clone()
                 }
             }
             Statement::Block(kw, statements) => {

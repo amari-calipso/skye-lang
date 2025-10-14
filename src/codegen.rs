@@ -3,7 +3,7 @@ use std::{cell::{OnceCell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 use lazy_static::lazy_static;
 use topo_sort::{SortResults, TopoSort};
 
-use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, FnQualifier, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{EqualsLevel, SkyeType}};
+use crate::{ast::{Bits, Expression, StringKind}, dot, ir::{AssignOp, BinaryOp, IrStatement, IrStatementData, IrValue, IrValueData, TypeKind}, skye_type::{EqualsLevel, SkyeType}};
 
 const OUTPUT_INDENT_SPACES: usize = 4;
 
@@ -283,22 +283,6 @@ fn prepare_name(name: Rc<str>) -> Rc<str> {
         format!("__reserved_{}", name).into()
     } else {
         name
-    }
-}
-
-fn stringify_var_qualifier(qualifier: VarQualifier) -> &'static str {
-    match qualifier {
-        VarQualifier::Static   => "static",
-        VarQualifier::Extern   => "extern",
-        VarQualifier::Volatile => "volatile",
-    }
-}
-
-fn stringify_fn_qualifier(qualifier: FnQualifier) -> &'static str {
-    match qualifier {
-        FnQualifier::Static => "static",
-        FnQualifier::Extern => "extern",
-        FnQualifier::Inline => "inline",
     }
 }
 
@@ -928,13 +912,20 @@ impl CodeGen {
                     buf.push("#endif\n");
                 }
             }
-            IrStatementData::VarDecl { name, type_, initializer, qualifiers } => {
+            IrStatementData::VarDecl { name, type_, initializer, info } => {
                 let prepared_name = prepare_name(name);
                 let mut buf = String::new();
 
-                for qualifier in qualifiers {
-                    buf.push_str(&stringify_var_qualifier(qualifier));
-                    buf.push(' ');
+                if info.private || info.static_ {
+                    buf.push_str("static ");
+                }
+
+                if info.extern_ {
+                    buf.push_str("extern ");
+                }
+
+                if info.volatile {
+                    buf.push_str("volatile ");
                 }
                 
                 buf.push_str(&stringify_type(&type_));
@@ -1177,7 +1168,7 @@ impl CodeGen {
 
                 self.declarations.insert(prepared_name, TypeOutput::independent(buf));
             }
-            IrStatementData::Function { name, params, body, signature, qualifiers } => {
+            IrStatementData::Function { name, params, body, signature, info } => {
                 let prepared_name = prepare_name(name);
 
                 if let SkyeType::Function(_, return_type, _) = &signature {
@@ -1259,9 +1250,16 @@ impl CodeGen {
                     let mut buf = CodeOutput::new();
                     buf.push_indent();
 
-                    for qualifier in qualifiers {
-                        buf.push(&stringify_fn_qualifier(qualifier));
-                        buf.push(" ");
+                    if info.private {
+                        buf.push("static ");
+                    }
+
+                    if info.extern_ {
+                        buf.push("extern ");
+                    }
+
+                    if info.inline {
+                        buf.push("inline ");
                     }
 
                     buf.push(&return_stringified);

@@ -117,33 +117,37 @@ pub struct IrSwitchBranch {
 }
 
 #[derive(Clone, Debug)]
-pub enum VarQualifier {
-    Static, Extern, Volatile
+pub struct IrFunctionInfo {
+    pub private: bool,
+    pub extern_: bool,
+    pub inline: bool,
 }
 
-impl VarQualifier {
-    pub fn from_string(qualifier: &str) -> Self {
-        match qualifier.to_lowercase().as_str() {
-            "static"   => VarQualifier::Static,
-            "extern"   => VarQualifier::Extern,
-            "volatile" => VarQualifier::Volatile,
-            _ => panic!("invalid qualifier")
+impl Default for IrFunctionInfo {
+    fn default() -> Self {
+        Self {
+            private: false,
+            extern_: false,
+            inline: false,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum FnQualifier {
-    Static, Extern, Inline
+pub struct IrVarDeclInfo {
+    pub private:  bool,
+    pub extern_:  bool,
+    pub static_:  bool,
+    pub volatile: bool,
 }
 
-impl FnQualifier {
-    pub fn from_string(qualifier: &str) -> Self {
-        match qualifier.to_lowercase().as_str() {
-            "static" => FnQualifier::Static,
-            "extern" => FnQualifier::Extern,
-            "inline" => FnQualifier::Inline,
-            _ => panic!("invalid qualifier")
+impl Default for IrVarDeclInfo {
+    fn default() -> Self {
+        Self {
+            private:  false,
+            extern_:  false,
+            static_:  false,
+            volatile: false,
         }
     }
 }
@@ -152,14 +156,14 @@ impl FnQualifier {
 pub enum IrStatementData {
     Break,
     Define { name: Rc<str>, value: IrValue, typedef: bool },
-    VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue>, qualifiers: Vec<VarQualifier> },
+    VarDecl { name: Rc<str>, type_: SkyeType, initializer: Option<IrValue>, info: IrVarDeclInfo },
     If { condition: IrValue, then_branch: Box<IrStatement>, else_branch: Option<Box<IrStatement>> },
     Scope { statements: Rc<RefCell<Vec<IrStatement>>> },
     Return { value: Option<IrValue> },
     Expression { value: IrValue },
     Goto { label: Rc<str> },
     Label { name: Rc<str> },
-    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType, qualifiers: Vec<FnQualifier> },
+    Function { name: Rc<str>, params: Vec<IrFunctionParam>, body: Option<Vec<IrStatement>>, signature: SkyeType, info: IrFunctionInfo },
     Struct { type_: SkyeType },
     Enum { name: Rc<str>, variants: Vec<IrEnumVariant>, #[allow(unused)] type_: SkyeType },
     TaggedUnion { name: Rc<str>, kind_name: Rc<str>, kind_type: SkyeType, fields: OrderedNamedMap<SkyeType> },

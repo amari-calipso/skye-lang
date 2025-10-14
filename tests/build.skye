@@ -1,5 +1,8 @@
 import "build";
 
+#link(as testVar) 
+let skyeNameOfTestVar: i32;
+
 fn main() {
     const aStaticArray = [0; 5];
     let length = aStaticArray.length;

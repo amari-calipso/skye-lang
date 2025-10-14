@@ -1,9 +1,9 @@
 use std::{collections::HashMap, rc::Rc};
 
-use alanglib::{error, report::note};
+use alanglib::{error, report::{error, note}};
 
 use crate::{
-    ast::{Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase},
+    ast::{Bits, EnumVariant, Expression, FunctionInfo, FunctionParam, Generic, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase, VarDeclInfo},
     tokens::{Token, TokenType}
 };
 
@@ -747,7 +747,16 @@ impl Parser {
             let expr = self.expression()?;
             self.consume(TokenType::Semicolon, "Expecting ';' after expression")?;
 
-            Some(Statement::Defer { kw, statement: Box::new(Statement::VarDecl { name: tok, initializer: Some(expr), type_: None, is_const: false, qualifiers: Vec::new() }) })
+            Some(Statement::Defer { 
+                kw, 
+                statement: Box::new(Statement::VarDecl { 
+                    name: tok, 
+                    initializer: Some(expr), 
+                    type_: None, 
+                    is_const: false, 
+                    info: VarDeclInfo::default() 
+                }) 
+            })
         } else {
             Some(Statement::Defer { kw, statement: Box::new(self.statement()?) })
         }
@@ -861,23 +870,65 @@ impl Parser {
 
         self.expression_statement()
     }
+    
+    fn link_qualifier(errors: &mut usize, qualifier: &Qualifier, link_name: &mut Option<Token>, private: &mut bool, extern_: &mut bool) {
+        if qualifier.args.len() == 0 {
+            error(&qualifier.name, "Expecting at least 1 argument for #link qualifier but got 0");
+            *errors += 1;
+            return;
+        }
+
+        let mut expecting_link_name = false;
+        let mut expecting_link_qualifier = false;
+        for arg in &qualifier.args {
+            if expecting_link_name {
+                expecting_link_name = false;
+                *link_name = Some(arg.clone());
+            } else if expecting_link_qualifier {
+                expecting_link_qualifier = false;
+                match arg.lexeme.as_ref() {
+                    "private" => *private = true,
+                    "extern"  => *extern_ = true,
+                    _ => {
+                        error(&qualifier.name, "Unknown link qualifier");
+                        *errors += 1;
+                    }
+                }
+            } else {
+                match arg.type_ {
+                    TokenType::As => expecting_link_name = true,
+                    TokenType::Hash => expecting_link_qualifier = true,
+                    _ => {
+                        error(&qualifier.name, "Expecting 'as' or '#' for link qualifier arguments");
+                        *errors += 1;
+                    }
+                }
+            }
+        }
+    }
 
     fn var_decl(&mut self) -> Option<Statement> {
-        let mut qualifiers = Vec::new();
+        let mut volatile = false;
+        let mut private = false;
+        let mut extern_ = false;
+        let mut static_ = false;
+        let mut bind = false;
+        let mut link_name = None;
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
-            match name.as_ref() {
-                "static" | "extern" | "volatile" => {
-                    if qualifier.args.len() != 0 {
-                        error!(
-                            self, qualifier.args.first().unwrap(), 
-                            format!("\"{}\" qualifier doesn't accept arguments", qualifier.name.lexeme).as_str()
-                        );
-                    }   
+            if qualifier.args.len() != 0 && matches!(name.as_ref(), "volatile" | "static" | "bind") {
+                error!(
+                    self, qualifier.args.first().unwrap(), 
+                    format!("\"{}\" qualifier doesn't accept arguments", qualifier.name.lexeme).as_str()
+                );
+            }
 
-                    qualifiers.push(qualifier.name.clone());
-                }
-                _ => error!(self, qualifier.name, "Unsupported qualifier for variable declaration")
+            match name.as_ref() {
+                "bind"     => bind = true,
+                "static"   => static_ = true,
+                "volatile" => volatile = true,
+                "link"     => Self::link_qualifier(&mut self.errors, qualifier, &mut link_name, &mut private, &mut extern_),
+                _ => error!(self, qualifier.name, "Unsupported qualifier for function definition")
             }
         }
 
@@ -903,7 +954,13 @@ impl Parser {
         };
 
         self.consume(TokenType::Semicolon, "Expecting ';' after variable declaration")?;
-        Some(Statement::VarDecl { name, initializer, type_, is_const: kw.type_ == TokenType::Const, qualifiers })
+        Some(Statement::VarDecl { 
+            name, 
+            initializer, 
+            type_, 
+            is_const: kw.type_ == TokenType::Const, 
+            info: VarDeclInfo { private, extern_, static_, volatile, bind, link_name } 
+        })
     }
 
     fn parse_generics(&mut self, incoming_generics: &Vec<Generic>) -> Option<Vec<Generic>> {
@@ -954,13 +1011,15 @@ impl Parser {
     }
 
     fn function(&mut self, method: bool, incoming_generics: &Vec<Generic>, self_generics: &Vec<Expression>) -> Option<Statement> {
-        let mut qualifiers = Vec::new();
+        let mut private = false;
+        let mut extern_ = false;
+        let mut inline = false;
         let mut bind = false;
         let mut init = false;
         let mut link_name = None;
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
-            if qualifier.args.len() != 0 && matches!(name.as_ref(), "static" | "extern" | "inline" | "init" | "bind") {
+            if qualifier.args.len() != 0 && matches!(name.as_ref(), "inline" | "init" | "bind") {
                 error!(
                     self, qualifier.args.first().unwrap(), 
                     format!("\"{}\" qualifier doesn't accept arguments", qualifier.name.lexeme).as_str()
@@ -968,22 +1027,10 @@ impl Parser {
             }
 
             match name.as_ref() {
-                "static" | "extern" | "inline" => qualifiers.push(qualifier.name.clone()),
-                "init" => init = true,
-                "bind" => bind = true,
-                "linkName" => {
-                    if qualifier.args.len() == 1 {
-                        link_name = Some(qualifier.args[0].clone());
-                    } else {
-                        error!(
-                            self, qualifier.name, 
-                            format!(
-                                "Expecting 1 argument for #linkName qualifier but got {}", 
-                                qualifier.args.len()
-                            ).as_str()
-                        );
-                    }
-                }
+                "init"   => init = true,
+                "bind"   => bind = true,
+                "inline" => inline = true,
+                "link"   => Self::link_qualifier(&mut self.errors, qualifier, &mut link_name, &mut private, &mut extern_),
                 _ => error!(self, qualifier.name, "Unsupported qualifier for function definition")
             }
         }
@@ -1073,7 +1120,7 @@ impl Parser {
             }
         };
 
-        let info = FunctionInfo { qualifiers, bind, init, link_name };
+        let info = FunctionInfo { private, extern_, inline, bind, init, link_name };
         if generics.len() == 0 {
             Some(Statement::Function { name, params, return_type, body,  generics_names: Vec::new(), info })
         } else {
@@ -1101,7 +1148,6 @@ impl Parser {
 
         for (name, qualifier) in self.curr_qualifiers.iter() {
             match name.as_ref() {
-                "typedef" => typedefed = true,
                 "bind" => {
                     bind = true;
 

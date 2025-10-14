@@ -4,7 +4,7 @@ use alanglib::{ast::{SourcePos, WithPosition}, error, report::{note, note_pos, w
 use lazy_static::lazy_static;
 
 use crate::{
-    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase}, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, FnQualifier, IrEnumVariant, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, TypeKind, VarQualifier}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
+    ast::{Ast, Bits, EnumVariant, Expression, FunctionParam, ImportType, MacroBody, MacroParams, Statement, StaticGetTarget, StringKind, StructField, StructInfo, SwitchCase}, dot, environment::{Environment, SkyeVariable}, ir::{AssignOp, BinaryOp, IrEnumVariant, IrFunctionInfo, IrFunctionParam, IrStatement, IrStatementData, IrSwitchBranch, IrValue, IrValueData, IrVarDeclInfo, TypeKind}, skye_type::{CastableHow, EqualsLevel, GetResult, ImplementsHow, Operator, SkyeEnumVariant, SkyeField, SkyeFunctionParam, SkyeType, SkyeValue, ValueFrom}, tokens::{Token, TokenType}, utils::{escape_string, OrderedNamedMap}, Checks, CompilerConfig
 };
 
 lazy_static! {
@@ -109,7 +109,7 @@ impl IrGen {
                 params: Vec::new(),
                 body: Some(Vec::new()), 
                 signature: SkyeType::Function(Vec::new(), Box::new(SkyeType::Void), true),
-                qualifiers: Vec::new()
+                info: IrFunctionInfo::default()
             },
             pos: SourcePos::empty()
         })));
@@ -329,7 +329,7 @@ impl IrGen {
                 name: Rc::clone(&tmp_var), 
                 type_: value.ir_value.type_.clone(), 
                 initializer: Some(value.ir_value),
-                qualifiers: Vec::new()
+                info: IrVarDeclInfo::default()
             }
         });
 
@@ -981,7 +981,7 @@ impl IrGen {
                         name: Rc::clone(&tmp_var), 
                         type_: return_type.clone(), 
                         initializer: Some(call_ir_value),
-                        qualifiers: Vec::new()
+                        info: IrVarDeclInfo::default()
                     }
                 });
 
@@ -1733,7 +1733,7 @@ impl IrGen {
                             apply_op(inner.ir_value),
                             type_.clone()
                         )),
-                        qualifiers: Vec::new()
+                        info: IrVarDeclInfo::default()
                     }
                 });
 
@@ -1791,7 +1791,7 @@ impl IrGen {
                 name: Rc::clone(&tmp_var), 
                 type_: inner.ir_value.type_.clone(), 
                 initializer: Some(inner.ir_value.clone()),
-                qualifiers: Vec::new()
+                info: IrVarDeclInfo::default()
             }
         });
 
@@ -3483,7 +3483,7 @@ impl IrGen {
                                             name: Rc::clone(&result_tmp), 
                                             type_: result_type.clone(), 
                                             initializer: None,
-                                            qualifiers: Vec::new()
+                                            info: IrVarDeclInfo::default()
                                         } 
                                     });
                                 }
@@ -3615,7 +3615,7 @@ impl IrGen {
                                             name: Rc::clone(&result_tmp), 
                                             type_: result_type.clone(), 
                                             initializer: None,
-                                            qualifiers: Vec::new()
+                                            info: IrVarDeclInfo::default()
                                         } 
                                     });
                                 }
@@ -4082,7 +4082,7 @@ impl IrGen {
                             name: Rc::clone(&tmp_var), 
                             type_: then_branch.ir_value.type_.clone(), 
                             initializer: None,
-                            qualifiers: Vec::new()
+                            info: IrVarDeclInfo::default()
                         } 
                     });
                 }
@@ -5266,14 +5266,39 @@ impl IrGen {
                     });
                 }
             }
-            Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, qualifiers } => {
+            Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, info } => {
+                // TODO: implement link name
                 let value = {
                     if let Some(init) = initializer {
-                        Some(ctx.run(|ctx| self.evaluate(init, false, ctx)).await)
+                        if info.bind {
+                            error!(self, init, "Cannot initialize a #bind variable");
+                            None
+                        } else {
+                            Some(ctx.run(|ctx| self.evaluate(init, false, ctx)).await)
+                        }
                     } else {
                         None
                     }
                 };
+
+                let is_global = matches!(self.curr_function, CurrentFn::None);
+
+                let mut link_name = info.link_name.clone();
+                if is_global {
+                    if info.static_ {
+                        error!(self, name, "Cannot use #static qualifier on a global variable");
+                        note(name, "If you meant to make the variable visible only to the current compilation unit, use #link(#private)");
+                    }
+                } else {
+                    if info.private {
+                        error!(self, name, "Cannot use #private linking on a local variable");
+                    }
+
+                    if let Some(tok) = &info.link_name {
+                        error!(self, tok, "Cannot specify link name of a local variable");
+                        link_name = None;
+                    }
+                }
 
                 let type_spec = {
                     if let Some(type_) = type_spec_expr {
@@ -5346,7 +5371,6 @@ impl IrGen {
                     }
                 }
 
-                let is_global = matches!(self.curr_function, CurrentFn::None);
                 let is_discard = name.lexeme.as_ref() == "_";
 
                 if is_discard {
@@ -5355,20 +5379,20 @@ impl IrGen {
                             error!(self, init, "Cannot discard a value in the global scope");
                             note(init, "Move the statement inside a function");
                         }
+
+                        let filtered = value.unwrap().ir_value.keep_side_effects();
+                        if !filtered.is_empty() {
+                            self.add_statement(IrStatement { 
+                                pos: stmt.get_pos(), 
+                                data: IrStatementData::Expression { value: filtered }, 
+                            });
+                        }
                     } else {
                         error!(self, name, "Cannot use this name for variable declaration");
                         note(name, "Rename this variable");
                     }
-
-                    let filtered = value.unwrap().ir_value.keep_side_effects();
-                    if !filtered.is_empty() {
-                        self.add_statement(IrStatement { 
-                            pos: stmt.get_pos(), 
-                            data: IrStatementData::Expression { value: filtered }, 
-                        });
-                    }
                 } else {
-                    let full_name = {
+                    let skye_name = {
                         if is_global {
                             self.get_name(&name.lexeme)
                         } else {
@@ -5376,28 +5400,43 @@ impl IrGen {
                         }
                     };
 
-                    let definition = IrStatement {
-                        pos: stmt.get_pos(),
-                        data: IrStatementData::VarDecl {
-                            name: Rc::clone(&full_name),
-                            type_: type_.clone(),
-                            initializer: value.map(|x| x.ir_value),
-                            qualifiers: qualifiers.iter().map(|x| VarQualifier::from_string(&x.lexeme)).collect()
+                    let full_name = {
+                        if let Some(link_name) = &link_name {
+                            Rc::clone(&link_name.lexeme)
+                        } else {
+                            Rc::clone(&skye_name)
                         }
                     };
 
-                    if is_global {
-                        if *is_const {
-                            error!(self, name, "Global constants are not allowed");
-                            note(name, "If you want to create a compile-time constant, use a macro");
-                        } else if let Some(init) = initializer {
-                            error!(self, init, "Cannot assign a value to a global variable directly");
-                            note(init, "Remove the initializer and assign this value through a function");
-                        }
+                    if !info.bind {
+                        let definition = IrStatement {
+                            pos: stmt.get_pos(),
+                            data: IrStatementData::VarDecl {
+                                name: Rc::clone(&full_name),
+                                type_: type_.clone(),
+                                initializer: value.map(|x| x.ir_value),
+                                info: IrVarDeclInfo {
+                                    private:  info.private,
+                                    extern_:  info.extern_,
+                                    static_:  info.static_,
+                                    volatile: info.volatile
+                                }
+                            }
+                        };
 
-                        self.definitions.push(Rc::new(RefCell::new(definition)));
-                    } else {
-                        self.add_statement(definition);
+                        if is_global {
+                            if *is_const {
+                                error!(self, name, "Global constants are not allowed");
+                                note(name, "If you want to create a compile-time constant, use a macro");
+                            } else if let Some(init) = initializer {
+                                error!(self, init, "Cannot assign a value to a global variable directly");
+                                note(init, "Remove the initializer and assign this value through a function");
+                            }
+
+                            self.definitions.push(Rc::new(RefCell::new(definition)));
+                        } else {
+                            self.add_statement(definition);
+                        }
                     }
 
                     let mut env = self.environment.borrow_mut();
@@ -5410,12 +5449,51 @@ impl IrGen {
                         }
                     }
 
-                    env.define(
-                        Rc::clone(&full_name), SkyeVariable::new(
-                            type_, *is_const,
-                            Some(Box::new(name.clone()))
-                        )
-                    );
+                    if let Some(link_name) = link_name {
+                        let different_name = skye_name != full_name;
+                        if different_name {
+                            // create alias for skye name that points to link name
+                            self.definitions.push(Rc::new(RefCell::new(IrStatement {
+                                pos: stmt.get_pos(),
+                                data: IrStatementData::Define { 
+                                    name: Rc::clone(&skye_name), 
+                                    value: IrValue::new(
+                                        IrValueData::Variable { name: Rc::clone(&full_name) },
+                                        type_.clone()
+                                    ), 
+                                    typedef: false 
+                                }
+                            })));
+                        }
+                        
+                        if different_name {
+                            // define skye name of variable
+                            env.define(
+                                skye_name,
+                                SkyeVariable::new(
+                                    type_.clone(), *is_const,
+                                    Some(Box::new(name.clone()))
+                                )
+                            );
+                        }
+                        
+                        // define actual variable as link name
+                        env.define(
+                            Rc::clone(&full_name), 
+                            SkyeVariable::new(
+                                type_, *is_const,
+                                Some(Box::new(link_name))
+                            )
+                        );
+                    } else {
+                        env.define(
+                            Rc::clone(&full_name), 
+                            SkyeVariable::new(
+                                type_, *is_const,
+                                Some(Box::new(name.clone()))
+                            )
+                        );
+                    }
                 }
             }
             Statement::Block(kw, statements) => {
@@ -5654,6 +5732,12 @@ impl IrGen {
                     );
                 }
 
+                let ir_info = IrFunctionInfo {
+                    private: info.private,
+                    extern_: info.extern_,
+                    inline: info.inline,
+                };
+
                 if !has_body {
                     if !info.bind {
                         self.definitions.push(Rc::new(RefCell::new(IrStatement {
@@ -5663,7 +5747,7 @@ impl IrGen {
                                 params: params_evaluated,
                                 signature: type_.clone(),
                                 body: None,
-                                qualifiers: info.qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
+                                info: ir_info
                             }
                         })));
                     }
@@ -5697,7 +5781,7 @@ impl IrGen {
                         params: params_evaluated,
                         body: Some(Vec::new()), 
                         signature: type_.clone(),
-                        qualifiers: info.qualifiers.iter().map(|x| FnQualifier::from_string(&x.lexeme)).collect()
+                        info: ir_info
                     }
                 }));
 
@@ -6709,7 +6793,7 @@ impl IrGen {
                                             name: Rc::clone(&tmp_var), 
                                             type_: struct_output_type.clone(), 
                                             initializer: None,
-                                            qualifiers: Vec::new()
+                                            info: IrVarDeclInfo::default()
                                         }
                                     },
                                     // tmp.kind = currentVariantKind;
@@ -6808,7 +6892,7 @@ impl IrGen {
                                             params: Vec::new(),
                                             signature: SkyeType::Function(Vec::new(), Box::new(struct_output_type.clone()), true),
                                             body: Some(function_body),
-                                            qualifiers: Vec::new() 
+                                            info: IrFunctionInfo::default()
                                         }
                                     })));
                                 } else {
@@ -6869,7 +6953,7 @@ impl IrGen {
                                                 Box::new(struct_output_type.clone()), true
                                             ),
                                             body: Some(function_body),
-                                            qualifiers: Vec::new()
+                                            info: IrFunctionInfo::default()
                                         }
                                     })));
                                 }
@@ -7571,7 +7655,7 @@ impl IrGen {
                             },
                             SkyeType::Void // TODO
                         )),
-                        qualifiers: Vec::new()
+                        info: IrVarDeclInfo::default()
                     }
                 });
 
