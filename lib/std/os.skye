@@ -103,7 +103,7 @@ namespace std {
                 #bind #link(as SetHandleInformation) fn setHandleInformation(hObject: voidptr, dwMask: u32, dwFlags: u32) bool;
                 #bind #link(as GetStdHandle) fn getStdHandle(nStdHandle: u32) voidptr;
                 #bind #link(as WaitForSingleObject) fn waitForSingleObject(hHandle: voidptr, dwMilliseconds: u32) u32;
-                #bind #link(as GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *core::ffi::cUnsignedLong) bool;
+                #bind #link(as GetExitCodeProcess) fn getExitCodeProcess(hProcess: voidptr, lpExitCode: *core::ffi::cLong) bool;
                 #bind #link(as CreateProcess) fn createProcess(
                     lpApplicationName: *const char, 
                     lpCommandLine: *const char,
@@ -145,7 +145,7 @@ namespace std {
                         return (i32!void)::Error;
                     }
 
-                    let status: core::ffi::cUnsignedLong;
+                    let status: core::ffi::cLong;
                     if !windows::getExitCodeProcess(self.__handle, &status) {
                         return (i32!void)::Error;
                     }
