@@ -65,7 +65,6 @@ namespace core {
 
     namespace ffi {
         #bind(#namespaced #typedef) struct cLong {}
-        #bind(#namespaced #typedef) struct cUnsignedLong {}
     }
 }
 
