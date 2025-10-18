@@ -22,5 +22,8 @@ jobs:
         with:
           rust-version: stable
 
-      - name: Run tests
+      - name: Run tests in debug mode
         run: RUST_BACKTRACE=full cargo test
+
+      - name: Run tests in release mode
+        run: RUST_BACKTRACE=full cargo test --release

@@ -5267,7 +5267,6 @@ impl IrGen {
                 }
             }
             Statement::VarDecl { name, initializer, type_: type_spec_expr, is_const, info } => {
-                // TODO: implement link name
                 let value = {
                     if let Some(init) = initializer {
                         if info.bind {
