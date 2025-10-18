@@ -67,6 +67,16 @@ pub enum TargetOS {
     Current
 }
 
+impl TargetOS {
+    pub fn get_filename(self, name: &Path) -> PathBuf {
+        if matches!(self, TargetOS::Windows) || (matches!(self, TargetOS::Current) && cfg!(windows)) {
+            name.with_extension("exe")
+        } else {
+            name.to_path_buf()
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct CompilerConfig {
     pub skye_path: PathBuf,
@@ -317,17 +327,17 @@ pub fn compile_file_to_exec(input: &OsStr, output: &OsStr, compiler_conf: Compil
 
 pub fn run_skye(file: OsString, program_args: &Option<Vec<String>>, compiler_conf: CompilerConfig) -> Result<(), Error> {
     let buf = compiler_conf.skye_path.join("tmp");
-    let tmp = OsStr::new(buf.to_str().expect("Couldn't convert PathBuf to OsStr"));
+    let output = compiler_conf.target_os.get_filename(buf.as_path());
 
-    compile_file_to_exec(&file, &OsString::from(tmp), compiler_conf)?;
-    let mut com = Command::new(tmp);
+    compile_file_to_exec(&file, output.as_os_str(), compiler_conf)?;
+    let mut com = Command::new(&output);
 
     if let Some(args) = program_args {
         com.args(args);
     }
 
     com.status()?;
-    remove_file(tmp)?;
+    remove_file(&output)?;
     Ok(())
 }
 
