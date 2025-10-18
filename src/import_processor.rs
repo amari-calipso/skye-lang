@@ -134,7 +134,7 @@ impl ImportProcessor {
                             *stmt = Statement::ImportedBlock { statements, source: stmt.get_pos() };
                         }
                         Err(e) => {
-                            error!(self, path_tok, format!("Could not import this file. Error: {}", e.to_string()).as_ref());
+                            error!(self, path_tok, format!("Could not import file {:?}. Error: {}", path, e.to_string()).as_ref());
                         }
                     }
                 }
