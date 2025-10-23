@@ -1,2 +1,1 @@
-# skye-lang
-Migrated to https://git.a-a.dev/amari/skye-lang
+# Migrated to https://git.a-a.dev/amari/skye-lang
